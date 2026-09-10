@@ -1,0 +1,11 @@
+{
+  "policy_version": 1,
+  "policy_id": "strict_document_v1",
+  "requirements": [
+    {"type": "signature_valid"},
+    {"type": "issuer_trusted", "issuer": "key:ed25519:REPLACE_WITH_YOUR_ISSUER_KEY"},
+    {"type": "not_expired"},
+    {"type": "not_revoked"},
+    {"type": "evidence_present", "kind": "signed_document"}
+  ]
+}

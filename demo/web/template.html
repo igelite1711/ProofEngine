@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proof Engine — Interactive Demo</title>
+<style>
+  :root { --ink: #1a1a1a; --muted: #555; --line: #ccc; --ok: #0a6b2d; --bad: #a31212; }
+  body { font-family: system-ui, -apple-system, sans-serif; color: var(--ink);
+         max-width: 860px; margin: 0 auto; padding: 1.5rem; line-height: 1.5; }
+  header h1 { margin-bottom: 0; }
+  header p { color: var(--muted); margin-top: 0.25rem; }
+  nav { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 1rem 0; }
+  nav button { padding: 0.4rem 0.7rem; border: 1px solid var(--line);
+               background: #fff; cursor: pointer; font-size: 0.95rem; }
+  nav button[aria-selected="true"] { background: var(--ink); color: #fff; }
+  section.tab { display: none; border-top: 2px solid var(--ink); padding-top: 1rem; }
+  section.tab.active { display: block; }
+  .box { border: 1px solid var(--line); padding: 0.75rem 1rem; margin: 0.5rem 0; }
+  .mono { font-family: ui-monospace, monospace; font-size: 0.85rem; word-break: break-all; }
+  .verdict { font-size: 2rem; font-weight: bold; margin: 0.5rem 0; }
+  .pass { color: var(--ok); } .fail { color: var(--bad); }
+  .stage { display: flex; gap: 0.6rem; padding: 0.25rem 0; border-bottom: 1px dotted var(--line); }
+  .stage .mark { min-width: 2.5rem; font-weight: bold; }
+  .muted { color: var(--muted); } .small { font-size: 0.85rem; }
+  pre.cmd { background: #f4f4f4; padding: 0.6rem; overflow-x: auto; font-size: 0.8rem; }
+  button.action { padding: 0.5rem 1rem; font-size: 1rem; margin: 0.25rem 0.25rem 0.25rem 0; cursor: pointer; }
+  label.pick { display: block; margin: 0.4rem 0; }
+  footer { margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 0.75rem; }
+  svg.graph text { font-family: ui-monospace, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Proof Engine</h1>
+  <p>Independently verifiable proofs for digital claims. Every verdict on this
+  page was computed by the core — nothing is simulated.</p>
+  <label class="pick">Example vocabulary:
+    <select id="example">
+      <option value="payment">Financial transaction</option>
+      <option value="software">Software artifact</option>
+    </select>
+  </label>
+</header>
+<nav role="tablist" aria-label="Demo screens">
+  <button role="tab" data-tab="home" aria-selected="true">Home</button>
+  <button role="tab" data-tab="builder" aria-selected="false">Builder</button>
+  <button role="tab" data-tab="graph" aria-selected="false">Graph</button>
+  <button role="tab" data-tab="build" aria-selected="false">Build</button>
+  <button role="tab" data-tab="verify" aria-selected="false">Verify</button>
+  <button role="tab" data-tab="policy" aria-selected="false">Policy</button>
+  <button role="tab" data-tab="tamper" aria-selected="false">Tamper</button>
+  <button role="tab" data-tab="lifecycle" aria-selected="false">Lifecycle</button>
+</nav>
+<main>
+  <section class="tab active" id="tab-home" role="tabpanel">
+    <h2>Make digital claims independently verifiable</h2>
+    <p>A claim, packaged with evidence, attestations and relationships into a
+    Proof that anyone can verify against explicit policy.</p>
+    <button class="action" data-goto="builder">Create Proof</button>
+    <button class="action" data-goto="builder">Load Example</button>
+    <button class="action" data-goto="verify">Verify Proof</button>
+    <p class="muted small">Flow: claim → evidence → attestation →
+    relationships → proof → verification → policy → PASS / FAIL.</p>
+  </section>
+
+  <section class="tab" id="tab-builder" role="tabpanel">
+    <h2>Proof Builder</h2>
+    <p class="muted">Vocabulary shown is one <em>example</em> — the engine accepts any domain.</p>
+    <h3>Proposition</h3>
+    <div class="box" id="b-prop"></div>
+    <h3>Events</h3><div id="b-events"></div>
+    <h3>Evidence — why should you believe the claim?</h3><div id="b-evidence"></div>
+    <h3>Attestations</h3><div id="b-att"></div>
+    <h3>Relationships</h3><div id="b-rel"></div>
+  </section>
+
+  <section class="tab" id="tab-graph" role="tabpanel">
+    <h2>Proof Graph</h2>
+    <p class="muted">Rendered from the actual relationships in the Proof — no hard-coded diagram.</p>
+    <div id="g-svg"></div>
+  </section>
+
+  <section class="tab" id="tab-build" role="tabpanel">
+    <h2>Build Proof</h2>
+    <p>These are the exact commands that produced this Proof, run against the core:</p>
+    <div id="build-cmds"></div>
+    <div class="box"><strong>Proof ID</strong><div class="mono" id="build-id"></div></div>
+    <button class="action" id="btn-copy">Copy Proof</button>
+    <button class="action" id="btn-dl">Export Proof</button>
+    <button class="action" data-goto="verify">Verify Proof</button>
+  </section>
+
+  <section class="tab" id="tab-verify" role="tabpanel">
+    <h2>Verification</h2>
+    <div class="verdict" id="v-verdict"></div>
+    <div id="v-stages"></div>
+  </section>
+
+  <section class="tab" id="tab-policy" role="tabpanel">
+    <h2>Policy — proof validity is not a trust decision</h2>
+    <p>Same proof bytes. Toggle requirements and watch the decision change:</p>
+    <label class="pick"><input type="checkbox" id="p-trusted" checked> Issuer trusted</label>
+    <label class="pick"><input type="checkbox" id="p-transp"> Transparency receipt required</label>
+    <p class="muted small">Locked on: signature valid, not expired, not revoked, evidence present.</p>
+    <div class="verdict" id="p-verdict"></div>
+    <div id="p-reqs"></div>
+    <h3>Why (generated from the real evaluation)</h3>
+    <pre class="cmd" id="p-explain"></pre>
+  </section>
+
+  <section class="tab" id="tab-tamper" role="tabpanel">
+    <h2>Tamper mode — attack the proof</h2>
+    <button class="action" id="btn-tamper">Tamper with proof</button>
+    <button class="action" id="btn-restore">Restore original</button>
+    <div id="t-state"></div>
+    <div id="t-stages"></div>
+  </section>
+
+  <section class="tab" id="tab-lifecycle" role="tabpanel">
+    <h2>Life of a proof</h2>
+    <p>Historical validity and current applicability are different questions.</p>
+    <nav aria-label="Lifecycle states">
+      <button data-life="active" aria-selected="true">Active</button>
+      <button data-life="expired" aria-selected="false">Expired</button>
+      <button data-life="revoked" aria-selected="false">Revoked</button>
+      <button data-life="superseded" aria-selected="false">Superseded</button>
+    </nav>
+    <div id="l-state"></div>
+  </section>
+</main>
+<footer>
+  <p class="small muted" id="provenance"></p>
+</footer>
+
+<script id="proof-data" type="application/json">/*__PROOF_DATA__*/</script>
+<script>
+"use strict";
+var DATA = JSON.parse(document.getElementById("proof-data").textContent);
+var state = { example: "payment", tampered: false, life: "active" };
+
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function ex() { return DATA.examples[state.example]; }
+function verdictOf(report) {
+  return (report.cryptographic_validity === "valid" &&
+          report.evidence_validity === "valid") ? "PASS" : "FAIL";
+}
+function verdictHTML(v) {
+  return v === "PASS"
+    ? '<span class="pass">✓ PASS</span>'
+    : '<span class="fail">✕ FAIL</span>';
+}
+function shortId(id) {
+  return id.length > 26 ? id.slice(0, 20) + "…" + id.slice(-4) : id;
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll("nav[role=tablist] button").forEach(function (b) {
+  b.addEventListener("click", function () { goto(b.dataset.tab); });
+});
+function goto(name) {
+  document.querySelectorAll("nav[role=tablist] button").forEach(function (b) {
+    b.setAttribute("aria-selected", b.dataset.tab === name ? "true" : "false");
+  });
+  document.querySelectorAll("section.tab").forEach(function (s) {
+    s.classList.toggle("active", s.id === "tab-" + name);
+  });
+  render();
+}
+document.querySelectorAll("[data-goto]").forEach(function (b) {
+  b.addEventListener("click", function () { goto(b.dataset.goto); });
+});
+document.getElementById("example").addEventListener("change", function (e) {
+  state.example = e.target.value; state.tampered = false; render();
+});
+
+/* ---------- builder ---------- */
+function fieldList(fields) {
+  return fields.map(function (f) {
+    return "<li><span class='mono'>" + esc(f.key) + " = " + esc(String(f.value)) + "</span></li>";
+  }).join("");
+}
+function renderBuilder() {
+  var c = ex().contents, p = c.proposition;
+  document.getElementById("b-prop").innerHTML =
+    "<div><strong>" + esc(p.kind) + "</strong></div>" +
+    "<div class='mono'>" + esc(p.subject) + " → " + esc(p.predicate) +
+    (p.object ? " → " + esc(p.object) : "") + "</div>";
+  document.getElementById("b-events").innerHTML = c.events.map(function (e) {
+    return "<div class='box'><strong class='mono'>" + esc(e.type) + "</strong><br>" +
+      "<span class='mono'>" + esc(e.subject) + "</span> · t=" + e.effective_at +
+      "<ul>" + fieldList(e.metadata) + "</ul></div>";
+  }).join("");
+  document.getElementById("b-evidence").innerHTML = c.evidence.map(function (e, i) {
+    return "<details class='box'><summary><strong class='mono'>" + esc(e.kind) +
+      "</strong> <span class='muted small'>details</span></summary>" +
+      "<div class='mono'>digest (" + esc(e.digest.alg) + "):<br>" + esc(e.digest.digest_hex) + "</div>" +
+      (e.attestation_ref ? "<div>attestation: <span class='mono'>" + esc(e.attestation_ref) + "</span></div>" : "") +
+      (e.hint ? "<div>hint: <span class='mono'>" + esc(e.hint) + "</span></div>" : "") +
+      "<div>✓ Integrity bound by id (evidence item " + (i + 1) + ")</div></details>";
+  }).join("");
+  document.getElementById("b-att").innerHTML = c.attestations.map(function (a) {
+    return "<div class='box'><strong class='mono'>" + esc(a.claim_type) + "</strong><br>" +
+      "issuer: <span class='mono'>" + esc(a.issuer) + "</span><br>" +
+      "subject: <span class='mono'>" + esc(a.subject) + "</span> · issued t=" + a.issued_at +
+      (a.expires_at ? " · expires t=" + a.expires_at : "") +
+      "<ul>" + fieldList(a.claim_fields) + "</ul></div>";
+  }).join("");
+  document.getElementById("b-rel").innerHTML = c.relationships.map(function (r) {
+    return "<div class='box mono'>" + esc(r.from) + "<br>│ " + esc(r.type) +
+      "<br>▼<br>" + esc(r.to) + "</div>";
+  }).join("");
+}
+
+/* ---------- generic SVG graph ---------- */
+function renderGraph() {
+  var c = ex().contents, edges = c.relationships;
+  var nodes = [];
+  edges.forEach(function (e) {
+    [e.from, e.to].forEach(function (n) { if (nodes.indexOf(n) < 0) nodes.push(n); });
+  });
+  var W = 560, y0 = 30, gap = 96, H = y0 * 2 + Math.max(nodes.length - 1, 0) * gap;
+  var pos = {};
+  nodes.forEach(function (n, i) { pos[n] = y0 + i * gap; });
+  var s = '<svg class="graph" width="' + W + '" height="' + Math.max(H, 80) +
+    '" role="img" aria-label="Proof relationship graph">';
+  edges.forEach(function (e) {
+    var y1 = pos[e.from], y2 = pos[e.to];
+    s += '<line x1="' + (W / 2) + '" y1="' + y1 + '" x2="' + (W / 2) + '" y2="' + y2 +
+      '" stroke="#555" stroke-width="2"/>' +
+      '<text x="' + (W / 2 + 8) + '" y="' + ((y1 + y2) / 2) + '">' + esc(e.type) + '</text>';
+  });
+  nodes.forEach(function (n) {
+    s += '<rect x="60" y="' + (pos[n] - 18) + '" width="' + (W - 120) + '" height="36" fill="#fff" stroke="#1a1a1a"/>' +
+      '<text x="' + (W / 2) + '" y="' + (pos[n] + 5) + '" text-anchor="middle">' + esc(shortId(n)) + '</text>';
+  });
+  document.getElementById("g-svg").innerHTML = s + "</svg>";
+}
+
+/* ---------- build ---------- */
+function renderBuild() {
+  document.getElementById("build-cmds").innerHTML =
+    "<pre class='cmd'>" + ex().commands.map(esc).join("\n") + "</pre>";
+  document.getElementById("build-id").textContent = ex().proof.id;
+}
+document.getElementById("btn-copy").addEventListener("click", function () {
+  navigator.clipboard.writeText(JSON.stringify(ex().proof, null, 2));
+});
+document.getElementById("btn-dl").addEventListener("click", function () {
+  var blob = new Blob([JSON.stringify(ex().proof, null, 2)], { type: "application/json" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "proof.json"; a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+});
+
+/* ---------- verify ---------- */
+function stageRows(report) {
+  return report.checks.map(function (c) {
+    var cls = c.ok ? "pass" : "fail", mark = c.ok ? "✓ PASS" : "✕ FAIL";
+    return "<div class='stage'><span class='mark " + cls + "'>" + mark + "</span><span><strong>" +
+      esc(c.stage) + "</strong> — " + esc(c.message) +
+      (c.code ? " <span class='mono'>[" + esc(c.code) + "]</span>" : "") + "</span></div>";
+  }).join("");
+}
+function renderVerify() {
+  var r = ex().verify_fresh.report;
+  document.getElementById("v-verdict").innerHTML = verdictHTML(verdictOf(r));
+  document.getElementById("v-stages").innerHTML = stageRows(r) +
+    "<p class='muted small'>cryptographic_validity=" + esc(r.cryptographic_validity) +
+    " · evidence_validity=" + esc(r.evidence_validity) +
+    " · policy (pipeline view)=" + esc(r.policy_decision) + "</p>";
+}
+
+/* ---------- policy ---------- */
+function currentCombo() {
+  var t = document.getElementById("p-trusted").checked;
+  var x = document.getElementById("p-transp").checked;
+  var found = null;
+  ex().policy_combos.forEach(function (c) {
+    if (c.issuer_trusted === t && c.transparency_required === x) found = c;
+  });
+  return found;
+}
+function renderPolicy() {
+  var e = ex();
+  if (!e.policy_combos) {
+    document.getElementById("p-verdict").innerHTML = verdictHTML(
+      e.policy_base.outcome.decision === "pass" ? "PASS" : "FAIL");
+    document.getElementById("p-reqs").innerHTML = e.policy_base.outcome.results.map(function (r) {
+      return "<div class='stage'><span class='mark " + (r.passed ? "pass" : "fail") + "'>" +
+        (r.passed ? "✓ PASS" : "✕ FAIL") + "</span><span><strong>" + esc(r.requirement) +
+        "</strong> — " + esc(r.message) + "</span></div>";
+    }).join("");
+    return;
+  }
+  var c = currentCombo();
+  var v = c.outcome.decision === "pass" ? "PASS" : "FAIL";
+  document.getElementById("p-verdict").innerHTML = verdictHTML(v);
+  document.getElementById("p-reqs").innerHTML = c.outcome.results.map(function (r) {
+    return "<div class='stage'><span class='mark " + (r.passed ? "pass" : "fail") + "'>" +
+      (r.passed ? "✓ PASS" : "✕ FAIL") + "</span><span><strong>" + esc(r.requirement) +
+      "</strong> — " + esc(r.message) + "</span></div>";
+  }).join("");
+  document.getElementById("p-explain").textContent = e.explain;
+}
+document.getElementById("p-trusted").addEventListener("change", renderPolicy);
+document.getElementById("p-transp").addEventListener("change", renderPolicy);
+
+/* ---------- tamper ---------- */
+function renderTamper() {
+  var e = ex(), box = document.getElementById("t-state"), stages = "";
+  if (!e.tampered || !state.tampered) {
+    box.innerHTML = "<p>Proof intact. Press <strong>Tamper with proof</strong> to flip one byte of the canonical bytes and re-run verification.</p>";
+  } else {
+    var t = e.tampered;
+    box.innerHTML = "<p><strong>PROOF MODIFIED</strong> — canonical byte " + t.flip.offset +
+      ": <span class='mono'>" + esc(t.flip.from) + " → " + esc(t.flip.to) + "</span></p>" +
+      "<div class='verdict'>" + verdictHTML("FAIL") + "</div>";
+    stages = t.report.checks.filter(function (c) { return !c.ok; }).map(function (c) {
+      return "<div class='stage'><span class='mark fail'>✕ FAIL</span><span><strong>" +
+        esc(c.stage) + "</strong> [" + esc(c.code || "NO_CODE") + "] — " + esc(c.message) + "</span></div>";
+    }).join("") + "<p>Restore the original bytes and the proof verifies again.</p>";
+  }
+  document.getElementById("t-stages").innerHTML = stages;
+}
+document.getElementById("btn-tamper").addEventListener("click", function () {
+  state.tampered = true; renderTamper();
+});
+document.getElementById("btn-restore").addEventListener("click", function () {
+  state.tampered = false; renderTamper();
+});
+
+/* ---------- lifecycle ---------- */
+var LIFE_LABEL = {
+  active: "ACTIVE — timely, unrevoked, revocation info fresh",
+  expired: "EXPIRED — outside the validity window at the verifier clock",
+  revoked: "REVOKED — covered by a valid signed revocation",
+  superseded: "SUPERSEDED — replaced by a newer attestation; history stays valid"
+};
+function renderLifecycle() {
+  var e = ex();
+  var data = { active: e.verify_fresh, expired: e.expired, revoked: e.revoked, superseded: e.superseded }[state.life];
+  var box = document.getElementById("l-state");
+  if (!data) { box.innerHTML = "<p class='muted'>No data for this state in the software example — switch to Financial transaction.</p>"; return; }
+  var r = data.report;
+  box.innerHTML = "<p><strong>" + esc(LIFE_LABEL[state.life]) + "</strong></p>" +
+    "<div class='verdict'>" + verdictHTML(verdictOf(r)) + "</div>" +
+    r.lifecycle.map(function (l) {
+      return "<div class='box mono'>" + esc(l.object) + " → " + esc(l.status) +
+        (l.code ? " [" + esc(l.code) + "]" : "") + "<br>" + esc(l.message) + "</div>";
+    }).join("");
+}
+document.querySelectorAll("[data-life]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    state.life = b.dataset.life;
+    document.querySelectorAll("[data-life]").forEach(function (x) {
+      x.setAttribute("aria-selected", x === b ? "true" : "false");
+    });
+    renderLifecycle();
+  });
+});
+
+/* ---------- render all ---------- */
+function render() {
+  renderBuilder(); renderGraph(); renderBuild(); renderVerify();
+  renderPolicy(); renderTamper(); renderLifecycle();
+  document.getElementById("provenance").textContent =
+    "All proofs, reports and decisions embedded here were computed by the core (" +
+    DATA.generated_by + "). Regenerate: make web-demo. Tamper demo flips canonical byte " +
+    (ex().tampered ? ex().tampered.flip.offset : "n/a") + ".";
+}
+render();
+</script>
+</body>
+</html>

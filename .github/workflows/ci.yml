@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    name: Build, test, fmt, clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (locked dependencies)
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Supply chain (advisories, bans, licenses, sources)
+        run: cargo deny check
+
+      - name: Advisory scan (RustSec; continues on unfixable advisories)
+        continue-on-error: true  # advisory-db cache can stale; cargo-deny is the real gate
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Requirement traceability
+        run: make trace
+
+      - name: Core neutrality gate (PE-NEUT-001/004)
+        run: make neutrality
+
+# PE-NEUT-003: the core must carry unrelated industries without
+# modification. The domain suite builds against the core as a pure external
+# consumer (not a workspace member) — exactly like a third-party application.
+  domains:
+    name: Domain differential suite (neutrality proof)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            domains/proof-domains
+
+      - name: Domain journeys (payment, credential, media, AI)
+        run: make domain-tests
+
+      - name: Neutrality gate (no domain vocabulary in mechanism sources)
+        run: make neutrality
+
+# PE-OPS-004: demo determinism enforced (sha256 rerun).
+  demo:
+    name: Demo is deterministic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: make demo (PASS -> tamper -> FAIL -> revoke -> FAIL)
+        run: make demo
+
+      - name: Required artifacts exist
+        run: |
+          test -f demo/out/proof.cbor
+          test -f demo/out/report.json
+          test -f demo/out/explanation.txt
+
+      - name: Rerun must reproduce every byte
+        run: |
+          sha256sum demo/out/proof.cbor demo/out/report.json demo/out/explanation.txt > /tmp/first.sha
+          make demo
+          sha256sum -c /tmp/first.sha
+
+      - name: Upload demo evidence bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-evidence
+          path: demo/out/

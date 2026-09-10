@@ -1,0 +1,28 @@
+[package]
+name = "proof-cli"
+version = "1.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Command-line interface for creating, verifying, and evaluating Proof Engine proofs"
+repository = "https://github.com/igelite1711/ProofEngine"
+homepage = "https://github.com/igelite1711/ProofEngine"
+documentation = "https://docs.rs/proof-cli"
+keywords = ["proof", "cli", "verification", "trust"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "proof-cli"
+path = "src/main.rs"
+
+[dependencies]
+proof-core = { version = "1.0.0", path = "../proof-core" }
+proof-format = { version = "1.0.0", path = "../proof-format" }
+proof-crypto = { version = "1.0.0", path = "../proof-crypto" }
+proof-verify = { version = "1.0.0", path = "../proof-verify" }
+proof-policy = { version = "1.0.0", path = "../proof-policy" }
+serde_json = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+proof-core = { version = "1.0.0", path = "../proof-core" }
+proof-crypto = { version = "1.0.0", path = "../proof-crypto" }

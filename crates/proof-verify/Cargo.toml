@@ -1,0 +1,22 @@
+[package]
+name = "proof-verify"
+version = "1.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Staged verification pipeline and error codes for Proof Engine"
+repository = "https://github.com/igelite1711/ProofEngine"
+homepage = "https://github.com/igelite1711/ProofEngine"
+documentation = "https://docs.rs/proof-verify"
+keywords = ["proof", "verification", "pipeline", "trust"]
+categories = ["cryptography"]
+
+[dependencies]
+proof-core = { version = "1.0.0", path = "../proof-core" }
+proof-format = { version = "1.0.0", path = "../proof-format" }
+proof-crypto = { version = "1.0.0", path = "../proof-crypto" }
+proof-graph = { version = "1.0.0", path = "../proof-graph" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }
+serde_json = { workspace = true }

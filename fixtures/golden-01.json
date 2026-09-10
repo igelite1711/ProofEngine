@@ -1,0 +1,23 @@
+{
+  "canonical_hex": "a661760164747970656f7061796d656e742e63726561746564677375626a65637470616363743a6d65726368616e742d3031686d65746164617461a1656f72646572656f72642d316b7061796c6f61645f726566a361760163616c6700666469676573745820abababababababababababababababababababababababababababababababab6c6566666563746976655f61741a6553f100",
+  "description": "Minimal payment.created event: canonical bytes + deterministic id.",
+  "expected": {
+    "decode": "ok",
+    "id_verify": "ok"
+  },
+  "input": {
+    "effective_at": 1700000000,
+    "metadata": {
+      "order": "ord-1"
+    },
+    "payload_ref": {
+      "alg": "sha-256",
+      "digest_hex": "abababababababababababababababababababababababababababababababab",
+      "v": 1
+    },
+    "subject": "acct:merchant-01",
+    "type": "payment.created"
+  },
+  "name": "01-event-canonical",
+  "object_id": "evt:v1:44IpZ51JxN_Tmh9C1uWwdzepDLDes5sU2U6bKEAaf2I"
+}

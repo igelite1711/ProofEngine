@@ -1,0 +1,61 @@
+; ProofEngine V1 Policy Language Grammar
+; RFC 5234 (ABNF) + JSON RFC 8259
+; This is the authoritative grammar for the policy language.
+; POLICY.md describes semantics; this grammar defines syntax.
+
+(* Root policy object *)
+policy            = ws '{' ws
+                    '"policy_version"': ws number ws ','
+                    '"policy_id"': ws json-string ws ','
+                    '"requirements"': ws '[' ws requirement-list ws ']'
+                    ws '}' ws
+
+requirement-list  = requirement
+                  | requirement ws ',' ws requirement-list
+
+requirement       = ws '{' ws
+                    '"type"': ws requirement-type
+                    ws requirement-fields?
+                    ws '}' ws
+
+(* Closed requirement set (V1.1) *)
+requirement-type  = '"signature_valid"'
+                  | '"issuer_trusted"'
+                  | '"issuer_excluded"'
+                  | '"relationship_exists"'
+                  | '"not_expired"'
+                  | '"not_revoked"'
+                  | '"not_superseded"'
+                  | '"evidence_present"'
+                  | '"transparency_present"'
+                  | '"proof_fresh"'
+
+(* Optional fields per requirement type *)
+requirement-fields = ws ',' ws issuer-field
+                  | ws ',' ws relationship-field
+                  | ws ',' ws evidence-field
+                  | ws ',' ws max-age-field
+
+issuer-field      = '"issuer"': ws json-string
+relationship-field = '"relationship"': ws json-string
+evidence-field    = '"kind"': ws json-string
+max-age-field     = '"max_age_seconds"': ws number
+
+(* JSON primitives *)
+json-string       = '"' string-char* '"'
+number            = digit1-9 digit* | '0'
+digit             = '0' | digit1-9
+digit1-9          = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
+string-char       = %x20-21 | %x23-5B | %x5D-10FFFF | '\' escape
+escape            = '"' | '\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' | 'u' hex hex hex hex
+hex               = digit | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'a' | 'b' | 'c' | 'd' | 'e' | 'f'
+ws                = *( ' ' / %x0A / %x0D / %x09 )
+
+(*
+  Notes:
+  - policy_version must be 1 for V1
+  - policy_id is an arbitrary string (recommended: namespaced like "merchant_payment_v1")
+  - requirements array must have at least 1 element (empty = POLICY_INVALID)
+  - Extra fields in any object = POLICY_INVALID
+  - Unknown requirement type = POLICY_INVALID
+*)

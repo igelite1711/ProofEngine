@@ -1,0 +1,8 @@
+{
+  "description": "{\"a\":1,\"a\":2} must fail with DUPLICATE_MAP_KEY.",
+  "expected": {
+    "code": "DUPLICATE_MAP_KEY"
+  },
+  "input_hex": "a2616101616102",
+  "name": "02-duplicate-map-key"
+}

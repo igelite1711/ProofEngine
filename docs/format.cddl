@@ -1,0 +1,118 @@
+; Copyright 2026 Proof Engine Contributors
+; SPDX-License-Identifier: MIT OR Apache-2.0
+;
+; ProofEngine V1 CDDL Specification
+; RFC 8610 (CDDL) + RFC 8949 (CBOR deterministic encoding)
+; This is the authoritative machine-readable schema for the wire format.
+; Prose in FORMAT.md must match this schema; if they conflict, this schema wins.
+
+proof-version = 1
+
+; --- HashRef ---
+; Content digest with algorithm identifier.
+; Display form: "hash:v1,sha-256:<hex>"
+; CBOR form: {"v":1, "alg":0, "digest":h'...'} (alg enum for compactness)
+hash-ref = {
+    "v": 1,
+    "alg": 0 / 1    ; 0 = SHA-256 (32 bytes), 1 = SHA-384 (48 bytes)
+    "digest": bstr  ; raw bytes, length enforced per algorithm
+}
+
+; --- Event ---
+; Something happened. Not trusted by default.
+; id = evt:v1:<b64u(sha256(canonical(event-content)))>
+event-content = {
+    "v": 1,
+    "event_type": tstr,           ; open vocabulary, namespaced recommended
+    "subject": tstr,              ; stable reference
+    "effective_at": uint,         ; Unix seconds
+    "payload_ref": hash-ref,      ; external payload, digest-only
+    "metadata": {* tstr => tstr / uint / bool}  ; optional key-value
+}
+event = event-content  ; id computed over content without event_id field
+
+; --- Attestation ---
+; Signed claim by an issuer about a subject.
+; id = att:v1:<b64u(sha256(canonical(attestation-content)))>
+attestation-content = {
+    "v": 1,
+    "issuer": tstr,               ; key:ed25519:<b64u> or key:p256:<b64u>
+    "subject": tstr,              ; what this attestation is about
+    "claim_type": tstr,           ; open vocabulary
+    "claim": {* tstr => tstr / uint / bool},  ; structured claim data
+    "issued_at": uint,            ; Unix seconds, validity window start
+    "expires_at": uint / null,    ; null = unbounded validity
+    "evidence_ref": tstr / null   ; optional reference to evidence by id
+}
+
+; Attestation entry in a Proof: content + COSE_Sign1 signature bytes
+attestation-entry = {
+    "content": attestation-content,
+    "sign1": bstr  ; COSE_Sign1 (RFC 9052 §4.2) bytes, untagged
+}
+
+; --- Evidence ---
+; Digest-bound external reference. Engine never fetches.
+; id = evd:v1:<b64u(sha256(canonical(evidence)))>
+evidence = {
+    "v": 1,
+    "kind": tstr,                 ; open vocabulary (e.g., "receipt", "credential")
+    "digest": hash-ref,           ; content digest
+    "hint": tstr / null,          ; optional human-readable hint
+    "attestation_ref": tstr / null ; optional attestation backing this evidence
+}
+
+; --- Relationship ---
+; Typed directed edge between member ids.
+; id = rel:v1:<b64u(sha256(canonical(relationship-content)))>
+; BOTH evidence_ref and attestation_ref are covered by the id (binding fix).
+relationship-content = {
+    "v": 1,
+    "from": tstr,                 ; source object id (must resolve within proof)
+    "type": tstr,                 ; open vocabulary (e.g., "SETTLES", "OWNS")
+    "to": tstr,                   ; target object id (must resolve within proof)
+    "evidence_ref": tstr / null,  ; optional backing evidence
+    "attestation_ref": tstr / null ; optional backing attestation
+}
+
+; --- Proposition ---
+; Value object stating what the proof is about.
+; Not persisted independently; embedded in Proof.
+proposition = {
+    "v": 1,
+    "kind": tstr,                 ; proposition kind (e.g., "payment.settles-invoice")
+    "subject": tstr,              ; subject of the proposition
+    "predicate": tstr,            ; predicate (e.g., "settles")
+    "object": tstr / null,        ; optional object
+    "at_time": uint / null,       ; optional time constraint
+    "context": {* tstr => tstr / uint / bool}  ; optional context
+}
+
+; --- Proof ---
+; Canonical container binding member id sets + proposition.
+; id = prf:v1:<b64u(sha256(canonical(proof-binding)))>
+; created_at is informational and NOT covered by proof-id.
+proof-binding = {
+    "v": 1,
+    "proposition": proposition,
+    "events": [+ tstr],           ; sorted event ids
+    "attestations": [+ tstr],     ; sorted attestation ids
+    "evidence": [+ tstr],         ; sorted evidence ids
+    "relationships": [+ tstr]     ; sorted relationship ids
+}
+proof = {
+    "v": 1,
+    "proof_id": tstr,             ; prf:v1:<b64u(sha256(canonical(binding)))>
+    "proposition": proposition,
+    "events": [+ event-content],
+    "attestations": [+ attestation-entry],
+    "evidence": [+ evidence],
+    "relationships": [+ relationship-content],
+    "created_at": uint            ; informational, NOT covered by proof_id
+}
+
+; --- Status Objects ---
+; Signed revoke/supersession attestations (attestation subtypes).
+; Revocation: claim.type = "revoke", claim.target = <id>, claim.reason = tstr
+; Supersession: claim.type = "supersede", claim.old = <id>, claim.new = <id>
+status-object = attestation-content  ; claim.type determines revoke vs supersede

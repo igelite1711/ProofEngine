@@ -1,0 +1,18 @@
+# Rust build artifacts
+/target
+
+# Generated demo output (reproduce with `make demo`)
+/demo/out/
+
+# Editor / OS noise
+*.swp
+.DS_Store
+
+# Python bytecode (never commit — rebuilds automatically)
+__pycache__/
+*.pyc
+
+
+# Machine-specific local build config (Termux: sdcard FUSE + PRoot gcc).
+# Never commit - it hardcodes paths like /root/.cache and breaks other machines/CI.
+.cargo/config.toml
