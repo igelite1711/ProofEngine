@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "proof-core"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "hex",
  "thiserror",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "proof-crypto"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -405,15 +405,18 @@ dependencies = [
 
 [[package]]
 name = "proof-format"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
+ "base64",
+ "hex",
  "proof-core",
+ "sha2",
  "thiserror",
 ]
 
 [[package]]
 name = "proof-graph"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "proof-core",
  "thiserror",
@@ -421,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "proof-policy"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "proof-core",
  "proof-crypto",
@@ -433,7 +436,7 @@ dependencies = [
 
 [[package]]
 name = "proof-verify"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "proof-core",
  "proof-crypto",

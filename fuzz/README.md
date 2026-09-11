@@ -21,11 +21,21 @@ Requires nightly Rust and cargo-fuzz (nightly CI smoke: `.github/workflows/fuzz.
 ```console
 rustup install nightly
 cargo install cargo-fuzz
-cargo +nightly fuzz run cbor_decoder -- -max_total_time=600
-cargo +nightly fuzz run proof_verify -- -max_total_time=600
-cargo +nightly fuzz run policy_parser -- -max_total_time=600
-cargo +nightly fuzz run graph_ingest -- -max_total_time=600
+CXX=/usr/bin/g++ cargo +nightly fuzz build
+CXX=/usr/bin/g++ cargo +nightly fuzz run policy_parser fuzz/seeds/policy_parser -- -max_total_time=600
 ```
+
+Troubleshooting (observed failure modes, all environmental — never findings):
+
+- `cargo fuzz build` on **stable** fails (`-Zsanitizer=address` needs
+  nightly: `failed to run rustc ... -Zsanitizer=address`). Always use
+  `cargo +nightly fuzz`.
+- Link errors mentioning Android/`clang++` on Termux: export
+  `CXX=/usr/bin/g++` first (the Termux `clang++` targets Android).
+- `AddressSanitizer: CHECK failed ... unable to mmap` on `fuzz run`: the
+  ASan runtime cannot allocate under PRoot — running is blocked in this
+  container by design (see below). The 600s smokes run in
+  `.github/workflows/fuzz.yml` (ubuntu-latest) instead.
 
 `fuzz/seeds/<target>/` holds deterministic seeds derived from the golden
 fixtures (a valid event, a valid 1.5 KiB proof, a one-byte tamper of it,
@@ -64,3 +74,8 @@ nightly still exercise them continuously:
 - `proof_verify` mutation soak: `crates/proof-verify/tests/soak.rs` mutates a
   valid proof (bit flips, byte deletions, truncations) and asserts fail-closed
   on every mutant.
+- `policy_parser` seed corpus: `crates/proof-policy/tests/fuzz_seeds.rs`
+  replays every file in `fuzz/seeds/policy_parser/` through the fuzz target's
+  invariants (never panics, closed 16-requirement set, deterministic
+  re-parse) plus hostile-seed rejection — so the smoke target's contract is
+  enforced on stable too.
