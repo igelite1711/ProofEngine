@@ -42,6 +42,11 @@ jobs:
           ./target/debug/proof-cli --work /tmp/proof-interop
           | tee /tmp/proof-interop/differential.log
 
+      - name: SCITT adapter tests + independent differential
+        run: >-
+          cargo test --locked -p proof-adapter-scitt &&
+          python3 crates/proof-adapter-scitt/differential.py
+
       - name: Upload interop evidence bundle
         uses: actions/upload-artifact@v4
         with:
