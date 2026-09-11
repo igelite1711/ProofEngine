@@ -456,7 +456,8 @@ Vacuous shapes (`all[]`, `k = 0`, `k > n`, mixed connectives) are
 `POLICY_INVALID`; total nodes ≤ `max_policy_requirements`. New leaves:
 `delegated_authority{root, issuer, scope?}`, `identity_bound{a, b}`,
 `transparency_inclusion{log}`, `no_conflicting_evidence`,
-`vocabulary_accepted{ns, max_version}`, `evidence_usable{kind}`.
+`vocabulary_accepted{ns, max_version}`, `evidence_usable{kind}`,
+`requires_reference{id}`, `forbids_reference{id}` (direct linkage hooks).
 Canonical CBOR mirrors the tree; content hashes read `policy:v2:…`.
 
 ### 7.3 Decisions

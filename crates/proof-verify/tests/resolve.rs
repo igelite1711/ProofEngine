@@ -8,8 +8,8 @@ use proof_core::{HashAlgorithm, HashRef, Limits};
 use proof_crypto::build::{create_event, fixtures};
 use proof_format::{ArtifactStore, MemoryStore};
 use proof_verify::{
-    resolve_proof_chain, verify_proof, BuiltProof, ProofBuilder, UnresolvedReason, Validity,
-    VerifyCtx,
+    descendants_of, resolve_proof_chain, verify_proof, BuiltProof, ProofBuilder, UnresolvedReason,
+    Validity, VerifyCtx,
 };
 
 fn ctx() -> VerifyCtx {
@@ -187,4 +187,66 @@ fn diamond_references_resolve_once() {
     let d_entries: Vec<_> = rep.resolved.iter().filter(|r| r.id == d.id).collect();
     assert_eq!(d_entries.len(), 1);
     assert_eq!(d_entries[0].depth, 2);
+}
+
+#[test]
+fn ancestors_list_shallowest_depths_in_order() {
+    let d = tiny_proof("d", &[]);
+    let b = tiny_proof("b", std::slice::from_ref(&d.id));
+    let c = tiny_proof("c", std::slice::from_ref(&d.id));
+    let a = tiny_proof("a", &[b.id.clone(), c.id.clone()]);
+    let store = stored(&[&a, &b, &c, &d]);
+    let rep = resolve_proof_chain(&a.canonical, &store, &ctx(), 8).unwrap();
+    let anc = rep.ancestors();
+    assert_eq!(anc.len(), 3);
+    // Ordered by (depth, id): b and c at depth 1, d at depth 2 exactly once.
+    assert_eq!(anc[0].depth, 1);
+    assert_eq!(anc[1].depth, 1);
+    assert_eq!(anc[2].depth, 2);
+    assert_eq!(anc[2].id, d.id);
+    assert!(anc.iter().all(|x| x.resolved));
+    let ids: Vec<&str> = anc.iter().map(|x| x.id.as_str()).collect();
+    assert!(ids.contains(&b.id.as_str()));
+    assert!(ids.contains(&c.id.as_str()));
+}
+
+#[test]
+fn ancestors_name_unavailable_references_as_unresolved() {
+    let ghost = tiny_proof("ghost", &[]);
+    let a = tiny_proof("a", std::slice::from_ref(&ghost.id));
+    let store = stored(&[&a]);
+    let rep = resolve_proof_chain(&a.canonical, &store, &ctx(), 8).unwrap();
+    let anc = rep.ancestors();
+    assert_eq!(anc.len(), 1);
+    assert_eq!(anc[0].id, ghost.id);
+    assert_eq!(anc[0].depth, 1);
+    assert!(!anc[0].resolved);
+}
+
+#[test]
+fn descendants_of_finds_proper_descendants_only() {
+    let d = tiny_proof("d", &[]);
+    let b = tiny_proof("b", std::slice::from_ref(&d.id));
+    let c = tiny_proof("c", std::slice::from_ref(&d.id));
+    let a = tiny_proof("a", &[b.id.clone(), c.id.clone()]);
+    let all = vec![
+        a.canonical.clone(),
+        b.canonical.clone(),
+        c.canonical.clone(),
+        d.canonical.clone(),
+    ];
+    let store = stored(&[&a, &b, &c, &d]);
+    // d is referenced (transitively) by b, c, and a — but never itself.
+    let mut found = descendants_of(&d.id, &all, &store, &ctx(), 8).unwrap();
+    found.sort();
+    let mut want = vec![a.id.clone(), b.id.clone(), c.id.clone()];
+    want.sort();
+    assert_eq!(found, want);
+    // a references nothing further down: no descendants.
+    let none: Vec<String> = descendants_of(&a.id, &all, &store, &ctx(), 8).unwrap();
+    assert!(none.is_empty());
+    // Unknown target: nobody descends from it.
+    let ghost = tiny_proof("ghost", &[]);
+    let noone = descendants_of(&ghost.id, &all, &store, &ctx(), 8).unwrap();
+    assert!(noone.is_empty());
 }

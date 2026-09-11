@@ -85,6 +85,128 @@ impl ResolutionReport {
     pub fn complete(&self) -> bool {
         self.unresolved.is_empty()
     }
+
+    /// Transitive ancestry: every proof id reachable from the root through
+    /// composition linkage, with shallowest depth, ordered by (depth, id).
+    /// Includes named-but-unavailable references — ancestry is structural
+    /// (the linkage names them), independent of availability.
+    pub fn ancestors(&self) -> Vec<Ancestor> {
+        use std::collections::BTreeMap;
+        let mut depths: BTreeMap<&str, (usize, bool)> = BTreeMap::new();
+        for r in &self.resolved {
+            depths
+                .entry(r.id.as_str())
+                .and_modify(|e| {
+                    e.0 = e.0.min(r.depth);
+                    e.1 = true;
+                })
+                .or_insert((r.depth, true));
+        }
+        for u in &self.unresolved {
+            depths.entry(u.id.as_str()).or_insert((u.depth, false));
+        }
+        let mut out: Vec<Ancestor> = depths
+            .into_iter()
+            .map(|(id, (depth, resolved))| Ancestor {
+                id: id.to_string(),
+                depth,
+                resolved,
+            })
+            .collect();
+        out.sort_by(|a, b| (a.depth, &a.id).cmp(&(b.depth, &b.id)));
+        out
+    }
+}
+
+/// One transitive ancestor: id, shallowest BFS depth from the root, and
+/// whether bytes were fetched and verified (`false` = named in linkage but
+/// unavailable/mismatched/too deep/over budget — see `unresolved`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ancestor {
+    pub id: String,
+    pub depth: usize,
+    pub resolved: bool,
+}
+
+/// Reverse traversal: ids of `candidates` whose transitive composition
+/// closure contains `target` (proper descendants only — a proof is never
+/// its own descendant).
+///
+/// The candidate set is explicit because stores are not enumerable (the
+/// `ArtifactStore` seam has no listing operation by design): callers pass
+/// the sibling proofs under consideration (e.g. a bundle's members).
+/// Each candidate verifies under `ctx` exactly as `resolve_proof_chain`
+/// would verify it; candidates that fail to verify are skipped, never
+/// assumed. Returns ids sorted ascending.
+pub fn descendants_of(
+    target: &str,
+    candidates: &[Vec<u8>],
+    store: &impl ArtifactStore,
+    ctx: &VerifyCtx,
+    max_transitive_depth: usize,
+) -> Result<Vec<String>, ProofError> {
+    use proof_format::store::MemoryStore;
+    let mut mem = MemoryStore::new();
+    let mut ids = Vec::new();
+    for bytes in candidates {
+        let report = verify_proof(bytes, ctx)?;
+        if let Some(id) = report.proof_id.clone() {
+            // MemoryStore rejects same-id-different-bytes (equivocation);
+            // surface that as a caller error rather than silently picking.
+            mem.put(&id, bytes.clone()).map_err(|e| {
+                proof_core::ErrorCode::SchemaViolation.err(format!("descendants_of: {e}"))
+            })?;
+            ids.push(id);
+        }
+    }
+    // Candidates may reference proofs outside the candidate set, which the
+    // passed store may hold: resolve against the union, callers first.
+    let union = UnionStore { a: &mem, b: store };
+    let mut out = Vec::new();
+    for id in &ids {
+        if id == target {
+            continue; // proper descendants only
+        }
+        let bytes = union.get(id).map_err(|e| {
+            proof_core::ErrorCode::SchemaViolation.err(format!("descendants_of: {e}"))
+        })?;
+        let bytes = bytes.ok_or_else(|| {
+            proof_core::ErrorCode::SchemaViolation
+                .err("descendants_of: candidate vanished from union store")
+        })?;
+        let rep = resolve_proof_chain(&bytes, &union, ctx, max_transitive_depth)?;
+        if rep.ancestors().iter().any(|a| a.id == target) {
+            out.push(id.clone());
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// Read union of two stores (first hit wins), with equivocation detection:
+/// the same id held with different bytes under each side is corruption,
+/// surfaced as a store error rather than a silent pick.
+struct UnionStore<'a, A: ArtifactStore, B: ArtifactStore> {
+    a: &'a A,
+    b: &'a B,
+}
+
+impl<A: ArtifactStore, B: ArtifactStore> ArtifactStore for UnionStore<'_, A, B> {
+    fn put(&mut self, _id: &str, _cbor: Vec<u8>) -> Result<(), String> {
+        Err("union store is read-only".into())
+    }
+
+    fn get(&self, id: &str) -> Result<Option<Vec<u8>>, String> {
+        let from_a = self.a.get(id)?;
+        let from_b = self.b.get(id)?;
+        match (from_a, from_b) {
+            (Some(a), Some(b)) if a != b => Err(format!(
+                "store equivocation: {id} held with different bytes on each side"
+            )),
+            (Some(a), _) => Ok(Some(a)),
+            (None, b) => Ok(b),
+        }
+    }
 }
 
 /// Resolve `root_canonical`'s transitive `referenced_proofs` against `store`.

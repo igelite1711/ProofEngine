@@ -100,6 +100,11 @@ pub struct VerifiedState {
     pub vocabularies_declared: Vec<VocabularyDecl>,
     /// Conflict groups from the verification report (representation only).
     pub conflicts: Vec<proof_verify::ConflictRecord>,
+    /// Composition linkage: sorted source proof ids bound by `proof_id`
+    /// (possibly empty). Reference hooks (`requires_reference`,
+    /// `forbids_reference`) read this direct linkage; transitive closure
+    /// is the bundle layer's job (`proof_verify::resolve`).
+    pub referenced_proofs: Vec<String>,
     /// Per-evidence derived status (id, kind, status) for usability policy.
     pub evidence_statuses: Vec<EvidenceStatusEntry>,
 }
@@ -293,6 +298,7 @@ pub fn state_from_report_and_proof(
         delegations,
         identity_bindings,
         withdrawn_ids: report.withdrawn_ids.clone(),
+        referenced_proofs: proof.referenced_proofs.clone(),
         vocabularies_used,
         vocabularies_declared: proof.vocabularies.clone(),
         conflicts: report.conflicts.clone(),

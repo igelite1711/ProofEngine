@@ -21,6 +21,7 @@ pub use report::{
     PolicyDecision, Validity, Verdict, VerifyReport,
 };
 pub use resolve::{
-    resolve_proof_chain, ResolutionReport, ResolvedProof, UnresolvedReason, UnresolvedRef,
+    descendants_of, resolve_proof_chain, Ancestor, ResolutionReport, ResolvedProof,
+    UnresolvedReason, UnresolvedRef,
 };
 pub use status::{StatusSource, VecStatusSource};

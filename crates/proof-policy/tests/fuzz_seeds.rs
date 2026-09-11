@@ -45,7 +45,9 @@ fn check_invariants(text: &str) {
                     | Requirement::TransparencyInclusion { .. }
                     | Requirement::NoConflictingEvidence
                     | Requirement::VocabularyAccepted { .. }
-                    | Requirement::EvidenceUsable { .. } => {}
+                    | Requirement::EvidenceUsable { .. }
+                    | Requirement::RequiresReference { .. }
+                    | Requirement::ForbidsReference { .. } => {}
                 }
             }
             let reparsed = parse_policy(&v, &limits).expect("same input, same result");

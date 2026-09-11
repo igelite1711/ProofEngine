@@ -52,9 +52,10 @@ comes from signed attestation windows (`not_expired`) and transparency.
 ## 4. V2 path (boolean layer shipped)
 
 `policy_version: 2` carries an `expression` tree (`all`/`any`/`not`/
-`threshold{k,of}`) over the ten frozen v1 leaves plus six adjudication
+`threshold{k,of}`) over the ten frozen v1 leaves plus eight adjudication
 leaves (`delegated_authority`, `identity_bound`, `transparency_inclusion`,
-`no_conflicting_evidence`, `vocabulary_accepted`, `evidence_usable`).
+`no_conflicting_evidence`, `vocabulary_accepted`, `evidence_usable`,
+`requires_reference`, `forbids_reference`).
 V1 stays byte-stable forever (v1 rejects v2 leaf names; v2 rejects the
 `requirements` key). INDETERMINATE remains reserved for unevaluated policy.
 Temporal windows beyond validity/freshness, relationship-provenance

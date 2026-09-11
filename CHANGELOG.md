@@ -82,6 +82,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`UNAVAILABLE`/`ID_MISMATCH`/`DEPTH_EXCEEDED`/`OVER_BUDGET`/`STORE`);
   root verdict reproduced verbatim, incompleteness fail-closed. `resolve`
   CLI command (exit 0 iff complete). Core stays linkage-only (frozen).
+- **Traversal APIs**: `ResolutionReport::ancestors()` (transitive closure
+  with shallowest depths, unavailable refs named as unresolved) and
+  `descendants_of()` over an explicit candidate set with union-store
+  equivocation detection.
+- **Reference hooks** (policy v2, eight adjudication leaves):
+  `requires_reference{id}` / `forbids_reference{id}` over direct linkage
+  (`prf:v1:` shape-checked at parse, v1 rejects); transitive closure stays
+  bundle-layer. EBNF + CBOR + describe extended; v1 byte-identical.
 - **Divergence representation** (SPEC §17): `report.conflicts[]` records
   same-type/subject groups with differing fields; validity unchanged, policy
   adjudicates; corroboration stays silent. Surfaced in CLI JSON.
@@ -112,7 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `created_at`), qualifier in the pass message, restamp behavior pinned by
   test; `EvalInputs` bounds documented, one-shot path enforces
   `LIMIT_EXCEEDED`.
-- **Fuzz drift**: policy-parser target covers all ten requirement types.
+- **Fuzz drift**: policy-parser target covers all eighteen requirement types.
 
 ### Added
 

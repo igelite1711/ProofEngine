@@ -40,8 +40,8 @@ threshold-expr    = ws '{' ws '"threshold"': ws '{' ws
 expression-list   = expression
                   | expression ws ',' ws expression-list
 
-(* Closed requirement set: ten V1 leaves + six V2 adjudication leaves.
-   V1 policies accept V1 leaves only; V2 expressions accept all sixteen. *)
+(* Closed requirement set: ten V1 leaves + eight V2 adjudication leaves.
+   V1 policies accept V1 leaves only; V2 expressions accept all eighteen. *)
 requirement-type  = '"signature_valid"'
                   | '"issuer_trusted"'
                   | '"issuer_excluded"'
@@ -58,6 +58,8 @@ requirement-type  = '"signature_valid"'
                   | '"no_conflicting_evidence"'
                   | '"vocabulary_accepted"'
                   | '"evidence_usable"'
+                  | '"requires_reference"'
+                  | '"forbids_reference"'
 
 (* Optional fields per requirement type *)
 requirement-fields = ws ',' ws issuer-field
@@ -69,6 +71,7 @@ requirement-fields = ws ',' ws issuer-field
                   | ws ',' ws log-field
                   | ws ',' ws ns-fields
                   | ws ',' ws scope-field
+                  | ws ',' ws reference-field
 
 issuer-field      = '"issuer"': ws json-string
 relationship-field = '"relationship"': ws json-string
@@ -79,6 +82,7 @@ ab-fields         = '"a"': ws json-string ws ',' ws '"b"': ws json-string
 log-field         = '"log"': ws json-string
 ns-fields         = '"ns"': ws json-string ws ',' ws '"max_version"': ws number
 scope-field       = '"scope"': ws json-string
+reference-field   = '"id"': ws json-string  (* prf:v1: shape, checked at parse *)
 
 (* JSON primitives *)
 json-string       = '"' string-char* '"'

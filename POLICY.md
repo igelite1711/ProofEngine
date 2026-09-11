@@ -153,6 +153,8 @@ Adjudication leaves (v2-only; rejected under v1):
 | `no_conflicting_evidence` | — | no conflict groups recorded |
 | `vocabulary_accepted` | `ns`, `max_version` | every declaration of `ns` has version ≤ max AND `ns` is not used-while-undeclared-or-over-max (unused passes vacuously) |
 | `evidence_usable` | `kind` | some evidence of kind has status AVAILABLE (strict counterpart to `evidence_present`) |
+| `requires_reference` | `id` (`prf:v1:`, shape-checked at parse) | the direct composition linkage names `id` (what `proof_id` binds; transitive closure is the bundle layer) |
+| `forbids_reference` | `id` (`prf:v1:`, shape-checked at parse) | the direct composition linkage omits `id` |
 
 INDETERMINATE stays reserved for unevaluated policy (broken proof
 preconditions), exactly like v1 — leaves evaluate boolean once the guard

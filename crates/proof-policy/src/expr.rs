@@ -1,7 +1,7 @@
 // Copyright 2026 Proof Engine Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Policy v2 expressions (`policy_version: 2`): boolean connectives and
-//! thresholds over requirement leaves, including the six V2 adjudication
+//! thresholds over requirement leaves, including the eight V2 adjudication
 //! leaves (delegation, identity, transparency, conflict, vocabulary,
 //! usability). V1 (`requirements` implicit AND over the ten frozen leaves)
 //! is untouched and parses byte-identically.

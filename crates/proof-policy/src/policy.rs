@@ -12,7 +12,7 @@ use proof_core::{
 /// PE-POLICY-008.
 ///
 /// V1 (`policy_version: 1`) accepts exactly the first ten variants, combined
-/// by implicit AND. The six adjudication variants below are V2-only
+/// by implicit AND. The eight adjudication variants below are V2-only
 /// (`policy_version: 2`, usable inside boolean/threshold expressions):
 /// v1 parsing rejects their type names, so v1 semantics are frozen
 /// byte-for-byte while new trust questions become expressible.
@@ -91,6 +91,15 @@ pub enum Requirement {
     /// not mere presence (e.g. renewal-carried evidence with unverified
     /// backing reads UNKNOWN and fails here while passing presence).
     EvidenceUsable { kind: EvidenceKind },
+    /// The composition linkage directly names proof `id`. Composition
+    /// hook: callers pinning which sources a proof must be built from.
+    /// Direct linkage only (what `proof_id` binds); transitive closure is
+    /// the bundle layer (`proof_verify::resolve`), not policy.
+    RequiresReference { id: String },
+    /// The composition linkage does not name proof `id`. Exclusion hook:
+    /// callers forbidding a source (tainted origin, wrong upstream).
+    /// Direct linkage only, like `RequiresReference`.
+    ForbidsReference { id: String },
 }
 
 impl Requirement {
@@ -128,6 +137,8 @@ impl Requirement {
                 format!("vocabulary_accepted({ns}, max_version={max_version})")
             }
             Self::EvidenceUsable { kind } => format!("evidence_usable({})", kind.as_str()),
+            Self::RequiresReference { id } => format!("requires_reference({id})"),
+            Self::ForbidsReference { id } => format!("forbids_reference({id})"),
         }
     }
 
@@ -150,10 +161,12 @@ impl Requirement {
             Self::NoConflictingEvidence => "no_conflicting_evidence",
             Self::VocabularyAccepted { .. } => "vocabulary_accepted",
             Self::EvidenceUsable { .. } => "evidence_usable",
+            Self::RequiresReference { .. } => "requires_reference",
+            Self::ForbidsReference { .. } => "forbids_reference",
         }
     }
 
-    /// True for the six V2-only adjudication leaves.
+    /// True for the eight V2-only adjudication leaves.
     pub fn is_v2_only(&self) -> bool {
         matches!(
             self,
@@ -163,6 +176,8 @@ impl Requirement {
                 | Self::NoConflictingEvidence
                 | Self::VocabularyAccepted { .. }
                 | Self::EvidenceUsable { .. }
+                | Self::RequiresReference { .. }
+                | Self::ForbidsReference { .. }
         )
     }
 }
@@ -245,6 +260,9 @@ pub(crate) fn requirement_to_cbor(req: &Requirement) -> proof_format::CborValue 
                 CborValue::Text("kind".into()),
                 CborValue::Text(kind.as_str().into()),
             ));
+        }
+        Requirement::RequiresReference { id } | Requirement::ForbidsReference { id } => {
+            req_map.push((CborValue::Text("id".into()), CborValue::Text(id.clone())));
         }
         Requirement::ProofFresh { max_age_seconds } => {
             req_map.push((
@@ -342,7 +360,7 @@ fn req_string(
 /// `POLICY_INVALID` and nothing is evaluated, partially or otherwise.
 /// Version 1 keeps the implicit-AND requirements list (frozen); version 2
 /// carries an `expression` tree (boolean connectives + thresholds over v1
-/// leaves plus the six V2 adjudication leaves).
+/// leaves plus the eight V2 adjudication leaves).
 pub fn parse_policy(v: &serde_json::Value, limits: &Limits) -> Result<Policy, ProofError> {
     let root = v
         .as_object()
@@ -425,7 +443,7 @@ fn parse_requirement(v: &serde_json::Value, index: usize) -> Result<Requirement,
 }
 
 /// Parse one requirement leaf inside a v2 expression. Accepts the ten frozen
-/// v1 leaves plus the six V2 adjudication leaves.
+/// v1 leaves plus the eight V2 adjudication leaves.
 pub(crate) fn parse_requirement_v2_leaf(
     obj: &serde_json::Map<String, serde_json::Value>,
     what: &str,
@@ -433,7 +451,7 @@ pub(crate) fn parse_requirement_v2_leaf(
     parse_requirement_inner(obj, what, false)
 }
 
-/// Shared leaf validation. `v1_only` rejects the six V2 adjudication names,
+/// Shared leaf validation. `v1_only` rejects the eight V2 adjudication names,
 /// freezing v1 semantics byte-for-byte.
 fn parse_requirement_inner(
     obj: &serde_json::Map<String, serde_json::Value>,
@@ -441,7 +459,7 @@ fn parse_requirement_inner(
     v1_only: bool,
 ) -> Result<Requirement, ProofError> {
     let t = req_string(obj, "type", what)?;
-    // Frozen v1: the six adjudication names never parse under v1, so v1
+    // Frozen v1: the eight adjudication names never parse under v1, so v1
     // semantics (and bytes) cannot drift as v2 grows.
     if v1_only
         && matches!(
@@ -452,6 +470,8 @@ fn parse_requirement_inner(
                 | "no_conflicting_evidence"
                 | "vocabulary_accepted"
                 | "evidence_usable"
+                | "requires_reference"
+                | "forbids_reference"
         )
     {
         return Err(ErrorCode::PolicyInvalid
@@ -592,8 +612,35 @@ fn parse_requirement_inner(
                 kind: EvidenceKind::new(k),
             })
         }
+        "requires_reference" => {
+            reject_extra_keys(obj, &["type", "id"], what)?;
+            Ok(Requirement::RequiresReference {
+                id: require_proof_ref(obj, "id", what)?,
+            })
+        }
+        "forbids_reference" => {
+            reject_extra_keys(obj, &["type", "id"], what)?;
+            Ok(Requirement::ForbidsReference {
+                id: require_proof_ref(obj, "id", what)?,
+            })
+        }
         _ => Err(ErrorCode::PolicyInvalid.err(format!("{what}: unknown requirement type {t}"))),
     }
+}
+
+/// `prf:v1:` proof-id field shared by reference hooks. Shape-checked at
+/// parse time (like keyrefs): a typo'd id fails closed as POLICY_INVALID
+/// rather than silently never matching.
+fn require_proof_ref(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    what: &str,
+) -> Result<String, ProofError> {
+    let v = req_string(obj, key, what)?;
+    proof_crypto::id::check_proof_ref_shape(&v).map_err(|e| {
+        ErrorCode::PolicyInvalid.err(format!("{what}: {key} must be a prf:v1: id ({e})"))
+    })?;
+    Ok(v)
 }
 
 /// `key:*` KeyRef field shared by issuer/root/log bindings.

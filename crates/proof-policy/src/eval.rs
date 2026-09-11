@@ -487,6 +487,20 @@ fn eval_one(req: &Requirement, state: &VerifiedState, inputs: &EvalInputs) -> Re
                 )
             }
         }
+        Requirement::RequiresReference { id } => {
+            if state.referenced_proofs.iter().any(|r| r == id) {
+                pass(&name, format!("composition linkage names {id}"))
+            } else {
+                fail(&name, format!("composition linkage does not name {id}"))
+            }
+        }
+        Requirement::ForbidsReference { id } => {
+            if state.referenced_proofs.iter().any(|r| r == id) {
+                fail(&name, format!("composition linkage names forbidden {id}"))
+            } else {
+                pass(&name, format!("composition linkage omits {id}"))
+            }
+        }
     }
 }
 

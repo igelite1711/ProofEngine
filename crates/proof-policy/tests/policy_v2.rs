@@ -1238,3 +1238,179 @@ fn v2_stale_identity_never_merges() {
     );
     assert_eq!(out3.decision, PolicyDecision::Pass, "{out3:?}");
 }
+
+// ---------- reference hooks (requires/forbids_reference) ----------
+
+/// Fully valid attested proof with composition linkage, for hook tests.
+fn linked_proof(tag: &str, refs: &[String]) -> proof_verify::BuiltProof {
+    let lim = limits();
+    let key = fixtures::test_key();
+    let pay = create_event(
+        proof_core::model::EventContent {
+            v: 1,
+            event_type: EventType::new(EventType::PAYMENT_CREATED),
+            subject: format!("payment:{tag}"),
+            effective_at: 1_700_000_000,
+            payload_ref: HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap(),
+            metadata: vec![],
+        },
+        &lim,
+    )
+    .unwrap();
+    let inv = create_event(
+        proof_core::model::EventContent {
+            v: 1,
+            event_type: EventType::new(EventType::INVOICE_ISSUED),
+            subject: format!("invoice:{tag}"),
+            effective_at: 1_700_000_000,
+            payload_ref: HashRef::new(HashAlgorithm::Sha256, vec![0xCDu8; 32]).unwrap(),
+            metadata: vec![],
+        },
+        &lim,
+    )
+    .unwrap();
+    let att = statement(
+        &key,
+        &format!("payment:{tag}"),
+        "payment.settled",
+        vec![("amount".into(), MetaValue::Uint(4200))],
+    );
+    let evd = make_evidence(
+        EvidenceKind::new("transaction_record"),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap(),
+        Some(att.id.clone()),
+        None,
+        &lim,
+    )
+    .unwrap();
+    let rel = make_relationship(
+        proof_core::model::Relationship {
+            v: 1,
+            from: pay.id.clone(),
+            rel_type: RelType::new("SETTLES"),
+            to: inv.id.clone(),
+            evidence_ref: Some(evd.id.clone()),
+            attestation_ref: Some(att.id.clone()),
+        },
+        &lim,
+    )
+    .unwrap();
+    let mut b = ProofBuilder::new(
+        Proposition {
+            v: 1,
+            kind: "payment.settles-invoice".into(),
+            subject: pay.id.clone(),
+            predicate: "settles".into(),
+            object: Some(inv.id.clone()),
+            at_time: Some(1_700_000_100),
+            context: vec![],
+        },
+        CLOCK_OK,
+    );
+    b.add_event(pay);
+    b.add_event(inv);
+    b.add_attestation(att);
+    b.add_evidence(evd);
+    b.add_relationship(rel);
+    let mut sorted = refs.to_vec();
+    sorted.sort();
+    for r in sorted {
+        b.add_referenced_proof(r).unwrap();
+    }
+    b.build(&lim).unwrap()
+}
+
+#[test]
+fn v2_reference_hooks_parse() {
+    let leaf = linked_proof("leaf", &[]);
+    // Both leaves parse under v2 with shape-checked ids.
+    let p = v2(
+        "hooks",
+        serde_json::json!({"all": [
+            {"type": "requires_reference", "id": leaf.id},
+            {"type": "forbids_reference", "id": leaf.id},
+        ]}),
+    );
+    assert_eq!(p.version, 2);
+    // Malformed ids fail closed at parse (typos never silently miss).
+    for bad in [
+        serde_json::json!({"type": "requires_reference", "id": "prf:v1:!!!"}),
+        serde_json::json!({"type": "requires_reference", "id": "evt:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}),
+        serde_json::json!({"type": "requires_reference"}),
+        serde_json::json!({"type": "forbids_reference", "id": leaf.id, "extra": 1}),
+    ] {
+        let v = serde_json::json!({
+            "policy_version": 2, "policy_id": "bad", "expression": bad,
+        });
+        assert!(parse_policy(&v, &limits()).is_err(), "must reject {bad}");
+    }
+    // v1 rejects both names (frozen v1 cannot drift as v2 grows).
+    for name in ["requires_reference", "forbids_reference"] {
+        let v = serde_json::json!({
+            "policy_version": 1, "policy_id": "h",
+            "requirements": [{"type": name, "id": leaf.id}],
+        });
+        assert!(parse_policy(&v, &limits()).is_err(), "{name} is v2-only");
+    }
+}
+
+#[test]
+fn v2_reference_hooks_decide_on_direct_linkage() {
+    let leaf = linked_proof("leaf", &[]);
+    let other = linked_proof("other", &[]);
+    let parent = linked_proof("parent", std::slice::from_ref(&leaf.id));
+    let issuer = fixtures::test_key().key_ref();
+    let trusted = vec![issuer];
+    // Present source required: PASS; absent source required: FAIL.
+    let out = eval_built(
+        &parent,
+        &v2(
+            "req-present",
+            serde_json::json!({"type": "requires_reference", "id": leaf.id}),
+        ),
+        trusted.clone(),
+    );
+    assert_eq!(out.decision, PolicyDecision::Pass, "{out:?}");
+    let out = eval_built(
+        &parent,
+        &v2(
+            "req-absent",
+            serde_json::json!({"type": "requires_reference", "id": other.id}),
+        ),
+        trusted.clone(),
+    );
+    assert_eq!(out.decision, PolicyDecision::Fail, "{out:?}");
+    // Forbidden source absent: PASS; forbidden source present: FAIL.
+    let out = eval_built(
+        &parent,
+        &v2(
+            "forbid-absent",
+            serde_json::json!({"type": "forbids_reference", "id": other.id}),
+        ),
+        trusted.clone(),
+    );
+    assert_eq!(out.decision, PolicyDecision::Pass, "{out:?}");
+    let out = eval_built(
+        &parent,
+        &v2(
+            "forbid-present",
+            serde_json::json!({"type": "forbids_reference", "id": leaf.id}),
+        ),
+        trusted.clone(),
+    );
+    assert_eq!(out.decision, PolicyDecision::Fail, "{out:?}");
+    // Hooks compose inside connectives: quorum over linkage + validity.
+    let out = eval_built(
+        &parent,
+        &v2(
+            "quorum",
+            serde_json::json!({"threshold": {"k": 2, "of": [
+                {"type": "signature_valid"},
+                {"type": "requires_reference", "id": leaf.id},
+                {"type": "forbids_reference", "id": other.id},
+            ]}}),
+        ),
+        trusted,
+    );
+    assert_eq!(out.decision, PolicyDecision::Pass, "{out:?}");
+}
