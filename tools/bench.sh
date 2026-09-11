@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Bench: deterministic verification throughput for proof-cli (no new deps).
-# Builds the release binary, generates the demo proof, and times N verifies.
+# Bench: deterministic throughput for proof-cli (no new deps).
+# Builds the release binary, then times: single verify, build/verify/inspect
+# on large proofs, wide graphs, deep supersession chains, signing, and one
+# batch-verify invocation. All numbers are subprocess end-to-end (honest
+# about what they include); per-proof semantics are identical everywhere.
 #
-# Usage:  tools/bench.sh [N=50]
+# Usage:  tools/bench.sh [N=50]  (plus LARGE_E/WIDE_R/DEEP_D/SIGN_N env knobs)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,9 +41,126 @@ dt = time.perf_counter() - t0
 print(f"verify x{n}: {dt:.2f}s total | {dt/n*1000:.2f} ms/verify | {n/dt:.1f} verifies/sec")
 PY
 
-# Batch dimension: one batch-verify invocation over N distinct proofs vs N
-# single-verify invocations. Same semantics per member (batching amortizes
-# process + context setup only — never verification work itself).
+# Scale dimensions: large (many members), wide (many edges), deep (long
+# supersession chain), signing throughput, parse-only (inspect) throughput.
+# Each prints mean ms/op + peak child RSS (Linux ru_maxrss, KB). Counts are
+# overridable: LARGE_E, WIDE_R, DEEP_D, SIGN_N (defaults suit a laptop).
+LARGE_E="${LARGE_E:-16}"
+WIDE_R="${WIDE_R:-48}"
+DEEP_D="${DEEP_D:-8}"
+SIGN_N="${SIGN_N:-20}"
+export LARGE_E WIDE_R DEEP_D SIGN_N
+python3 - "$BIN" "$D" <<'PY'
+import json, os, resource, subprocess, sys, time
+bin_, d = sys.argv[1], sys.argv[2]
+E, R, D, S = (int(os.environ[k]) for k in ("LARGE_E", "WIDE_R", "DEEP_D", "SIGN_N"))
+DL = "ab" * 32
+
+def run(*a):
+    subprocess.run(list(a), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+def rss():
+    return resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+
+def timeit(label, n, args):
+    run(*args)  # warmup
+    t0 = time.perf_counter()
+    for _ in range(n):
+        run(*args)
+    dt = time.perf_counter() - t0
+    print(f"{label}: {dt/n*1000:.2f} ms/op | peak RSS {rss()} KB")
+
+def mk_event(i, tag):
+    p = f"{d}/{tag}-e{i}.json"
+    run(bin_, "create-event", "--type", "test.event.occurred",
+        "--subject", f"test:{tag}-{i}", "--effective-at", "1700000000",
+        "--payload-hex", DL, "--out", p, "--quiet")
+    return p
+
+def mk_attest(i, tag, exp=""):
+    p = f"{d}/{tag}-a{i}.json"
+    cmd = [bin_, "attest", "--seed", "test", "--subject", f"test:{tag}-{i}",
+           "--claim-type", "test.occurred", "--issued-at", "1700000100"]
+    if exp:
+        cmd += ["--expires-at", exp]
+    run(*(cmd + ["--out", p, "--quiet"]))
+    return p
+
+# --- large: E events + E attestations in one proof ---
+evs, atts = [], []
+for i in range(E):
+    evs.append(mk_event(i, "large"))
+    atts.append(mk_attest(i, "large"))
+run(bin_, "build", "--kind", "test.proposition", "--subject", "test:large",
+    "--predicate", "occurred", "--at-time", "1700000100",
+    "--created-at", "1700000200", "--events", ",".join(evs),
+    "--attestations", ",".join(atts), "--evidence", "", "--relationships", "",
+    "--out", f"{d}/large.json", "--quiet")
+timeit(f"build large ({E}+{E} members)", 3,
+       [bin_, "build", "--kind", "test.proposition", "--subject", "test:large",
+        "--predicate", "occurred", "--at-time", "1700000100",
+        "--created-at", "1700000200", "--events", ",".join(evs),
+        "--attestations", ",".join(atts), "--evidence", "", "--relationships", "",
+        "--out", f"{d}/large.json", "--quiet"])
+timeit(f"verify large ({E}+{E} members)", 5,
+       [bin_, "verify", "--proof", f"{d}/large.json", "--clock", "1700000200",
+        "--revocations-known-at", "1700000200", "--quiet"])
+timeit("inspect large (parse-only)", 5,
+       [bin_, "inspect", "--proof", f"{d}/large.json", "--quiet"])
+
+# --- wide: R REFERENCES edges across 8 events ---
+wevs = [mk_event(i, "wide") for i in range(8)]
+ev_ids = [json.load(open(p))["id"] for p in wevs]
+rels = []
+for i in range(R):
+    p = f"{d}/wide-r{i}.json"
+    run(bin_, "relate", "--from", ev_ids[i % 8], "--type", "REFERENCES",
+        "--to", ev_ids[(i + 1) % 8], "--out", p, "--quiet")
+    rels.append(p)
+run(bin_, "build", "--kind", "test.proposition", "--subject", "test:wide",
+    "--predicate", "occurred", "--at-time", "1700000100",
+    "--created-at", "1700000200", "--events", ",".join(wevs),
+    "--attestations", "", "--evidence", "", "--relationships", ",".join(rels),
+    "--out", f"{d}/wide.json", "--quiet")
+timeit(f"verify wide ({R} edges)", 5,
+       [bin_, "verify", "--proof", f"{d}/wide.json", "--clock", "1700000200",
+        "--quiet"])
+
+# --- deep: D-long supersession chain (status supplied, as in production) ---
+datts = [mk_attest(i, "deep") for i in range(D)]
+att_ids = [json.load(open(p))["id"] for p in datts]
+stats = []
+for i in range(1, D):
+    p = f"{d}/deep-s{i}.json"
+    run(bin_, "supersede", "--seed", "test", "--old", att_ids[i - 1],
+        "--new", att_ids[i], "--at", "1700000150", "--out", p, "--quiet")
+    stats.append(p)
+devs = [mk_event(i, "deep") for i in range(2)]
+run(bin_, "build", "--kind", "test.proposition", "--subject", "test:deep",
+    "--predicate", "occurred", "--at-time", "1700000100",
+    "--created-at", "1700000200",
+    "--events", ",".join(devs), "--attestations", ",".join(datts),
+    "--evidence", "", "--relationships", "",
+    "--out", f"{d}/deep.json", "--quiet")
+stargs = []
+for s in stats:
+    stargs += ["--status", s]
+timeit(f"verify deep (chain of {D})", 5,
+       [bin_, "verify", "--proof", f"{d}/deep.json", "--clock", "1700000200",
+        "--revocations-known-at", "1700000200", *stargs, "--quiet"])
+
+# --- signing throughput ---
+t0 = time.perf_counter()
+for i in range(S):
+    run(bin_, "attest", "--seed", "test", "--subject", f"test:sign-{i}",
+        "--claim-type", "test.occurred", "--issued-at", "1700000100",
+        "--out", f"{d}/sign.json", "--quiet")
+dt = time.perf_counter() - t0
+print(f"attest x{S}: {dt/S*1000:.2f} ms/sign | peak RSS {rss()} KB")
+PY
+# Batch dimension: one batch-verify invocation over N distinct proofs.
+# Same semantics per member (batching amortizes process + context setup
+# only — never verification work itself).
 echo ">> generating $N distinct proofs for batch ..."
 BATCH_LIST="$D/batch-list.txt"
 python3 - "$BIN" "$D" "$N" > "$BATCH_LIST" <<'PY'

@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`UNAVAILABLE`/`ID_MISMATCH`/`DEPTH_EXCEEDED`/`OVER_BUDGET`/`STORE`);
   root verdict reproduced verbatim, incompleteness fail-closed. `resolve`
   CLI command (exit 0 iff complete). Core stays linkage-only (frozen).
+- **Bench dimensions** (`tools/bench.sh`): large/wide/deep proofs, signing,
+  parse-only, and batch throughputs with peak-RSS notes (subprocess
+  end-to-end, honestly labeled); `BIN` override for custom target dirs.
 - **Batch verification** (`proof_verify::verify_batch` + `batch-verify`
   CLI): many proofs under one shared context with per-member independent
   semantics (no sampling, no short-circuit, over-cap `LIMIT_EXCEEDED`);
