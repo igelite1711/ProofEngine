@@ -837,9 +837,13 @@ proof-cli explain --proof proof.json --policy policy.json --clock 1700000300 \
 
 ## Status
 
-**Proof Engine V1 — In Development**
+**Semantic foundation: FROZEN** at commit `51ce178` (tag `freeze-candidate-1`;
+see `ARCHITECTURE-FREEZE.md`). **V1 implementation: in development** above the
+freeze — extensions land behind the documented seams.
 
-The V1 core evolves on `main`: spec, code, tests, and golden vectors move together in every change.
+The frozen core evolves on `main` only through classified, manifest-recorded
+changes (`make freeze-guard` / CI enforces this, PE-FREEZE-001); spec, code,
+tests, and golden vectors move together in every change.
 
 Development priorities:
 

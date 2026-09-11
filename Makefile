@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test fmt fmt-check clippy demo fuzzcheck trace neutrality no-panic domain-tests cddl-validate clean install
+.PHONY: help build test fmt fmt-check clippy demo fuzzcheck trace neutrality no-panic domain-tests cddl-validate freeze-guard clean install
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -53,6 +53,9 @@ no-panic: ## Check no unwrap/expect/panic in production paths (CI)
 
 cddl-validate: ## Validate golden vectors against CDDL schema
 	python3 tools/validate_cddl.py
+
+freeze-guard: ## Check the semantic foundation is untouched since the pin (PE-FREEZE-001)
+	python3 tools/check_freeze.py
 
 domain-tests: ## Run domain proof-suite tests
 	cd domains/proof-domains && cargo test --locked

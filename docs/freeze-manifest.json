@@ -1,0 +1,49 @@
+{
+  "_doc": "Freeze enforcement manifest (PE-FREEZE-001). The semantic foundation is frozen at `pin` (ARCHITECTURE-FREEZE.md \u00a72, tag freeze-candidate-1). Any diff since the pin inside `frozen_paths` must be covered by a `change_records` entry below; anything else fails `tools/check_freeze.py` / `make freeze-guard`. CORE-class changes additionally require a docs/ARCHITECTURE-CHANGE-PROPOSAL-*.md per ARCHITECTURE-FREEZE.md \u00a75.",
+  "pin": "51ce178b784324969ab5ddf5ca28939da7f3ac8a",
+  "frozen_paths": [
+    "crates/proof-core/src/",
+    "crates/proof-format/src/",
+    "crates/proof-crypto/src/",
+    "crates/proof-graph/src/",
+    "crates/proof-verify/src/",
+    "crates/proof-policy/src/",
+    "docs/format.cddl",
+    "docs/policy-grammar.ebnf",
+    "fixtures/"
+  ],
+  "change_records": [
+    {
+      "commit": "af2242bbfc9d8310618e18ffe7b6174417082b21",
+      "class": "GENERIC EXTENSION",
+      "layer": "Bundle-layer transitive proof-linkage resolution (proof_verify::resolve) behind the ArtifactStore seam; record-only, never alters verdicts",
+      "files": [
+        "crates/proof-verify/src/lib.rs",
+        "crates/proof-verify/src/resolve.rs"
+      ]
+    },
+    {
+      "commit": "f2cf70a1bba82e3761de372ca6ce5773715ecdd0",
+      "class": "DOCUMENTATION",
+      "layer": "Comment wording only (non-English stray text -> English); zero behavior change",
+      "files": [
+        "crates/proof-verify/src/context.rs"
+      ]
+    },
+    {
+      "commit": "2b1c87b4884a1aa1236323ab9a659c2b305114be",
+      "class": "GENERIC EXTENSION",
+      "layer": "P4 remainder: ancestors/descendants traversal + V2 policy leaves (requires_reference/forbids_reference) behind the policy_version capability row; v1 byte-stable (v1_rejects_v2_leaf_names_and_stays_frozen)",
+      "files": [
+        "crates/proof-policy/src/eval.rs",
+        "crates/proof-policy/src/expr.rs",
+        "crates/proof-policy/src/policy.rs",
+        "crates/proof-policy/src/state.rs",
+        "crates/proof-verify/src/context.rs",
+        "crates/proof-verify/src/lib.rs",
+        "crates/proof-verify/src/resolve.rs",
+        "docs/policy-grammar.ebnf"
+      ]
+    }
+  ]
+}
