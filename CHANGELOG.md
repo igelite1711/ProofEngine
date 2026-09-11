@@ -106,6 +106,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authenticate against evidence digests through the pipeline's own rule.
 - **No-panic CI gate**: `make no-panic` (`tools/check_no_panic.py`,
   PE-SEC-004) enforced in CI; exhaustiveness arms return fail-closed errors.
+- **SCITT adapter** (`crates/proof-adapter-scitt`, P7): signed statements /
+  receipts → attestations + `transparency_registration` / `transparency_receipt`
+  evidence with sha256-of-canonical-statement binding both directions
+  (stdlib differential recomputes it); Ed25519 verified, x5chain/DID stable-code
+  rejections; checkpoint constructor feeds policy `transparency_inclusion`;
+  pinned fixtures; X.509 chains and Merkle proofs explicitly out of scope.
 
 ### Fixed (protocol-doc forks, no wire break)
 

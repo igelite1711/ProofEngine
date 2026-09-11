@@ -188,7 +188,7 @@ are the *extension* track (versioned capability rows). Phases P10–P12 are the
   operator; no regression on all v1 policy vectors.
 
 ### P7 — Adapters (standards mapping)
-**Scope**
+**Scope (SCITT landed: `crates/proof-adapter-scitt`)**
 - Implement the mapping layers of ECOSYSTEM §6 for C2PA, W3C VC, SCITT,
   X.509/PKI, transparency logs, device attestation, signed HTTP records,
   enterprise events — each its own crate, differential-tested both

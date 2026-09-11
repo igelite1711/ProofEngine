@@ -150,6 +150,7 @@ INTEROP interoperability · OPS operational controls.
 | PE-OPS-003 | Fuzz targets build per PR; smoke nightly with log | VERIFICATION.md | `.github/workflows/fuzz.yml` | `.github/workflows/fuzz.yml` | — (first-run invariant catch 7d9db44) |
 | PE-OPS-004 | Demo determinism enforced in CI (sha256 rerun) | VERIFICATION.md | `.github/workflows/ci.yml` demo job | `cli_e2e::demo_is_deterministic_and_green` | — |
 | PE-OPS-005 | No forbidden dependency families in tree | IMPLEMENTATION_PLAN A12 | `Cargo.lock` review + deny bans | `deny.toml` | — |
+| PE-FREEZE-001 | Semantic foundation untouched since the pin except approved change records | ARCHITECTURE-FREEZE.md §5 | `tools/check_freeze.py`, `docs/freeze-manifest.json`, `Makefile` freeze-guard | `.github/workflows/ci.yml` | — (any unapproved frozen-path diff fails the gate itself) |
 
 ## LONG — longevity & post-quantum readiness (docs/LONGEVITY.md)
 

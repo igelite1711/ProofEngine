@@ -136,7 +136,7 @@ Adapter interface contract for an external standard S:
 |---|---|
 | C2PA | manifest → evidence/attestation mapping; claim binding |
 | W3C Verifiable Credentials | VC/VP → attestation+evidence; key binding |
-| SCITT | signed statements/receipts → attestation; transparency receipts → evidence |
+| SCITT | signed statements/receipts → attestation; transparency receipts → evidence — LANDED as `crates/proof-adapter-scitt` (Ed25519 statements verified; x5chain/DID stable-code rejections; digest binding both directions; stdlib differential) |
 | X.509 / PKI | certificate chains → trust anchors + issuer evidence |
 | Transparency logs (CT-style / sigstore) | inclusion/consistency proofs → evidence; receipts |
 | Device attestation (TPM/Android/iOS) | attestation statements → evidence+attestation |
