@@ -78,3 +78,14 @@ primitives cannot represent it; extension tried and failed; security,
 compatibility, migration, verifier, and durability impacts acceptable. Only
 a genuine foundational deficiency reopens the freeze, by explicit
 maintainer decision with a new pin recorded here.
+
+## 6. Post-freeze change log (extensions only; §2 untouched)
+
+| Commit | Classification | Layer | Verdict impact |
+|---|---|---|---|
+| `af2242b` (P4) | GENERIC EXTENSION | `proof_verify::resolve_proof_chain` + `proof-cli resolve` behind the `ArtifactStore` seam (bundle layer; P4 of `MIGRATION-PLAN.md`) | None by construction: root report reproduced verbatim; anything unresolved is `complete == false`, never a verdict change |
+
+The `freeze-candidate-1` tag names `51ce178` (the frozen core). Extension
+commits that land on top of the pin are named `freeze-candidate-1-N` (e.g.
+`freeze-candidate-1-1-gaf2242b`), preserving the immutability of the pin
+while keeping extension history explicit.

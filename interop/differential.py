@@ -59,7 +59,7 @@ def main():
         with open(os.path.join(fx, f"golden-{n:02d}.json")) as fh:
             return json.load(fh)
 
-    # ---- Part 1: I2 over golden vectors (all 26 vectors) ----
+    # ---- Part 1: I2 over golden vectors (31-vector corpus; canonical/ids/signatures/bindings) ----
     g1 = load(1)
     try:
         from pengine import check_canonical, obj_id

@@ -11,7 +11,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 
-**V1 in development · 4 fuzz targets · 10 industries · 2 independent implementations (Ed25519 + P-256) · 26 golden vectors**
+**V1 in development · 4 fuzz targets · 12 industries · 2 implementations (Rust reference + stdlib-only Python; Ed25519 + P-256) · 31 golden vectors**
 
 ---
 
@@ -601,7 +601,8 @@ All docs are in the [docs index](docs/INDEX.md). The most important ones:
 
 | Document | What it covers |
 |----------|----------------|
-| [SPEC.md](SPEC.md) | Protocol specification (authoritative) |
+| [PROOF-ENGINE-SPEC.md](PROOF-ENGINE-SPEC.md) | Unified protocol specification (normative single entry) |
+| [SPEC.md](SPEC.md) | Full-text V1.0 draft (superseded by PROOF-ENGINE-SPEC.md) |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Design and repository layout |
 | [FORMAT.md](FORMAT.md) | Wire format details |
 | [POLICY.md](POLICY.md) | Policy language |
@@ -860,7 +861,8 @@ The protocol is defined by these documents:
 
 | Document | Scope | Authority |
 |----------|-------|-----------|
-| [SPEC.md](SPEC.md) | Complete V1.0 protocol specification | **Protocol authority** |
+| [PROOF-ENGINE-SPEC.md](PROOF-ENGINE-SPEC.md) | Unified V1.0 protocol specification | **Protocol authority** |
+| [SPEC.md](SPEC.md) | Full-text V1.0 draft, superseded | Historical text |
 | [FORMAT.md](FORMAT.md) | CBOR wire format, CDDL schema, ID construction | Wire format authority |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Repository layout, API surface, design rationale | Implementation guide |
 | [POLICY.md](POLICY.md) | Policy language, requirement types, evaluation | Policy authority |

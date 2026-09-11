@@ -82,8 +82,8 @@ report, enforced by CI) is built on **deterministic signature schemes**: RFC
 fixed key+message (**PE-CRYPTO-010**). Ed25519 determinism is cross-checked
 by the independent Python verifier both directions (I2/I3); P-256
 determinism is pinned Rust-side and independently verified by the stdlib-only
-Python secp256r1 implementation (golden-21/22/23 both directions, 28-check
-differential). Retired ids (`-8`/`-7`) verify only under explicit historical
+Python secp256r1 implementation (golden-21/22/23 both directions; full
+differential: 37 checks). Retired ids (`-8`/`-7`) verify only under explicit historical
 policy (`AllowedAlgs::allow_deprecated`, `-7` additionally needs P-256
 enabled); `-35`/`-36` have no verifier support.
 

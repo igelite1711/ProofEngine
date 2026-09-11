@@ -36,7 +36,7 @@ pub struct VerificationContext {
     pub revocations_known_at: Option<u64>,
     /// Resource bounds.
     pub limits: Limits,
-    /// V1 powinna zawsze być false: verifier performs zero network I/O.
+    /// V1 is always false: the verifier performs zero network I/O.
     pub allow_remote: bool,
     /// Fail-collect vs fail-fast diagnostics.
     pub report_all_failures: bool,

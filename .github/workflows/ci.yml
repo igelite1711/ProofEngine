@@ -54,6 +54,12 @@ jobs:
       - name: No-panic gate (PE-SEC-004)
         run: make no-panic
 
+      - name: Web demo honesty gate (embedded data == fresh CLI output)
+        run: make web-check
+
+      - name: CDDL golden-vector validation
+        run: make cddl-validate
+
 # PE-NEUT-003: the core must carry unrelated industries without
 # modification. The domain suite builds against the core as a pure external
 # consumer (not a workspace member) — exactly like a third-party application.

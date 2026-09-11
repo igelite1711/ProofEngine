@@ -2,9 +2,9 @@
 
 > The constructive proof of core neutrality. This crate is a **pure consumer**
 > of the V1 core API (`proof-core`/`proof-crypto`/`proof-verify`/
-> `proof-policy`): it adds four unrelated industries on top of the engine with
-> **zero mechanism modifications** — only new vocabulary strings, new domain
-> journeys, and caller-supplied policies.
+> `proof-policy`): it adds twelve unrelated industries on top of the engine
+> with **zero mechanism modifications** — only new vocabulary strings, new
+> domain journeys, and caller-supplied policies.
 >
 > It is deliberately **not a workspace member**. It builds against the
 > core exactly the way an external domain application would.
@@ -28,7 +28,10 @@ cargo test
 
 CI runs this via `make domain-tests` (see `.github/workflows/ci.yml`).
 
-## The four domains
+## The demonstrated industries
+
+Twelve journeys ride the same core, each in its own module
+(`tests/<domain>.rs`), exercised together by `tests/differential.rs`:
 
 1. **Payment** (`payment.rs`) — the V1 reference journey: `payment.created` →
    `invoice.issued`, merchant attestation, `SETTLES` edge, `transaction_record`
@@ -42,6 +45,26 @@ CI runs this via `make domain-tests` (see `.github/workflows/ci.yml`).
 4. **AI-action provenance** (`ai.rs`) — an agent action chain: user request →
    tool call, operator attestation, `EXECUTED` edge (grounding required),
    `ai_action_v1` policy.
+5. **Sensor calibration** (`sensor.rs`) — device measurement, calibration
+   attestation, `PRODUCED`/`REFERENCES` edges, sensor policy.
+6. **Logistics** (`logistics.rs`) — shipment provenance, `CREATED`/`REFERENCES`
+   edges with grounding, logistics policy.
+7. **Legal** (`legal.rs`) — document signing and supersession, `SUPERSEDES`
+   semantics, legal policy.
+8. **Supply chain** (`supplychain.rs`) — batch production and provenance,
+   manufacturing vocabulary, supplychain policy.
+9. **Healthcare** (`health.rs`) — clinical event/measurement attestation,
+   healthcare vocabulary, health policy.
+10. **Government** (`gov.rs`) — administrative authorization, government
+    vocabulary, gov policy.
+11. **Cybersecurity** (`cyber.rs`) — incident observation, signed event +
+    evidence chain, cyber policy.
+12. **Science** (`science.rs`) — measurement replication and corroboration,
+    scientific vocabulary, science policy.
+
+Each of the twelve domains asserts the **same verdict shape** (crypto Valid,
+evidence Valid, policy INDETERMINATE at the pipeline), proving the core never
+cares which industry's vocabulary rides on it.
 
 Each domain file is **domain data only**: vocabulary constants, a journey
 builder, and a caller-supplied policy. No `Cargo.toml` dependency may point at
