@@ -5,8 +5,9 @@
 > document on frozen semantics, this document wins; where it differs from
 > `docs/format.cddl` on wire bytes, the CDDL wins.
 >
-> **Pin:** commit `TBD-FREEZE-COMMIT`, `fixtures/golden-01..31` (31 vectors),
-> `interop/differential.py` 37 checks both directions.
+> **Pin:** commit `51ce178`, tag `freeze-candidate-1`,
+> `fixtures/golden-01..31` (31 vectors), `interop/differential.py` 37 checks
+> both directions.
 
 ---
 
