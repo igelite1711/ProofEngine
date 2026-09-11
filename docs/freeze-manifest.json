@@ -44,6 +44,15 @@
         "crates/proof-verify/src/resolve.rs",
         "docs/policy-grammar.ebnf"
       ]
+    },
+    {
+      "commit": "4a3ab0431c2a22fc96d47ad5f072ef96db1aca21",
+      "class": "GENERIC EXTENSION",
+      "layer": "Scale: batch verification library + batch-verify CLI (independent members, fail-closed; new module only, no frozen behavior touched)",
+      "files": [
+        "crates/proof-verify/src/batch.rs",
+        "crates/proof-verify/src/lib.rs"
+      ]
     }
   ]
 }
