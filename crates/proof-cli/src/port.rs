@@ -312,3 +312,77 @@ pub fn compose(cli: &Cli) -> Result<String, String> {
     }
     Ok(built.id)
 }
+
+/// `resolve`: fetch-and-verify transitive composition linkage (P4).
+/// Bundle-layer only: the root verifies exactly as `verify` reports it;
+/// every transitively referenced proof is fetched from a file store and
+/// re-verified under the same context, with depth accounting. Exit 0 iff
+/// every reachable reference resolved; exit 1 (via Err) on engine/usage
+/// errors. Incomplete resolution is reported, never valid-by-assumption.
+pub fn resolve(cli: &Cli) -> Result<i32, String> {
+    use proof_verify::{resolve_proof_chain, UnresolvedReason};
+    let proof = load_proof(&cli.proof_path()?, cli.quiet())?;
+    let c = crate::make::common(cli)?;
+    let statuses: Vec<proof_crypto::SignedStatus> = cli
+        .many("status")
+        .iter()
+        .map(|p| crate::artifact::load_status(p, &crate::limits(), cli.quiet()))
+        .collect::<Result<_, _>>()?;
+    let store_dir = cli.req("store")?;
+    let store = crate::store::FileStore::open(&store_dir)?;
+    let max_depth: usize = cli
+        .opt("depth")
+        .map(|v| v.parse().map_err(|_| "--depth must be a u64".to_string()))
+        .transpose()?
+        .unwrap_or(8);
+    let ctx = proof_verify::VerifyCtx {
+        verified_at: c.verified_at,
+        clock_skew_leeway: c.skew,
+        status_objects: statuses,
+        revocation_authorities: cli.many("authority"),
+        revocations_known_at: c.revocations_known_at,
+        ..Default::default()
+    };
+    let rep = resolve_proof_chain(&proof.canonical, &store, &ctx, max_depth)
+        .map_err(|e| format!("resolve: {e}"))?;
+    let reason_word = |r: &UnresolvedReason| match r {
+        UnresolvedReason::Unavailable => "UNAVAILABLE".to_string(),
+        UnresolvedReason::IdMismatch { found } => format!("ID_MISMATCH(found={found})"),
+        UnresolvedReason::DepthExceeded => "DEPTH_EXCEEDED".to_string(),
+        UnresolvedReason::OverBudget => "OVER_BUDGET".to_string(),
+        UnresolvedReason::Store(e) => format!("STORE_ERROR({e})"),
+    };
+    let v = serde_json::json!({
+        "root": rep.root.proof_id,
+        "complete": rep.complete(),
+        "max_depth": max_depth,
+        "resolved": rep.resolved.iter().map(|r| serde_json::json!({
+            "id": r.id,
+            "depth": r.depth,
+            "cryptographic_validity": format!("{:?}", r.report.cryptographic_validity),
+            "evidence_validity": format!("{:?}", r.report.evidence_validity),
+        })).collect::<Vec<_>>(),
+        "unresolved": rep.unresolved.iter().map(|u| serde_json::json!({
+            "id": u.id,
+            "depth": u.depth,
+            "reason": reason_word(&u.reason),
+        })).collect::<Vec<_>>(),
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?
+    );
+    if !cli.quiet() {
+        eprintln!(
+            "resolved {} proof(s), {} unresolved (complete={})",
+            rep.resolved.len(),
+            rep.unresolved.len(),
+            rep.complete()
+        );
+    }
+    Ok(if rep.complete() {
+        crate::EXIT_OK
+    } else {
+        crate::EXIT_FAIL
+    })
+}

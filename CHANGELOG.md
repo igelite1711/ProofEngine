@@ -76,6 +76,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   binding when empty (generator reproduces golden-11/12 byte-identically);
   self-links refused (`CYCLE_DETECTED`); `compose` records sources;
   golden-24/25/26.
+- **Transitive resolution** (`proof_verify::resolve`, bundle layer):
+  BFS over `referenced_proofs` against an `ArtifactStore` with same-context
+  re-verification, depth accounting, diamond dedupe, and an explicit matrix
+  (`UNAVAILABLE`/`ID_MISMATCH`/`DEPTH_EXCEEDED`/`OVER_BUDGET`/`STORE`);
+  root verdict reproduced verbatim, incompleteness fail-closed. `resolve`
+  CLI command (exit 0 iff complete). Core stays linkage-only (frozen).
 - **Divergence representation** (SPEC §17): `report.conflicts[]` records
   same-type/subject groups with differing fields; validity unchanged, policy
   adjudicates; corroboration stays silent. Surfaced in CLI JSON.

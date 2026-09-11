@@ -136,8 +136,13 @@ are the *extension* track (versioned capability rows). Phases P10–P12 are the
 - `referenced_proofs` per PROOF-ENGINE-SPEC §7 / SPEC §7 is landed as
   linkage-only (additive: sorted/deduped/bound/self-checked, reported
   REFERENCED never VERIFIED; missing content is bundle-layer INDETERMINATE,
-  never a new core refusal code). Remaining: DAG-transitive resolution,
-  depth-bound reuse, policy hooks (require/forbid references).
+  never a new core refusal code). Transitive resolution is landed as a
+  bundle-layer helper (`proof_verify::resolve`: BFS over linkage against an
+  `ArtifactStore`, same-context re-verification, depth accounting, diamond
+  dedupe, `UNAVAILABLE`/`ID_MISMATCH`/`DEPTH_EXCEEDED`/`OVER_BUDGET` matrix,
+  root verdict reproduced verbatim) + `resolve` CLI command. Remaining:
+  ancestry/descendant traversal APIs, policy hooks (require/forbid
+  references).
 - Add graph traversal APIs: ancestry, descendants, dependency analysis,
   provenance explanation, partial-graph verification, cycle detection policy
   per edge kind (membership now extensible via `extra_grounded` — AUDIT §8

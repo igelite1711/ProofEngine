@@ -30,6 +30,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "compromise" => proof_cli::artifact::write_status_object(&parsed, "compromise")
             .map(|_| proof_cli::EXIT_OK),
         "compose" => proof_cli::port::compose(&parsed).map(|_| proof_cli::EXIT_OK),
+        "resolve" => proof_cli::port::resolve(&parsed),
         "export" => proof_cli::port::export(&parsed).map(|_| proof_cli::EXIT_OK),
         "import" => proof_cli::port::import(&parsed).map(|_| proof_cli::EXIT_OK),
         "convert" => proof_cli::port::convert(&parsed).map(|_| proof_cli::EXIT_OK),
@@ -1410,5 +1411,87 @@ fn status_withdraw_compromise_and_v2_evaluate() {
         )),
         Ok(0),
         "v2 quorum must PASS (exit 0)"
+    );
+}
+
+/// P4 resolve e2e: a parent proof with composition linkage resolves against a
+/// file store (exit 0, complete) and fails closed on an empty store (exit 1).
+#[test]
+fn resolve_complete_and_incomplete_through_dispatch() {
+    use proof_core::model::{EventType, Proposition};
+    let lim = proof_core::Limits::default();
+    let mk = |tag: &str, refs: &[String]| {
+        let ev = proof_crypto::build::create_event(
+            proof_core::model::EventContent {
+                v: 1,
+                event_type: EventType::new("test.event.occurred"),
+                subject: format!("test:{tag}"),
+                effective_at: 1_700_000_000,
+                payload_ref: proof_core::HashRef::new(
+                    proof_core::HashAlgorithm::Sha256,
+                    vec![0xABu8; 32],
+                )
+                .unwrap(),
+                metadata: vec![],
+            },
+            &lim,
+        )
+        .unwrap();
+        let mut b = proof_verify::ProofBuilder::new(
+            Proposition {
+                v: 1,
+                kind: "test.proposition".into(),
+                subject: format!("test:{tag}"),
+                predicate: "occurred".into(),
+                object: None,
+                at_time: Some(1_700_000_100),
+                context: vec![],
+            },
+            1_700_000_200,
+        );
+        b.add_event(ev);
+        let mut sorted = refs.to_vec();
+        sorted.sort();
+        for r in sorted {
+            b.add_referenced_proof(r).unwrap();
+        }
+        b.build(&lim).unwrap()
+    };
+    let leaf = mk("leaf", &[]);
+    let parent = mk("parent", std::slice::from_ref(&leaf.id));
+    let w = tmpdir("resolve");
+    let proof = format!("{w}/parent.json");
+    proof_cli::artifact::write_proof_file(&proof, &parent.id, &parent.canonical).unwrap();
+    let full = format!("{w}/full");
+    let empty = format!("{w}/empty");
+    let mut s = proof_cli::store::FileStore::open(&full).unwrap();
+    use proof_format::ArtifactStore;
+    s.put(&leaf.id, leaf.canonical.clone()).unwrap();
+    s.put(&parent.id, parent.canonical.clone()).unwrap();
+    std::fs::create_dir_all(&empty).unwrap();
+    // Complete resolution: exit 0.
+    assert_eq!(
+        run(args(
+            "resolve",
+            &["--proof", &proof, "--store", &full, "--clock", "1700000200",]
+        )),
+        Ok(0),
+        "linked proof must resolve completely (exit 0)"
+    );
+    // Empty store: linkage names the missing proof, exit 1 (fail closed).
+    assert_eq!(
+        run(args(
+            "resolve",
+            &[
+                "--proof",
+                &proof,
+                "--store",
+                &empty,
+                "--clock",
+                "1700000200",
+            ]
+        )),
+        Ok(1),
+        "unresolvable linkage must fail closed (exit 1)"
     );
 }

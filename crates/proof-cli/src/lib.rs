@@ -363,6 +363,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("import", "Import a standard envelope (validated)"),
     ("convert", "Normalize a legacy artifact file idempotently"),
     ("compose", "Compose proofs by union of members"),
+    ("resolve", "Resolve transitive composition linkage"),
     ("demo", "Run the end-to-end demonstration"),
     ("doctor", "Diagnose the local environment"),
     ("version", "Show version information"),
@@ -519,6 +520,12 @@ recording the sources as composition linkage (bound by the new proof_id).
 
 USAGE
   proof-cli compose --proofs <a.json,b.json> --kind <k> --subject <s> --predicate <p> --created-at <u64> --out <proof.json>",
+        "resolve" => "\
+resolve — fetch-and-verify transitive composition linkage against a file
+store (bundle layer; root validity unchanged, incompleteness is fail-closed).
+
+USAGE
+  proof-cli resolve --proof <file> --store <dir> --clock <u64> [--depth <n>=8] [--status <f>] [--authority <k>] [--revocations-known-at <u64>]",
         "demo" => "\
 demo — deterministic end-to-end story: build → verify PASS → tamper → FAIL →
 revoke → FAIL. Uses the core only; no simulated results.
@@ -714,6 +721,7 @@ PORTABILITY
   import       Import artifacts from envelopes
   convert      Convert artifact formats
   compose      Compose proofs with linkage
+  resolve      Resolve transitive linkage
 
 DEVELOPMENT
   demo         Run the end-to-end demonstration (--interactive for the tour)

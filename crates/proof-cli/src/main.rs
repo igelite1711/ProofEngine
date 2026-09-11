@@ -78,6 +78,7 @@ fn run(args: &[String]) -> i32 {
         "import" => proof_cli::port::import(&cli).map(|_| EXIT_OK),
         "convert" => proof_cli::port::convert(&cli).map(|_| EXIT_OK),
         "compose" => proof_cli::port::compose(&cli).map(|_| EXIT_OK),
+        "resolve" => proof_cli::port::resolve(&cli),
         "doctor" => proof_cli::doctor::doctor(&cli).map(|_| EXIT_OK),
         "completion" => match cli.opt("shell").or_else(|| cli.positional.first().cloned()) {
             Some(shell) => match proof_cli::completion_script(&shell) {

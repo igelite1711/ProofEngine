@@ -10,6 +10,7 @@ pub mod builder;
 pub mod context;
 pub mod pipeline;
 pub mod report;
+pub mod resolve;
 pub mod status;
 
 pub use builder::{BuiltProof, ProofBuilder};
@@ -18,5 +19,8 @@ pub use pipeline::{verify_proof, VerifyCtx};
 pub use report::{
     CheckRecord, ConflictKind, ConflictRecord, Dimension, EvidenceStatusRecord, LifecycleRecord,
     PolicyDecision, Validity, Verdict, VerifyReport,
+};
+pub use resolve::{
+    resolve_proof_chain, ResolutionReport, ResolvedProof, UnresolvedReason, UnresolvedRef,
 };
 pub use status::{StatusSource, VecStatusSource};
