@@ -85,7 +85,47 @@ maintainer decision with a new pin recorded here.
 |---|---|---|---|
 | `af2242b` (P4) | GENERIC EXTENSION | `proof_verify::resolve_proof_chain` + `proof-cli resolve` behind the `ArtifactStore` seam (bundle layer; P4 of `MIGRATION-PLAN.md`) | None by construction: root report reproduced verbatim; anything unresolved is `complete == false`, never a verdict change |
 
-The `freeze-candidate-1` tag names `51ce178` (the frozen core). Extension
-commits that land on top of the pin are named `freeze-candidate-1-N` (e.g.
-`freeze-candidate-1-1-gaf2242b`), preserving the immutability of the pin
-while keeping extension history explicit.
+## 7. Final freeze decision record (2026-09-11, independent re-audit)
+
+Independent re-audit of the pinned tree and everything committed above it,
+per the master program's §56 cycle (investigate → verify → attack → freeze):
+
+**Verdict: FROZEN** — the semantic foundation at commit `51ce178`
+(tag `freeze-candidate-1`) is immutable per §2. Everything above the pin is
+extension work governed by §3/§5/§6.
+
+Evidence re-verified in this session (live tree = pin + extensions):
+
+| Gate | Result |
+|---|---|
+| Workspace build + tests | 267 passed, 0 failed (32 binaries; includes resolve + V2-leaf suites) |
+| Domain differential (12 industries) | 6/6 pass — identical verdict shape across journeys |
+| Golden vectors | 31/31 CDDL-validated (`tools/validate_cddl.py`) |
+| Independent verifier (stdlib-only Python) | `interop/differential.py`: 37 pass, 0 fail, both directions (I2/I3a/I3b/negatives) |
+| Traceability | 88 PE-ids in matrix+code, all test-linked |
+| Neutrality | 47 mechanism files, zero domain vocab in mechanism sources |
+| No-panic (PE-SEC-004) | clean in all production paths |
+| fmt / clippy (`-D warnings`) | clean |
+| Web-demo honesty gate | embedded data == fresh CLI output (`check_web_demo.py`) |
+
+Adversarial re-attack (this session): canonicalization (shortest-form, dup
+keys, forbidden constructs, re-encode-and-compare), id full-digest and
+pad-bit rejection, algorithm confusion + deprecated ids fail-closed, PQ
+header parse-neutrality, supersession history preservation vs revocation
+currency, compromise taint semantics, revocation authority and freshness
+fail-closed, graph grounding/dangling/cycle/depth/edge limits, DoS bounds at
+every parser/verifier boundary (`Limits`), inner-content-vs-envelope
+agreement, status-object end-to-end re-verification — all confirmed in code
+and covered by tests/fuzz seeds.
+
+Residual open items (process, not semantic — none reopen §2):
+
+1. In-flight uncommitted work at the time of this record (V2
+   `requires_reference`/`forbids_reference` leaves + resolve hardening +
+   doc sync) is a continuation of the `freeze-candidate-1-1` extension line.
+   It was verified green in the live tree (frozen v1 stays byte-stable:
+   `v1_rejects_v2_leaf_names_and_stays_frozen`). It must land as commits
+   inside the §3 (policy `policy_version` capability row) and §6
+   classification before release.
+2. Guide pages for 8 of the 12 demonstrated industries remain deferred to
+   P12 (`docs/INDEX.md`); not a semantic gap.
