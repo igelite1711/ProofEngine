@@ -84,6 +84,7 @@ maintainer decision with a new pin recorded here.
 | Commit | Classification | Layer | Verdict impact |
 |---|---|---|---|
 | `af2242b` (P4) | GENERIC EXTENSION | `proof_verify::resolve_proof_chain` + `proof-cli resolve` behind the `ArtifactStore` seam (bundle layer; P4 of `MIGRATION-PLAN.md`) | None by construction: root report reproduced verbatim; anything unresolved is `complete == false`, never a verdict change |
+| `2b1c87b` (P4) | GENERIC EXTENSION | `ResolutionReport::ancestors()` + `descendants_of()` (read-only traversal over resolved linkage) and policy v2 `requires_reference{id}` / `forbids_reference{id}` leaves over direct linkage (shape-checked at parse, v1 rejects; EBNF + CBOR + describe extended) | None on frozen semantics: v1 byte-identical (`v1_rejects_v2_leaf_names_and_stays_frozen` green); new leaves v2-only and additive; traversal changes no verdict |
 
 ## 7. Final freeze decision record (2026-09-11, independent re-audit)
 
