@@ -118,6 +118,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authenticate against evidence digests through the pipeline's own rule.
 - **No-panic CI gate**: `make no-panic` (`tools/check_no_panic.py`,
   PE-SEC-004) enforced in CI; exhaustiveness arms return fail-closed errors.
+- **Supply-chain release artifacts** (PE-OPS-006): CycloneDX SBOM projected
+  from `Cargo.lock` (`tools/gen_sbom.py`; stdlib, offline, deterministic),
+  SLSA-style build provenance (`tools/gen_provenance.py`), `sha256sums.txt`
+  via `make release-meta OUT=dist/`; SSH-signature signing procedure in
+  `RELEASE.md`; SBOM determinism enforced in CI.
 - **SCITT adapter** (`crates/proof-adapter-scitt`, P7): signed statements /
   receipts → attestations + `transparency_registration` / `transparency_receipt`
   evidence with sha256-of-canonical-statement binding both directions

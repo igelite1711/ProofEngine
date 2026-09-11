@@ -65,6 +65,12 @@ jobs:
       - name: Freeze guard (frozen core untouched since pin)
         run: make freeze-guard
 
+      - name: SBOM determinism (same lockfile, byte-identical SBOM)
+        run: |
+          python3 tools/gen_sbom.py --out /tmp/sbom-a.json
+          python3 tools/gen_sbom.py --out /tmp/sbom-b.json
+          cmp /tmp/sbom-a.json /tmp/sbom-b.json
+
 # PE-NEUT-003: the core must carry unrelated industries without
 # modification. The domain suite builds against the core as a pure external
 # consumer (not a workspace member) — exactly like a third-party application.
