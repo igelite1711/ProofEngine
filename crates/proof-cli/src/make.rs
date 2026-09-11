@@ -159,6 +159,86 @@ pub fn verify(cli: &Cli) -> Result<i32, String> {
     Ok(crate::check::verdict_exit(&report))
 }
 
+/// `batch-verify`: verify many proofs under one shared context (scale track).
+/// Each member verifies independently with identical semantics to `verify`;
+/// batching amortizes invocation overhead only. Exit 0 iff every member is
+/// crypto-Valid and evidence-Valid; exit 1 otherwise; exit 2 on usage/engine
+/// errors. Policy stays per-proof and caller-side, as always.
+pub fn batch_verify(cli: &Cli) -> Result<i32, String> {
+    use crate::artifact::input_list;
+    let paths = input_list(cli, "proofs")?;
+    if paths.is_empty() {
+        return Err("batch-verify: missing --proofs a.json,b.json".to_string());
+    }
+    let c = common(cli)?;
+    let statuses: Vec<proof_crypto::SignedStatus> = cli
+        .many("status")
+        .iter()
+        .map(|p| load_status(p, &crate::limits(), cli.quiet()))
+        .collect::<Result<_, _>>()?;
+    let authorities = cli.many("authority");
+    let max_batch: usize = cli
+        .opt("max-batch")
+        .map(|v| {
+            v.parse()
+                .map_err(|_| "--max-batch must be a u64".to_string())
+        })
+        .transpose()?
+        .unwrap_or(256);
+    let mut canonicals = Vec::with_capacity(paths.len());
+    for path in &paths {
+        let proof = crate::check::load_proof(path, cli.quiet())?;
+        canonicals.push(proof.canonical);
+    }
+    let rep = proof_verify::verify_batch(
+        &canonicals,
+        &proof_verify::VerifyCtx {
+            verified_at: c.verified_at,
+            clock_skew_leeway: c.skew,
+            status_objects: statuses,
+            revocation_authorities: authorities,
+            revocations_known_at: c.revocations_known_at,
+            ..Default::default()
+        },
+        max_batch,
+    )
+    .map_err(|e| format!("batch-verify: {e}"))?;
+    let v = serde_json::json!({
+        "complete": rep.complete(paths.len()),
+        "all_valid": rep.all_valid(),
+        "crypto_valid_count": rep.crypto_valid_count,
+        "evidence_valid_count": rep.evidence_valid_count,
+        "members": rep.members.iter().map(|m| serde_json::json!({
+            "index": m.index,
+            "proof_id": m.report.proof_id,
+            "cryptographic_validity": format!("{:?}", m.report.cryptographic_validity),
+            "evidence_validity": format!("{:?}", m.report.evidence_validity),
+            "codes": m.report.failure_codes().iter().map(|c| format!("{c:?}")).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+    });
+    match cli.opt("out") {
+        None => println!(
+            "{}",
+            serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?
+        ),
+        Some(path) => crate::artifact::write_json(&path, v)?,
+    }
+    if !cli.quiet() {
+        eprintln!(
+            "batch: {}/{} crypto-valid, {}/{} evidence-valid",
+            rep.crypto_valid_count,
+            rep.members.len(),
+            rep.evidence_valid_count,
+            rep.members.len()
+        );
+    }
+    Ok(if rep.all_valid() {
+        crate::EXIT_OK
+    } else {
+        crate::EXIT_FAIL
+    })
+}
+
 /// `evaluate` / `explain`: pipeline + declarative policy over its output.
 // PE-CLI-006: explain prints prose only, never JSON over prose.
 pub fn evaluate(cli: &Cli, explain: bool) -> Result<i32, String> {

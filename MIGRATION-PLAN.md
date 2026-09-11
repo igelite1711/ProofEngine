@@ -214,7 +214,8 @@ are the *extension* track (versioned capability rows). Phases P10–P12 are the
   Rust) on CI.
 
 ### P9 — Integration (ingestion, reference API, batch)
-**Scope**
+**Scope (batch verification landed: `proof_verify::verify_batch` +
+`batch-verify` CLI + bench dimension; API/ingestion remain)**
 - Reference API (ECOSYSTEM §7) as a thin adapter-owned service: idempotent
   job model, stable versions, structured errors, authN/Z, rate limits,
   audit logs; verification always re-derived, never cached-as-authoritative.

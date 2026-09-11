@@ -364,6 +364,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("convert", "Normalize a legacy artifact file idempotently"),
     ("compose", "Compose proofs by union of members"),
     ("resolve", "Resolve transitive composition linkage"),
+    ("batch-verify", "Verify many proofs under one context"),
     ("demo", "Run the end-to-end demonstration"),
     ("doctor", "Diagnose the local environment"),
     ("version", "Show version information"),
@@ -526,6 +527,13 @@ store (bundle layer; root validity unchanged, incompleteness is fail-closed).
 
 USAGE
   proof-cli resolve --proof <file> --store <dir> --clock <u64> [--depth <n>=8] [--status <f>] [--authority <k>] [--revocations-known-at <u64>]",
+        "batch-verify" => "\
+batch-verify — verify many proofs under one shared context. Each member
+verifies independently with identical semantics to verify (no sampling,
+no short-circuit); exit 0 iff every member is crypto- and evidence-Valid.
+
+USAGE
+  proof-cli batch-verify --proofs <a.json,b.json> --clock <u64> [--max-batch <n>=256] [--status <f>] [--authority <k>] [--revocations-known-at <u64>] [--out <file>]",
         "demo" => "\
 demo — deterministic end-to-end story: build → verify PASS → tamper → FAIL →
 revoke → FAIL. Uses the core only; no simulated results.
@@ -722,6 +730,7 @@ PORTABILITY
   convert      Convert artifact formats
   compose      Compose proofs with linkage
   resolve      Resolve transitive linkage
+  batch-verify Verify many proofs at once
 
 DEVELOPMENT
   demo         Run the end-to-end demonstration (--interactive for the tour)

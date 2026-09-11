@@ -6,6 +6,7 @@
 //! Policy (stage 12) is evaluated by the caller in `proof-policy`: the
 //! pipeline reports `policy_decision: INDETERMINATE` and never decides trust.
 
+pub mod batch;
 pub mod builder;
 pub mod context;
 pub mod pipeline;
@@ -13,6 +14,7 @@ pub mod report;
 pub mod resolve;
 pub mod status;
 
+pub use batch::{verify_batch, BatchMember, BatchReport};
 pub use builder::{BuiltProof, ProofBuilder};
 pub use context::VerificationContext;
 pub use pipeline::{verify_proof, VerifyCtx};

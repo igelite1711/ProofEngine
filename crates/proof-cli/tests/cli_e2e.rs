@@ -35,6 +35,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "import" => proof_cli::port::import(&parsed).map(|_| proof_cli::EXIT_OK),
         "convert" => proof_cli::port::convert(&parsed).map(|_| proof_cli::EXIT_OK),
         "verify" => proof_cli::make::verify(&parsed),
+        "batch-verify" => proof_cli::make::batch_verify(&parsed),
         "evaluate" => proof_cli::make::evaluate(&parsed, false),
         "inspect" => proof_cli::inspect::inspect(&parsed).map(|_| proof_cli::EXIT_OK),
         "graph" => proof_cli::graph::graph(&parsed).map(|_| proof_cli::EXIT_OK),
@@ -1494,4 +1495,100 @@ fn resolve_complete_and_incomplete_through_dispatch() {
         Ok(1),
         "unresolvable linkage must fail closed (exit 1)"
     );
+}
+
+/// batch-verify e2e: two valid proofs exit 0 with counts; a tampered member
+/// exits 1 while the valid member still verifies (independence).
+#[test]
+fn batch_verify_all_valid_and_one_tampered_through_dispatch() {
+    use proof_core::model::{EventType, Proposition};
+    let lim = proof_core::Limits::default();
+    let mk = |tag: &str| {
+        let ev = proof_crypto::build::create_event(
+            proof_core::model::EventContent {
+                v: 1,
+                event_type: EventType::new("test.event.occurred"),
+                subject: format!("test:{tag}"),
+                effective_at: 1_700_000_000,
+                payload_ref: proof_core::HashRef::new(
+                    proof_core::HashAlgorithm::Sha256,
+                    vec![0xABu8; 32],
+                )
+                .unwrap(),
+                metadata: vec![],
+            },
+            &lim,
+        )
+        .unwrap();
+        let mut b = proof_verify::ProofBuilder::new(
+            Proposition {
+                v: 1,
+                kind: "test.proposition".into(),
+                subject: format!("test:{tag}"),
+                predicate: "occurred".into(),
+                object: None,
+                at_time: Some(1_700_000_100),
+                context: vec![],
+            },
+            1_700_000_200,
+        );
+        b.add_event(ev);
+        b.build(&lim).unwrap()
+    };
+    let w = tmpdir("batch");
+    let good = mk("good");
+    let other = mk("other");
+    let p1 = format!("{w}/p1.json");
+    let p2 = format!("{w}/p2.json");
+    proof_cli::artifact::write_proof_file(&p1, &good.id, &good.canonical).unwrap();
+    proof_cli::artifact::write_proof_file(&p2, &other.id, &other.canonical).unwrap();
+    let both = format!("{p1},{p2}");
+    assert_eq!(
+        run(args(
+            "batch-verify",
+            &["--proofs", &both, "--clock", "1700000200", "--quiet"]
+        )),
+        Ok(0),
+        "two valid proofs must exit 0"
+    );
+    // Tamper a value byte inside the subject string (map structure and
+    // UTF-8 intact → loads fine, fails at IDENTIFIERS with ID_MISMATCH).
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&p2).unwrap()).unwrap();
+    let hexs = v["cbor"].as_str().unwrap().to_string();
+    let mut raw: Vec<u8> = (0..hexs.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hexs[i..i + 2], 16).unwrap())
+        .collect();
+    let needle = b"test:other";
+    let pos = raw
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .expect("subject must be present");
+    raw[pos + 5] = b'X';
+    let tampered: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    v["cbor"] = serde_json::Value::String(tampered);
+    std::fs::write(&p2, serde_json::to_string(&v).unwrap()).unwrap();
+    assert_eq!(
+        run(args(
+            "batch-verify",
+            &["--proofs", &both, "--clock", "1700000200", "--quiet"]
+        )),
+        Ok(1),
+        "tampered member must fail the batch (exit 1)"
+    );
+    // Missing flag and over-cap are usage/engine errors (exit 2 path).
+    assert!(run(args("batch-verify", &["--clock", "1700000200"])).is_err());
+    assert!(run(args(
+        "batch-verify",
+        &[
+            "--proofs",
+            &both,
+            "--clock",
+            "1700000200",
+            "--max-batch",
+            "1"
+        ]
+    ))
+    .is_err());
 }
