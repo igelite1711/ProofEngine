@@ -1,6 +1,7 @@
 # Proof Engine — Error Model (V1 draft — in development)
 
-> 22 stable wire strings. Codes are part of the protocol: renaming or
+> 24 stable wire strings (22 V1 + `WITHDRAWN`, `COMPROMISED`, appended —
+> codes are append-only). Codes are part of the protocol: renaming or
 > renumbering is a breaking change (see VERSIONING.md). Every failure is
 > recorded with stage + object + code + message; failures are never repaired
 > downstream and unknown is never converted into valid.
@@ -42,6 +43,8 @@
 | `REVOKED` | REVOCATION | covered by a valid signed revocation |
 | `REVOCATION_UNKNOWN` | REVOCATION | no/stale revocation info (fail closed) |
 | `UNAUTHORIZED_STATUS` | REVOCATION | status signer has no authority over target |
+| `WITHDRAWN` | REVOCATION/EVIDENCE | covered by a valid signed withdrawal (history preserved) |
+| `COMPROMISED` | REVOCATION/EVIDENCE | tainted by a valid signed compromise marking at/after its instant (history not preserved) |
 
 One-to-one with `proof-core/src/error.rs` (checked by audit; keep in sync —
 renaming is breaking).

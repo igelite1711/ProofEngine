@@ -20,6 +20,11 @@ pub struct Limits {
     pub max_status_objects: usize,
     pub max_trusted_issuers: usize,
     pub max_revocation_authorities: usize,
+    // Composition: bound on `referenced_proofs` entries per proof (DoS
+    // prevention; each entry is a 50-char id string).
+    pub max_referenced_proofs: usize,
+    // Vocabulary declarations per proof (DoS prevention).
+    pub max_vocabularies: usize,
 }
 
 impl Default for Limits {
@@ -39,6 +44,8 @@ impl Default for Limits {
             max_status_objects: 64,
             max_trusted_issuers: 32,
             max_revocation_authorities: 16,
+            max_referenced_proofs: 16,
+            max_vocabularies: 16,
         }
     }
 }

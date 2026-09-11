@@ -25,7 +25,7 @@
 | Security | PASS | tamper matrix 13/13; soak 2000+ mutants; H1 cap; redacted keys | no |
 | Fuzzing | PASS | CI run 34115609866 4/4×600s no findings; PR build gate | no |
 | Dependencies | PASS | `cargo deny check` all-ok; 0 banned-family crates in tree | no |
-| CI | PASS | gate+demo+deny+trace+fuzz-build+interop jobs; no continue-on-error | no |
+| CI | PASS | gate+demo+deny+trace+fuzz-build+interop jobs; advisory-db job continue-on-error by design (cargo-deny is the real gate) | no |
 | Reproducibility | PASS | clean-clone build/test/demo; demo sha256 rerun gate | no |
 | Documentation | PASS | 12 spec docs describe implemented behavior; typos fixed; phantoms removed | no |
 | CLI/API | PASS | exit matrix 0/1/2 tested; artifacts re-verified; capped reads | no |

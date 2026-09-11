@@ -74,6 +74,39 @@ pub fn report_json(r: &VerifyReport) -> serde_json::Value {
             })
             .collect::<Vec<_>>(),
         "status_objects": r.status_objects,
+        "withdrawn_ids": r.withdrawn_ids,
+        "referenced_proofs": r.referenced_proofs,
+        "vocabularies": r
+            .vocabularies
+            .iter()
+            .map(|vd| {
+                serde_json::json!({"ns": vd.ns, "version": vd.version})
+            })
+            .collect::<Vec<_>>(),
+        "evidence_status": r
+            .evidence_status
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "object": e.object,
+                    "status": e.status.as_str(),
+                    "code": e.code.map(|c| c.as_str()),
+                    "message": e.message,
+                })
+            })
+            .collect::<Vec<_>>(),
+        "conflicts": r
+            .conflicts
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "kind": c.kind.as_str(),
+                    "claim_type": c.claim_type,
+                    "subject": c.subject,
+                    "attestation_ids": c.attestation_ids,
+                })
+            })
+            .collect::<Vec<_>>(),
         "checks": r
             .checks
             .iter()

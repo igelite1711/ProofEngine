@@ -25,6 +25,14 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "revoke" => {
             proof_cli::artifact::write_status_object(&parsed, "revoke").map(|_| proof_cli::EXIT_OK)
         }
+        "withdraw" => proof_cli::artifact::write_status_object(&parsed, "withdraw")
+            .map(|_| proof_cli::EXIT_OK),
+        "compromise" => proof_cli::artifact::write_status_object(&parsed, "compromise")
+            .map(|_| proof_cli::EXIT_OK),
+        "compose" => proof_cli::port::compose(&parsed).map(|_| proof_cli::EXIT_OK),
+        "export" => proof_cli::port::export(&parsed).map(|_| proof_cli::EXIT_OK),
+        "import" => proof_cli::port::import(&parsed).map(|_| proof_cli::EXIT_OK),
+        "convert" => proof_cli::port::convert(&parsed).map(|_| proof_cli::EXIT_OK),
         "verify" => proof_cli::make::verify(&parsed),
         "evaluate" => proof_cli::make::evaluate(&parsed, false),
         "inspect" => proof_cli::inspect::inspect(&parsed).map(|_| proof_cli::EXIT_OK),
@@ -1207,4 +1215,200 @@ fn verify_supports_stdin() {
         ],
     ));
     assert_eq!(result, Ok(0));
+}
+
+/// Elevation e2e: withdraw ends reliance (exit 1, WITHDRAWN), compromise
+/// taints at/after its instant (exit 1, COMPROMISED), and a v2 quorum policy
+/// evaluates over the same proof bytes (exit 0).
+#[test]
+fn status_withdraw_compromise_and_v2_evaluate() {
+    let w = tmpdir("elevate");
+    let (ev1, att, evd) = (
+        format!("{w}/ev1.json"),
+        format!("{w}/att.json"),
+        format!("{w}/evd.json"),
+    );
+    let (proof, wd, mark) = (
+        format!("{w}/proof.json"),
+        format!("{w}/wd.json"),
+        format!("{w}/mark.json"),
+    );
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:p-el",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev1,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:p-el",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=1",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    let att_id = id_of(&att);
+    let issuer = {
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&att).unwrap()).unwrap();
+        v["issuer"].as_str().unwrap().to_string()
+    };
+    run(args(
+        "add-evidence",
+        &[
+            "--kind",
+            "transaction_record",
+            "--digest-hex",
+            D1,
+            "--attestation-ref",
+            &att_id,
+            "--out",
+            &evd,
+        ],
+    ))
+    .unwrap();
+    let evd_id = id_of(&evd);
+    run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.proved",
+            "--subject",
+            "payment:p-el",
+            "--predicate",
+            "occurred",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &ev1,
+            "--attestations",
+            &att,
+            "--evidence",
+            &evd,
+            "--relationships",
+            "",
+            "--out",
+            &proof,
+        ],
+    ))
+    .unwrap();
+
+    // Withdraw the evidence by its issuer: exit 1 with WITHDRAWN.
+    run(args(
+        "withdraw",
+        &[
+            "--seed",
+            "test",
+            "--target",
+            &evd_id,
+            "--at",
+            "1700000300",
+            "--out",
+            &wd,
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--status",
+                &wd,
+                "--revocations-known-at",
+                "1700000300"
+            ]
+        )),
+        Ok(1),
+        "withdrawn evidence must exit 1"
+    );
+
+    // Compromise the issuer at an instant covering issuance: exit 1 tainted.
+    run(args(
+        "compromise",
+        &[
+            "--seed",
+            "test",
+            "--target",
+            &issuer,
+            "--compromised-at",
+            "1700000000",
+            "--at",
+            "1700000300",
+            "--out",
+            &mark,
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--status",
+                &mark,
+                "--revocations-known-at",
+                "1700000300"
+            ]
+        )),
+        Ok(1),
+        "compromised issuer must exit 1"
+    );
+
+    // V2 quorum over the same bytes: PASS (exit 0).
+    let policy = format!("{w}/quorum.json");
+    std::fs::write(
+        &policy,
+        format!(
+            r#"{{"policy_version":2,"policy_id":"q","expression":{{"threshold":{{"k":1,"of":[{{"type":"issuer_trusted","issuer":"{issuer}"}}]}}}}}}"#
+        ),
+    )
+    .unwrap();
+    // NOTE: evaluate needs --trusted; the harness passes flags positionally
+    // via pairs, so append the trust flag here.
+    assert_eq!(
+        run(args(
+            "evaluate",
+            &[
+                "--proof",
+                &proof,
+                "--policy",
+                &policy,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+                "--trusted",
+                &issuer,
+            ]
+        )),
+        Ok(0),
+        "v2 quorum must PASS (exit 0)"
+    );
 }

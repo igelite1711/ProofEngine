@@ -6,11 +6,11 @@
 //! that the emitted bytes re-parse to the identical Proof.
 
 use proof_core::{
-    model::{Proof, Proposition},
+    model::{Proof, Proposition, VocabularyDecl},
     ErrorCode, Limits, ProofError,
 };
 use proof_crypto::build::{CreatedAttestation, CreatedEvent, CreatedEvidence, CreatedRelationship};
-use proof_crypto::id::proof_id;
+use proof_crypto::id::proof_id_full;
 use proof_format::{decode_and_check_canonical, encode_canonical, proof_to_cbor};
 use std::collections::HashSet;
 
@@ -30,6 +30,8 @@ pub struct ProofBuilder {
     attestations: Vec<CreatedAttestation>,
     evidence: Vec<CreatedEvidence>,
     relationships: Vec<CreatedRelationship>,
+    referenced_proofs: Vec<String>,
+    vocabularies: Vec<VocabularyDecl>,
 }
 
 impl ProofBuilder {
@@ -55,6 +57,34 @@ impl ProofBuilder {
 
     pub fn add_relationship(&mut self, r: CreatedRelationship) {
         self.relationships.push(r);
+    }
+
+    /// Record that this proof was composed from another proof (SPEC §7).
+    /// The id shape is checked now (`prf:v1:` + 32-byte digest); sorting,
+    /// dedup, count bound, and self-reference are enforced at build time and
+    /// re-checked by every verifier. References are linkage only.
+    pub fn add_referenced_proof(&mut self, id: String) -> Result<(), ProofError> {
+        proof_crypto::id::check_proof_ref_shape(&id)?;
+        self.referenced_proofs.push(id);
+        Ok(())
+    }
+
+    /// Declare a vocabulary namespace used by this proof's labels, at a
+    /// version. Sorted, deduped, and bound at build time; bound by `proof_id`
+    /// when present, byte-identical V1 encoding when absent. Declaration is
+    /// provenance, not permission: acceptance is policy (see
+    /// `VocabularyAccept` and policy v2 `vocabulary_accepted`).
+    pub fn add_vocabulary(&mut self, ns: String, version: u64) -> Result<(), ProofError> {
+        if ns.is_empty() || ns.len() > 128 {
+            return Err(ErrorCode::SchemaViolation.err("vocabulary ns length out of bounds"));
+        }
+        if ns.contains(':') || ns.contains(char::is_whitespace) {
+            return Err(
+                ErrorCode::SchemaViolation.err("vocabulary ns must not contain ':' or whitespace")
+            );
+        }
+        self.vocabularies.push(VocabularyDecl { ns, version });
+        Ok(())
     }
 
     fn check_duplicates(ids: &[String], what: &str) -> Result<(), ProofError> {
@@ -89,9 +119,38 @@ impl ProofBuilder {
         Self::check_duplicates(&att_ids, "attestation")?;
         Self::check_duplicates(&evd_ids, "evidence")?;
         Self::check_duplicates(&rel_ids, "relationship")?;
+        // Composition linkage: sorted, deduped, bounded. Empty → byte-identical
+        // V1 binding (see `proof_id_full`).
+        self.referenced_proofs.sort();
+        self.referenced_proofs.dedup();
+        if self.referenced_proofs.len() > limits.max_referenced_proofs {
+            return Err(ErrorCode::LimitExceeded.err("too many referenced proofs"));
+        }
+        // Vocabulary declarations: same additive discipline.
+        self.vocabularies.sort_by(|a, b| a.ns.cmp(&b.ns));
+        self.vocabularies.dedup_by(|a, b| a.ns == b.ns);
+        if self.vocabularies.len() > limits.max_vocabularies {
+            return Err(ErrorCode::LimitExceeded.err("too many vocabularies"));
+        }
 
         let prop_cbor = proof_format::proposition_to_cbor(&proposition);
-        let id = proof_id(&prop_cbor, &event_ids, &att_ids, &evd_ids, &rel_ids);
+        let vocab_pairs: Vec<(String, u64)> = self
+            .vocabularies
+            .iter()
+            .map(|vd| (vd.ns.clone(), vd.version))
+            .collect();
+        let id = proof_id_full(
+            &prop_cbor,
+            &event_ids,
+            &att_ids,
+            &evd_ids,
+            &rel_ids,
+            &self.referenced_proofs,
+            &vocab_pairs,
+        );
+        if self.referenced_proofs.iter().any(|r| r == &id) {
+            return Err(ErrorCode::CycleDetected.err("proof cannot reference itself"));
+        }
 
         let proof = Proof {
             v: 1,
@@ -112,6 +171,8 @@ impl ProofBuilder {
                 .iter()
                 .map(|r| r.content.clone())
                 .collect(),
+            referenced_proofs: self.referenced_proofs.clone(),
+            vocabularies: self.vocabularies.clone(),
             created_at: self.created_at,
         };
         let canonical = encode_canonical(&proof_to_cbor(&proof)?);

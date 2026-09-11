@@ -2,8 +2,9 @@
 //! PE-NEUT-004 co-assertion: every domain word below lives in a test file,
 //! never in a mechanism crate source (enforced by tools/check_neutrality.py).
 //!
-//! Five unrelated industries (payment, credential lifecycle, media licensing,
-//! AI-action provenance, sensor calibration) traverse the SAME core:
+//! Ten unrelated industries (payment, credential lifecycle, media licensing,
+//! AI-action provenance, sensor calibration, logistics, legal, supply-chain,
+//! healthcare, government) traverse the SAME core:
 //! same builder, same 11-stage pipeline, same policy engine. The differential
 //! assertions prove the verdict shape is a pure function of artifact STRUCTURE,
 //! never of the domain vocabulary riding on it. If a future change makes the
@@ -11,16 +12,21 @@
 
 mod ai;
 mod credential;
+mod gov;
+mod health;
+mod legal;
+mod logistics;
 mod media;
 mod payment;
 mod sensor;
+mod supplychain;
 
 use proof_core::{ErrorCode, Limits};
 use proof_crypto::build::to_signed_status;
 use proof_policy::{evaluate_policy, parse_policy, state_from_report_and_proof};
 use proof_verify::{verify_proof, PolicyDecision, Validity, VerifyCtx};
 
-/// The exact caller context every domain uses: one shape, five industries.
+/// The exact caller context every domain uses: one shape, ten industries.
 fn ctx(clock: u64) -> VerifyCtx {
     VerifyCtx {
         verified_at: clock,
@@ -74,8 +80,8 @@ type DomainJourney = (
 );
 
 #[test]
-fn five_domains_same_core_same_verdict_shape() {
-    let domains: [DomainJourney; 5] = [
+fn ten_domains_same_core_same_verdict_shape() {
+    let domains: [DomainJourney; 10] = [
         (
             "payment",
             payment::journey(),
@@ -96,6 +102,26 @@ fn five_domains_same_core_same_verdict_shape() {
             sensor::policy(),
             sensor::inputs(),
         ),
+        (
+            "logistics",
+            logistics::journey(),
+            logistics::policy(),
+            logistics::inputs(),
+        ),
+        ("legal", legal::journey(), legal::policy(), legal::inputs()),
+        (
+            "supplychain",
+            supplychain::journey(),
+            supplychain::policy(),
+            supplychain::inputs(),
+        ),
+        (
+            "health",
+            health::journey(),
+            health::policy(),
+            health::inputs(),
+        ),
+        ("gov", gov::journey(), gov::policy(), gov::inputs()),
     ];
 
     for (name, built, policy_json, inputs) in domains {
@@ -258,9 +284,9 @@ type DomainCase = (
 fn cross_domain_failure_verdict_shape_identical() {
     // Revoke each domain's journey with a signed status object; the resulting
     // verdict shape (evidence invalid, REVOKED code, policy INDETERMINATE
-    // with an explanatory note) must be logically identical across all five
+    // with an explanatory note) must be logically identical across all ten
     // industries. Failure is structural; none of the domains is special.
-    let cases: [DomainCase; 5] = [
+    let cases: [DomainCase; 10] = [
         (
             "payment",
             payment::journey,
@@ -281,6 +307,26 @@ fn cross_domain_failure_verdict_shape_identical() {
             sensor::policy,
             sensor::inputs,
         ),
+        (
+            "logistics",
+            logistics::journey,
+            logistics::policy,
+            logistics::inputs,
+        ),
+        ("legal", legal::journey, legal::policy, legal::inputs),
+        (
+            "supplychain",
+            supplychain::journey,
+            supplychain::policy,
+            supplychain::inputs,
+        ),
+        (
+            "health",
+            health::journey,
+            health::policy,
+            health::inputs,
+        ),
+        ("gov", gov::journey, gov::policy, gov::inputs),
     ];
     for (name, journey_fn, policy_fn, inputs_fn) in cases {
         let built = journey_fn();

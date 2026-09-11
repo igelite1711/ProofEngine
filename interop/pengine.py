@@ -9,6 +9,8 @@ are caller-supplied) and are NOT reimplemented here — see README scope.
 
 Ed25519 follows RFC 8032; cross-validated during audit against
 ed25519-dalek (base point, group order, Montgomery images, accept/reject).
+P-256 follows SEC1 v2.0 §4.1.4 (ECDSA over secp256r1 with SHA-256);
+cross-checked against golden-21/22/23 plus Rust-side negative vectors.
 """
 import base64
 import hashlib
@@ -109,6 +111,65 @@ def ed_sign(seed32, msg):
     return R + S.to_bytes(32, "little")
 
 
+# --- secp256r1 / ECDSA (SEC1 v2.0 §4.1.4, SHA-256) ---
+_P256_P = 0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF
+_P256_A = (_P256_P - 3) % _P256_P
+_P256_B = 0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B
+_P256_GX = 0x6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296
+_P256_GY = 0x4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5
+_P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+_P256_G = (_P256_GX, _P256_GY)
+
+
+def _p256_add(p, q):
+    if p is None:
+        return q
+    if q is None:
+        return p
+    x1, y1 = p
+    x2, y2 = q
+    if x1 == x2:
+        if (y1 + y2) % _P256_P == 0:
+            return None
+        # doubling
+        lam = (3 * x1 * x1 + _P256_A) * pow(2 * y1, _P256_P - 2, _P256_P) % _P256_P
+    else:
+        lam = (y2 - y1) * pow((x2 - x1) % _P256_P, _P256_P - 2, _P256_P) % _P256_P
+    x3 = (lam * lam - x1 - x2) % _P256_P
+    return (x3, (lam * (x1 - x3) - y1) % _P256_P)
+
+
+def _p256_mul(s, p):
+    r = None
+    while s:
+        if s & 1:
+            r = _p256_add(r, p)
+        p = _p256_add(p, p)
+        s >>= 1
+    return r
+
+
+def p256_verify(pub64, msg, sig64):
+    """ECDSA verify over secp256r1. pub64 = X||Y big-endian, sig64 = r||s."""
+    if len(sig64) != 64 or len(pub64) != 64:
+        return False
+    r = int.from_bytes(sig64[:32], "big")
+    s = int.from_bytes(sig64[32:], "big")
+    if not (1 <= r < _P256_N and 1 <= s < _P256_N):
+        return False
+    x = int.from_bytes(pub64[:32], "big")
+    y = int.from_bytes(pub64[32:], "big")
+    if not (0 <= x < _P256_P and 0 <= y < _P256_P):
+        return False
+    if (y * y - (x * x * x + _P256_A * x + _P256_B)) % _P256_P != 0:
+        return False
+    e = int.from_bytes(hashlib.sha256(msg).digest(), "big")
+    w = pow(s, _P256_N - 2, _P256_N)
+    u1, u2 = e * w % _P256_N, r * w % _P256_N
+    pt = _p256_add(_p256_mul(u1, _P256_G), _p256_mul(u2, (x, y)))
+    return pt is not None and pt[0] % _P256_N == r
+
+
 def b64u(b):
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
@@ -179,9 +240,9 @@ def verify_sign1(sign1, expected_keyref):
     if not isinstance(kid, bytes):
         raise InteropFail("kid must be bstr")
     if alg == -19:
-        scheme, want_len = "key:ed25519:", 32
+        scheme, want_len, op = "key:ed25519:", 32, "ed25519"
     elif alg == -9:
-        raise InteropFail("P-256 verify not implemented in interop (default-off in engine)")
+        scheme, want_len, op = "key:p256:", 64, "p256"
     else:
         raise InteropFail(f"unknown/deprecated alg {alg}")
     if not expected_keyref.startswith(scheme):
@@ -190,19 +251,40 @@ def verify_sign1(sign1, expected_keyref):
         expect = b64u_decode(expected_keyref[len(scheme):])
     except Exception:
         raise InteropFail("bad keyref base64url")
+    if b64u(expect) != expected_keyref[len(scheme):]:
+        raise InteropFail("keyref is not canonical base64url")
     if len(expect) != want_len or expect != kid:
         raise InteropFail("kid does not match issuer key")
     tbs = (
         b"\x84" + enc("Signature1") + enc(prot_raw) + enc(b"PE1") + enc(payload)
     )
-    if not ed_verify(kid, tbs, signature):
+    if op == "ed25519":
+        ok = ed_verify(kid, tbs, signature)
+    else:
+        ok = p256_verify(kid, tbs, signature)
+    if not ok:
         raise InteropFail("SIGNATURE_INVALID")
     return payload, kid
 
 
-def _member_id(prefix, content_raw):
-    check_canonical(content_raw)
-    return obj_id(prefix, content_raw)
+def _closed(m, allowed, what):
+    """Closed-schema parity with the engine: unknown member fields reject,
+    mirroring proof-format's check_closed (fail closed, never ignore)."""
+    if not isinstance(m, Map):
+        raise InteropFail(f"{what} must be map")
+    for k, _ in m:
+        if k not in allowed:
+            raise InteropFail(f"unknown {what} field {k!r}")
+
+
+_EVENT_FIELDS = ("v", "type", "subject", "effective_at", "payload_ref",
+                 "metadata")
+_ATTESTATION_FIELDS = ("v", "issuer", "subject", "claim", "issued_at",
+                       "expires_at", "evidence_ref")
+_EVIDENCE_FIELDS = ("v", "kind", "digest", "attestation_ref", "hint")
+_REL_FIELDS = ("v", "from", "type", "to", "evidence_ref", "attestation_ref")
+_PROP_FIELDS = ("v", "kind", "subject", "predicate", "object", "at_time",
+                "context")
 
 
 # PE-INTEROP-002: independent proof verification (stages 1-6 + binding).
@@ -216,12 +298,20 @@ def verify_proof(proof_raw):
     outer = check_canonical(proof_raw)
     if not isinstance(outer, Map):
         raise InteropFail("proof must be map")
+    # Closed envelope: unknown top-level fields are rejected, mirroring the
+    # engine's closed schema (fail closed, never ignore).
+    for k, _ in outer:
+        if k not in ("v", "proof_id", "proposition", "events", "attestations",
+                     "evidence", "relationships", "referenced_proofs",
+                     "vocabularies", "created_at"):
+            raise InteropFail(f"unknown proof field {k!r}")
     d = dict(outer)
     if d.get("v") != 1:
         raise InteropFail("unsupported proof version")
     prop = _req(outer, "proposition")
     if not isinstance(prop, Map):
         raise InteropFail("proposition must be map")
+    _closed(prop, _PROP_FIELDS, "proposition")
     created = d.get("created_at")
 
     def members(key, prefix):
@@ -230,13 +320,20 @@ def verify_proof(proof_raw):
             raise InteropFail(f"{key} must be array")
         return arr
 
-    event_ids = [obj_id("evt", enc_any(m)) for m in members("events", "evt")]
+    event_ids = []
+    for m in members("events", "evt"):
+        _closed(m, _EVENT_FIELDS, "event")
+        event_ids.append(obj_id("evt", enc_any(m)))
     att_ids, issuers = [], []
     for entry in members("attestations", "att"):
         if not isinstance(entry, Map):
             raise InteropFail("attestation entry must be map")
+        for k, _ in entry:
+            if k not in ("content", "sign1"):
+                raise InteropFail(f"unknown attestation entry field {k!r}")
         ed = dict(entry)
         content_raw = enc_any(_req(entry, "content"))
+        _closed(_map(content_raw), _ATTESTATION_FIELDS, "attestation")
         sign1 = _req(entry, "sign1")
         if not isinstance(sign1, bytes):
             raise InteropFail("sign1 must be bstr")
@@ -248,8 +345,37 @@ def verify_proof(proof_raw):
         if auth_payload != content_raw:
             raise InteropFail("envelope content differs from authenticated payload")
         issuers.append(issuer)
-    evd_ids = [obj_id("evd", enc_any(m)) for m in members("evidence", "evd")]
-    rel_ids = [obj_id("rel", enc_any(m)) for m in members("relationships", "rel")]
+    evd_ids = []
+    for m in members("evidence", "evd"):
+        _closed(m, _EVIDENCE_FIELDS, "evidence")
+        evd_ids.append(obj_id("evd", enc_any(m)))
+    rel_ids = []
+    for m in members("relationships", "rel"):
+        _closed(m, _REL_FIELDS, "relationship")
+        rel_ids.append(obj_id("rel", enc_any(m)))
+
+    # Composition linkage (SPEC §7): absent in V1 bytes → empty; present →
+    # sorted list of well-formed `prf:v1:` ids, covered by the binding.
+    refs_raw = d.get("referenced_proofs")
+    if refs_raw is None:
+        refs = []
+    else:
+        if not isinstance(refs_raw, list) or any(
+            not isinstance(x, str) for x in refs_raw
+        ):
+            raise InteropFail("referenced_proofs must be an array of text")
+        for x in refs_raw:
+            if not x.startswith("prf:v1:"):
+                raise InteropFail("referenced proof id must start with prf:v1:")
+            try:
+                raw = b64u_decode(x[len("prf:v1:"):])
+            except Exception:
+                raise InteropFail("referenced proof id is not base64url")
+            if b64u(raw) != x[len("prf:v1:"):] or len(raw) != 32:
+                raise InteropFail("referenced proof id digest must be 32 bytes")
+        if sorted(refs_raw) != list(refs_raw) or len(set(refs_raw)) != len(refs_raw):
+            raise InteropFail("referenced_proofs must be sorted with no duplicates")
+        refs = list(refs_raw)
 
     binding = Map([
         ("attestations", sorted(att_ids)),
@@ -259,6 +385,36 @@ def verify_proof(proof_raw):
         ("proposition", prop),
         ("v", 1),
     ])
+    if refs:
+        binding.append(("referenced_proofs", sorted(refs)))
+    vocs = d.get("vocabularies")
+    if vocs:
+        # Sorted-by-ns [{ns, version}] declarations, covered by the binding.
+        if not isinstance(vocs, list):
+            raise InteropFail("vocabularies must be an array")
+        seen = set()
+        for item in vocs:
+            if not isinstance(item, Map):
+                raise InteropFail("vocabulary must be a map")
+            dd = dict(item)
+            if set(dd) != {"ns", "version"}:
+                raise InteropFail("vocabulary must be exactly {ns, version}")
+            ns, ver = dd["ns"], dd["version"]
+            if not isinstance(ns, str) or not ns or len(ns) > 128:
+                raise InteropFail("vocabulary ns length out of bounds")
+            if ":" in ns or any(ch.isspace() for ch in ns):
+                raise InteropFail("vocabulary ns must not contain ':' or whitespace")
+            if not isinstance(ver, int) or isinstance(ver, bool) or ver < 0:
+                raise InteropFail("vocabulary version must be a uint")
+            if ns in seen:
+                raise InteropFail("vocabularies must be sorted by ns with no duplicates")
+            seen.add(ns)
+        if [dict(x)["ns"] for x in vocs] != sorted(seen):
+            raise InteropFail("vocabularies must be sorted by ns with no duplicates")
+        binding.append(("vocabularies", [
+            Map([("ns", dict(item)["ns"]), ("version", dict(item)["version"])])
+            for item in vocs
+        ]))
     recomputed = obj_id("prf", enc_map(binding))
     if recomputed != d.get("proof_id"):
         raise InteropFail("ID_MISMATCH on proof_id")
@@ -269,6 +425,7 @@ def verify_proof(proof_raw):
         "attestation_ids": att_ids,
         "evidence_ids": evd_ids,
         "relationship_ids": rel_ids,
+        "referenced_proofs": refs,
         "issuers": issuers,
     }
 
@@ -368,8 +525,9 @@ def make_relationship(from_id, rel_type, to_id, evidence_ref=None,
 
 def make_proof(kind, subject, predicate, obj=None, at_time=None, context=(),
                created_at=0, events=(), attestations=(), evidence=(),
-               relationships=()):
+               relationships=(), referenced_proofs=(), vocabularies=()):
     """attestations: list of {"content_cbor_hex", "sign1_b64"} artifacts.
+    vocabularies: list of (ns, version) declarations, sorted by ns.
     Returns the proof artifact dict {"id", "cbor"} plus full canonical bytes.
     """
     ev_raw = [bytes.fromhex(e["cbor"]) for e in events]
@@ -406,6 +564,18 @@ def make_proof(kind, subject, predicate, obj=None, at_time=None, context=(),
         ("proposition", _map(prop_raw)),
         ("v", 1),
     ])
+    if referenced_proofs:
+        refs = sorted(referenced_proofs)
+        assert refs == list(referenced_proofs) and len(set(refs)) == len(refs), \
+            "creator refs must be sorted with no duplicates"
+        binding.append(("referenced_proofs", refs))
+    if vocabularies:
+        vocs = sorted(vocabularies)
+        assert ([n for n, _ in vocs] == sorted(n for n, _ in vocs)
+                and len({n for n, _ in vocs}) == len(vocs)), \
+            "creator vocabularies must be sorted by ns with no duplicates"
+        binding.append(("vocabularies", [Map([("ns", n), ("version", v)])
+                                         for n, v in vocs]))
     proof_id = obj_id("prf", enc_map(binding))
 
     def raw_map(b):
@@ -424,6 +594,11 @@ def make_proof(kind, subject, predicate, obj=None, at_time=None, context=(),
         ("relationships", [raw_map(r) for r in rel_raw]),
         ("v", 1),
     ])
+    if referenced_proofs:
+        outer.append(("referenced_proofs", sorted(referenced_proofs)))
+    if vocabularies:
+        outer.append(("vocabularies", [Map([("ns", n), ("version", v)])
+                                       for n, v in sorted(vocabularies)]))
     proof_raw = enc_map(outer)
     # self-check through the independent verifier
     got = verify_proof(proof_raw)

@@ -39,7 +39,7 @@ independently verifiable proofs." Everything else is an application.
 | CAP-004 | Closed vocabularies as *labels*, never semantics (unknown → fail closed) | 2, 8–9 | IMP | model.rs closed enums; PE-FMT-008 |
 | CAP-005 | **Neutrality test (industry)**: new core feature must survive "different industry tomorrow?" | 76, 82 | DOC | NEUTRALITY.md §3 Test 1 |
 | CAP-006 | No hard-coded domain semantics as logic | 45 | IMP+gated | `tools/check_neutrality.py` (PE-NEUT-001) |
-| CAP-007 | **Core-stability test**: radically different systems constructible above a stable core (tests/schemas/policies only) | 82 | IMP | NEUTRALITY.md §3 Test 2; `PE-NEUT-003`, 4 domain journeys |
+| CAP-007 | **Core-stability test**: radically different systems constructible above a stable core (tests/schemas/policies only) | 82 | IMP | NEUTRALITY.md §3 Test 2; `PE-NEUT-003`, 10 domain journeys |
 
 ## B. Event / time / status
 
@@ -48,7 +48,7 @@ independently verifiable proofs." Everything else is an application.
 | CAP-010 | Generic event: happened-record with type, subject, effective time, payload digest, metadata | 2, 47–50 | IMP | `model.rs::EventContent`; schema tests |
 | CAP-011 | Temporal separation: event time ≠ observation/issuance ≠ verification ≠ status time | 18 | IMP | `effective_at`, `issued_at`/`expires_at`, `VerifyCtx.verified_at`, `revocations_known_at` |
 | CAP-012 | Historical validity ≠ current applicability (VALID ≠ CURRENT, SUPERSEDED ≠ invalid) | 19, 21–22 | IMP | Lifecycle: SUPERSEDED keeps evidence valid; `not_superseded`; golden-19 |
-| CAP-013 | Expiration / revocation / supersession as separate signed status events | 20–22 | IMP | Phase 6; `lifecycle.rs`; PE-LIFE-001/004 |
+| CAP-013 | Expiration / revocation / supersession / withdrawal / compromise as separate signed status events | 20–22 | IMP | Phase 6 + lifecycle elevation; `lifecycle.rs`; golden-29/30; PE-LIFE-001/004 |
 | CAP-014 | Unknown status must never convert to PASS | 27 | IMP | `revocations_known_at=None` → UNKNOWN → invalid |
 
 ## C. Evidence & provenance
@@ -56,10 +56,10 @@ independently verifiable proofs." Everything else is an application.
 | ID | Capability | Source § | Status | Evidence |
 |----|-----------|----------|--------|----------|
 | CAP-020 | Evidence integrity (digest-bound, canonical, id-bound, tamper-evident) |  §6 | IMP | `make_evidence`; golden-02–05 |
-| CAP-021 | Evidence kinds (generic: signed_event, credential, transaction_record, measurement, external_reference…) | 4 | IMP | `model.rs::EvidenceKind` (9 closed) |
+| CAP-021 | Evidence kinds (generic incl. transparency_registration/receipt/checkpoint) | 4 | IMP | `model.rs::EvidenceKind` (open vocabulary, well-known labels) |
 | CAP-022 | Embedded vs referenced vs unavailable evidence distinguished — never silently treated as verified | 23, 26 | IMP/DOC | digest+ref model; fetch is caller duty (contract #4) |
 | CAP-023 | Evidence provenance (source/creator/time/hint) expressible without core semantics | 5 | PRT | `attestation_ref` + `hint` + claim fields; full provenance graph is caller-side |
-| CAP-024 | Contradictory evidence representable; core does not arbitrate truth; policy decides | 25 | IMP/DOC | **CONFLICT verdict is V2**; structured findings only |
+| CAP-024 | Contradictory evidence representable; core does not arbitrate truth; policy decides | 25 | IMP | `report.conflicts` (divergent/denial/contradiction) + notes; v2 adjudication (`any`/`threshold`/`no_conflicting_evidence`, CAP-057, golden-28); dedicated CONFLICT verdict stays V2 |
 | CAP-025 | Missing ≠ invalid ≠ unavailable ≠ unverifiable | 26 | IMP | distinct failure paths/codes; fail-closed suite |
 
 ## D. Attestation / signature / trust
@@ -77,26 +77,43 @@ independently verifiable proofs." Everything else is an application.
 
 | ID | Capability | Source § | Status | Evidence |
 |----|-----------|----------|--------|----------|
-| CAP-040 | Generic typed relationship model (10 closed edge types, domain-neutral) |  §9, 10 | IMP | `model.rs::RelType`; PE-GRAPH-001 grounding |
+| CAP-040 | Generic typed relationship model (12 well-known edge types incl. EQUIVALENT/CONTRADICTS, domain-neutral) |  §9, 10 | IMP | `model.rs::RelType`; PE-GRAPH-001 grounding (EQUIVALENT identity-ref endpoints) |
 | CAP-041 | Proof graph validation: refs resolve, grounding, acyclicity, depth/size limits, no dangling/duplicate members |  §11, 64 | IMP | `proof-graph`; PE-FMT-006; cycle/limit tests |
 | CAP-042 | Portable Proof: proposition + sorted member id sets + canonical bytes |  §12 | IMP | `ProofBuilder`; self-check round-trip |
 | CAP-043 | Proof creation journey (claim → subjects → evidence → attestations → relationships → build → sign → export) |  §13 | IMP | CLI journey + builder; `cli_e2e` |
 | CAP-044 | Proof verification journey (parse → schema → canonical → ids → sigs → keys → time → revocation → evidence → relationships → graph → decision outcome) |  §14 | IMP | 11-stage pipeline (`pipeline.rs`) |
-| CAP-045 | Nested proofs (Proof as evidence for a Proof)with depth/cycle protection |  §24 | V2 | representable via `external_reference`; first-class nesting **V2** |
+| CAP-045 | Nested proofs (Proof as evidence for a Proof)with depth/cycle protection |  §24 | V2 | representable via `external_reference`; first-class nesting **V2**; v1 union-composition via `compose` IMP |
+| CAP-046 | Proof composition by member-set union (dedup by id, provenance preserved) | §12 | IMP | `proof-cli compose`; union is content-addressed, new proof_id binds union |
+| CAP-047 | Standard artifact envelope (`container_version/kind/id/cbor/sign1`) | §15 | IMP | `proof-format::envelope` + `proof-crypto::verify_envelope`; `export/import/convert` |
+| CAP-048 | Composition linkage (`referenced_proofs`: sorted/deduped/bounded, bound when present, byte-identical V1 when empty; self-links refused) | §12 | IMP | `proof_id_with_refs`; builder/pipeline/schema; golden-24/25/26; `compose` records sources |
+| CAP-049 | Bundle convention + blob authentication (digests mandatory, blobs also carried; store seam with memory/filesystem backends) | §12 | IMP | `proof-format::{bundle,store}`; `FileStore`; `bundle_store` test |
 ## F. Policy engine
 
 | ID | Capability | Source § | Status | Evidence |
 |----|-----------|----------|--------|----------|
-| CAP-050 | Generic closed requirement language (AND), validated before eval, never executed as code | §17, §34 | IMP | `policy.rs` (9 types incl. `issuer_excluded`); PE-POLICY-008 |
+| CAP-050 | Generic closed requirement language (AND), validated before eval, never executed as code | §17, §34 | IMP | `policy.rs` (10 v1 types incl. `issuer_excluded`); PE-POLICY-008 |
 | CAP-051 | Same evidence under different policies → different decisions (Evidence ≠ Policy; Proof ≠ decision) | §61, §62 | IMP | golden-13/14 (A5); domain suites |
 | CAP-052 | Policy portability: proof need not be regenerated when the policy changes | §62 | IMP | `evaluate_policy` is pure state × policy |
+| CAP-053 | Policy v2 expressions (`all`/`any`/`not`/`threshold{k,of}` over leaves; INDETERMINATE reserved for unevaluated policy; v1 frozen) | §17 | IMP | `expr.rs`; `policy_v2` tests; golden-28; EBNF v2 |
+| CAP-054 | Delegation chains (active `delegate` links, trusted roots, optional scope; cycle-safe) | §22 | IMP | `delegation_chain`; `delegated_authority` leaf; chain tests |
+| CAP-055 | Verifier-scoped identity paths (`identity.bind` + grounded EQUIVALENT edges from trusted asserters; never global, never transitive-by-core) | §22 | IMP | `identity_path`; `identity_bound` leaf |
+| CAP-056 | Transparency inclusion (receipt bound to active checkpoint by log; adapters beneath) | §24 | IMP | `transparency_binding`; `transparency_inclusion` leaf |
+| CAP-057 | Conflict adjudication leaves (`no_conflicting_evidence`, threshold/or composition) | §25 | IMP | v2 tests; golden-28 |
+| CAP-058 | Vocabulary acceptance (declared/used namespaces vs accepted max versions) | §39 | IMP | `vocabulary_accepted` leaf; golden-27 |
+| CAP-059 | Evidence usability (AVAILABLE-only strict counterpart to presence) | §21 | IMP | `evidence_usable` leaf; evidence-status projection |
 
 ## G. Verification context, verdict & explanation
 
 | ID | Capability | Source § | Status | Evidence |
 |----|-----------|----------|--------|----------|
 | CAP-060 | Explicit verification context (clock, trust lists, status, limits, algs); no global state | §35 | IMP | `VerifyCtx`; PE-TRUST-003 |
+| CAP-060b | Unified `VerificationContext` (single object; VerifyCtx/EvalInputs are projections) + one-shot `verify_and_evaluate` | §35 | IMP | `proof-verify::context`; `proof-policy::combine` |
 | CAP-061 | Multi-dimensional verdicts (crypto / evidence / policy + stage checks + lifecycle) | §15, §39 | IMP | `VerifyReport` |
+| CAP-061b | Dimensioned `Verdict` projection (8 dimensions × VALID/INVALID/INDETERMINATE/NOT_APPLICABLE, v1 triple preserved) | §15 | IMP | `VerifyReport::dimensions`; `dimensions` test |
+| CAP-064 | Status-source registry contract (offline default + file/log/callback adapters) | §20 | IMP | `proof-verify::StatusSource/VecStatusSource` |
+| CAP-065 | Configurable trust-relevant edge set (protocol default + caller additions, no core change) | §9 | IMP | `validate_graph_with_grounding` |
+| CAP-066 | Divergence representation (`conflicts[]`: same type+subject, differing fields; validity unchanged, policy adjudicates) | §25 | IMP | `ConflictRecord`; composition tests; CLI JSON surfaces it |
+| CAP-067 | Historical crypto mode (`allow_deprecated`: `-8`→Ed25519, `-7`→P-256; labeled historical-only; `-35`/`-36` never verifiable) | §19 | IMP | `AllowedAlgs::with_deprecated`; cose/pipeline tests |
 | CAP-062 | Why-answers: PASS/FAIL/INDETERMINATE with requirement-level results and provenance | §16, §56 | IMP | `explain_*`; requirement results; PE-CLI-006 |
 | CAP-063 | Reproducibility: same bytes + same context ⇒ same report, byte-for-byte | §36, §68 | IMP | determinism tests; PE-OPS-004; soak |
 
@@ -106,8 +123,8 @@ independently verifiable proofs." Everything else is an application.
 |----|-----------|----------|--------|----------|
 | CAP-070 | Deterministic canonical serialization (same object → same bytes) | §29, §31 | IMP | PE-FMT-001..007 |
 | CAP-071 | Stable collision-resistant deterministic ids | §30 | IMP | PE-CRYPTO-006; VERIFICATION.md |
-| CAP-072 | Independent implementation verifies with FORMAT + crypto + golden vectors only | §32, §33, §66 | IMP | `interop/` Python verifier; PE-INTEROP-001..003 |
-| CAP-073 | Golden vectors: valid + invalid + policy + lifecycle coverage | §33 | IMP | golden-01..23 |
+| CAP-072 | Independent implementation verifies with FORMAT + crypto + golden vectors only | §32, §33, §66 | IMP | `interop/` Python verifier (Ed25519 + secp256r1); 28-check differential; PE-INTEROP-001..003 |
+| CAP-073 | Golden vectors: valid + invalid + policy + lifecycle + composition coverage | §33 | IMP | golden-01..31 |
 | CAP-074 | Machine + human interoperability (structured report + prose explanation) | §71, §72 | IMP | report structs/JSON + `explain_*` |
 ## I. Security & resource safety
 
@@ -163,6 +180,8 @@ crypto system. All of those may **consume** Proof Engine; none of them
 
 ## Compliance summary
 
-- **IMP**: 33 capability items · **DOC**: 9 · **PRT/DOC**: 4 (CAP-023, -035, -101, -114; CAP-024's CONFLICT verdict is **V2**)
-- **V2**: nested-proof primitive (CAP-045), CONFLICT verdict, storage/transport adapters, first-class history reconstruction.
+- **IMP**: 66 capability items (+1 gated) · **DOC**: 7 · **DOC/IMP**: 3 · **IMP/DOC**: 1 · **PRT**: 3 · **PRT/DOC**: 1 · **V2**: 1
+- **V2**: transitive bundle resolution across proofs, CONFLICT verdict +
+  threshold/quorum requirements, storage/transport adapters beyond the seam,
+  ZK/selective-disclosure mechanisms, batch/aggregate proofs.
 - Machine gates: `make neutrality` (PE-NEUT-001), `make trace` (all PE-* rows incl. PE-NEUT-*), `cargo test --locked`, CI.

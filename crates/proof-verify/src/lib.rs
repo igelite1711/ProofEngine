@@ -7,9 +7,16 @@
 //! pipeline reports `policy_decision: INDETERMINATE` and never decides trust.
 
 pub mod builder;
+pub mod context;
 pub mod pipeline;
 pub mod report;
+pub mod status;
 
 pub use builder::{BuiltProof, ProofBuilder};
+pub use context::VerificationContext;
 pub use pipeline::{verify_proof, VerifyCtx};
-pub use report::{CheckRecord, LifecycleRecord, PolicyDecision, Validity, VerifyReport};
+pub use report::{
+    CheckRecord, ConflictKind, ConflictRecord, Dimension, EvidenceStatusRecord, LifecycleRecord,
+    PolicyDecision, Validity, Verdict, VerifyReport,
+};
+pub use status::{StatusSource, VecStatusSource};

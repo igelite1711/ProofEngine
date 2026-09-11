@@ -39,7 +39,7 @@ CRYPTO.md          algorithms, keys, hashes, domain separation
 TRUST.md           who is trusted, issuer resolution, defaults
 LIFECYCLE.md       states × validity/currentness/freshness, clocks, authority
 POLICY.md          requirement types, decisions, trust inputs
-ERROR-MODEL.md     22 stable codes, stage mapping, fail-closed rules
+ERROR-MODEL.md     24 stable codes, stage mapping, fail-closed rules
 VERSIONING.md      v=1 rules, agility, compatibility promise
 INTEROPERABILITY.md I1/I2/I3, golden vectors, second-verifier recipe
 THREAT-MODEL.md    attackers, threats, mitigations, residuals

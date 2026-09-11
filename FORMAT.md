@@ -7,12 +7,12 @@
 
 V1.0 uses **CBOR deterministic encoding** per RFC 8949 §4.1 Preferred Serialization + §4.2.1 Core Deterministic Encoding Requirements (bytewise lexicographic map ordering). Length-first (§4.2.3, legacy RFC7049 compat) is NOT accepted — re-encode-and-compare rejects it as NON_CANONICAL.
 
-- Integers: shortest-form (RFC 8949 §4.2.1). No leading-zero / non-minimal ints. Bignums forbidden in V1.0.
+- Integers: shortest-form (RFC 8949 §4.2.1). No leading-zero / non-minimal ints. Bignums forbidden in V1.0. `nint` range is restricted to `i64` (`-2^63..-1`); values below `i64::MIN` MUST be rejected with `FORBIDDEN_CBOR_CONSTRUCT` (no bignum path).
 - Maps: keys sorted by **bytewise lexicographic order of deterministic-encoded keys** (RFC 8949 §4.1/§4.2.1); duplicate keys forbidden (decoder MUST reject with DUPLICATE_MAP_KEY).
 - Strings: UTF-8 only, validated; no indefinite lengths; `text != bytes` (major type 3 vs 2 never conflated).
 - Allowed types only: `uint, nint, text, bytes, array, map, bool, null`. Floats, bignums, indefinite items, ALL tags (including 0/1) → reject with `FORBIDDEN_CBOR_CONSTRUCT`.
 - Time: `uint` seconds since Unix epoch (no fractional, no implicit TZ). Human display converts separately.
-- Length caps: max 1 MiB proof, max 64 KiB single text/bytes field, max depth 16, max array 256 items (configurable, enforced in decoder).
+- Length caps: max 1 MiB proof, max 64 KiB single text/bytes field, max depth 16, max array 256 items, max map 64 entries (configurable, enforced in decoder). Schema-level tightening also enforced: text values ≤1024 B, map keys ≤64 B, evidence `hint` ≤256 B, `metadata`/`claim`/`context` ≤16 entries with flat `tstr=>tstr|uint|bool` values only (no nested maps, no `nint`/`bytes`/`array`/`null` inside).
 - Canonicalization validation: verifier re-encodes parsed value deterministically and byte-compares to input; mismatch → `NON_CANONICAL`.
 - **Text: bytes as-given — no normalization, no folding, no trimming anywhere in the engine (V1 invariant; see §3.1).** Applications own any NFC/NFD equivalence decisions *before* object creation; verifiers never fold.
 
@@ -39,13 +39,13 @@ Deterministic, versioned, hash-derived. Never auto-increment DB ids.
 | Attestation | `att:v1:<…>` over `AttestationContent` = all fields except `attestation_id` and `signature` (signature covers content + protected header, see §5) |
 | Evidence | `evd:v1:<…>` over content without `evidence_id` |
 | Relationship | `rel:v1:<…>` over full canonical `RelationshipContent` (`from`, `type`, `to`, `evidence_ref` AND `attestation_ref`) without `rel_id` |
-| Proof | `prf:v1:<b64uNoPad(sha256(canonical(binding)))>` where `binding` is the canonical CBOR map `{"v":1, "proposition":<Proposition>, "events":[sorted event ids], "attestations":[sorted attestation ids], "evidence":[sorted evidence ids], "relationships":[sorted relationship ids]}` (id lists ascending). `created_at` is informational and NOT covered. |
+| Proof | `prf:v1:<b64uNoPad(sha256(canonical(binding)))>` where `binding` is the canonical CBOR map `{"v":1, "proposition":<Proposition>, "events":[sorted event ids], "attestations":[sorted attestation ids], "evidence":[sorted evidence ids], "relationships":[sorted relationship ids]}` (id lists ascending). `created_at` is informational and NOT covered. Composition linkage: when `referenced_proofs` is non-empty, the binding gains one more sorted key `"referenced_proofs":[sorted prf ids]`; empty linkage encodes the identical map as V1 (byte-identical ids). Optional bound `vocabularies` declarations behave the same (absent → byte-identical). |
 | Keys | `key:ed25519:<b64u(pubkey)>` / `key:p256:<b64u(uncompressed without 0x04)>`; issuer field uses full KeyRef |
 
 - `b64uNoPad` = RFC 4648 base64url without padding.
 - Verifier recomputes every id; `ID_MISMATCH` on any difference (primary tamper signal).
 - Collision resistance: the preimage-resistance strength of SHA-256 (≈2^128 against deliberate collision). Every id carries exactly one full SHA-256 digest — **no truncation, no shortening, no "short id" alias in V1**; `verify_id` rejects any digest that is not exactly 32 bytes. Future algorithm migration changes `v`, never the length.
-- Identifier length is bounded: `<prefix>:v1:` + 43 base64url chars (3-char prefix, `evt`/`att`/`evd`/`rel`/`prf`; `key:` refs are longer by key type and not hash-derived). Consumers MAY reject ids longer than 48 chars as malformed.
+- Identifier length is bounded: `<prefix>:v1:` + 43 base64url chars (3-char prefix, `evt`/`att`/`evd`/`rel`/`prf`; `key:` refs are longer by key type and not hash-derived). Full ids are 50 chars (`7+43`). Consumers MAY reject ids longer than 64 chars as malformed (never 48 — that would reject all valid ids).
 
 ### 3.1 Text normalization (normative for identifiers)
 
@@ -93,7 +93,7 @@ Field order on wire is irrelevant (map sorting canonicalizes) but docs list cano
   "evidence_ref": tstr|nil, "attestation_ref": tstr|nil }
 ```
 
-Trust-relevant types (`SETTLES, OWNS, CREATED, EXECUTED`) REQUIRE one of `evidence_ref|attestation_ref`, else `RELATIONSHIP_UNGROUNDED`.
+Trust-relevant types (`SETTLES, OWNS, CREATED, EXECUTED, EQUIVALENT, CONTRADICTS`) REQUIRE one of `evidence_ref|attestation_ref`, else `RELATIONSHIP_UNGROUNDED`. Extra future kinds plug in via `extra_grounded` without a core change.
 
 ### 4.5 Proposition (v1)
 
@@ -108,6 +108,7 @@ Trust-relevant types (`SETTLES, OWNS, CREATED, EXECUTED`) REQUIRE one of `eviden
 { "v": 1, "proof_id": tstr, "proposition": Proposition,
   "events": [EventContent+], "attestations": [AttestationEntry+],
   "evidence": [Evidence], "relationships": [Relationship],
+  "referenced_proofs": [tstr] (optional, sorted prf:v1: ids; absent in V1 bytes),
   "created_at": uint }
 ```
 
@@ -117,14 +118,18 @@ Portability rule: relationship endpoints and attestation `evidence_ref`s MUST
 resolve to member ids within the same Proof (no database lookup); anything else
 is `DANGLING_REFERENCE`. External payload content stays outside — digests only.
 
-### 4.7 Revocation / Supersession (signed attestations, not deletes)
+### 4.7 Revocation / Supersession / Withdrawal / Compromise (signed attestations, not deletes)
 
 ```
-Revocation = Attestation with claim.type="revoke", claim.target=<id>, claim.reason, issued_at
+Revocation  = Attestation with claim.type="revoke", claim.target=<id>, claim.reason, issued_at
 Supersession = Attestation with claim.type="supersede", claim.old=<id>, claim.new=<id>
+Withdrawal  = Attestation with claim.type="withdraw", claim.target=<any artifact id>, claim.reason, issued_at
+Compromise  = Attestation with claim.type="compromise", claim.target=<keyref|id>, claim.at_time=<uint instant>, claim.reason, issued_at
 ```
 
-Must be signed by original issuer OR a key in `revocation_authorities` (explicit VerifyCtx input). Unsigned status lists are never trusted.
+Must be signed by original issuer OR a key in `revocation_authorities` (explicit VerifyCtx input), except: withdrawal additionally accepts the issuer of the target's bound attestation (evidence), and compromise additionally accepts the target identity itself (self-report; compromise only invalidates, never grants). Unsigned status lists are never trusted.
+
+Reserved statement-level conventions (no lifecycle effect, projected for policy): `delegate` (subject = grantee, optional `scope`), `identity.bind` (subject ≡ `equivalent`), `transparency.checkpoint` (issuer = log identity), and the `denies` claim field (opposition to an attestation id).
 
 ## 5. Signatures (COSE_Sign1, detached-ish enveloped)
 
@@ -151,4 +156,4 @@ Policy files are JSON (not CBOR) for readability; engine validates then converts
   "verify_ctx (clock, trust list)", "expected": {crypto, evidence, policy, codes[]} }
 ```
 
-At least one vector per §29 negative case. Vectors are normative for interop.
+At least one vector per error-code in ERROR-MODEL.md (24 stable codes). Vectors are normative for interop.

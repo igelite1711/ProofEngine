@@ -78,7 +78,7 @@ pub fn sign_esp256(
     payload_canonical: &[u8],
     key: &crate::keys::P256Key,
     signing_key: &p256::ecdsa::SigningKey,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, ProofError> {
     sign_esp256_with_aad(payload_canonical, key, signing_key, EXTERNAL_AAD)
 }
 
@@ -88,9 +88,9 @@ pub fn sign_esp256_with_aad(
     key: &crate::keys::P256Key,
     signing_key: &p256::ecdsa::SigningKey,
     external_aad: &[u8],
-) -> Vec<u8> {
+) -> Result<Vec<u8>, ProofError> {
     use p256::ecdsa::signature::Signer as _;
-    let kid = key.pubkey_xy();
+    let kid = key.pubkey_xy()?;
     let prot = protected_bytes(COSE_ESP256, &kid);
     let tbs = sig_structure_with_aad(&prot, external_aad, payload_canonical);
     let sig: p256::ecdsa::Signature = signing_key.sign(&tbs);
@@ -100,7 +100,7 @@ pub fn sign_esp256_with_aad(
         CborValue::Bytes(payload_canonical.to_vec()),
         CborValue::Bytes(sig.to_bytes().to_vec()),
     ]);
-    encode_canonical(&outer)
+    Ok(encode_canonical(&outer))
 }
 
 /// Parsed (verified-shape) Sign1 components. Crypto verification is separate.
@@ -240,11 +240,36 @@ pub fn verify_sign1_with_aad(
 ) -> Result<ParsedSign1, ProofError> {
     let p = parse_sign1(bytes, limits)?;
 
-    if crate::alg::AllowedAlgs::is_deprecated(p.alg) {
-        return Err(ErrorCode::DeprecatedAlgorithm
-            .err(format!("deprecated COSE alg {} (use -19/-9)", p.alg)));
-    }
-    if !allowed.is_allowed(p.alg) {
+    // Deprecated ids: rejected by default; verifiable only under explicit
+    // historical policy (`allow_deprecated`), mapped onto the fully-specified
+    // op with the same mathematics (`-8`→Ed25519, `-7`→P-256/SHA-256).
+    // `-35`/`-36` (P-384/P-521) have no verifier support and stay rejected.
+    // A historical acceptance answers "was this valid then?" — current
+    // acceptance is still the policy's decision (pipeline labels it).
+    let historical_op: Option<i64> = if crate::alg::AllowedAlgs::is_deprecated(p.alg) {
+        if !allowed.allow_deprecated {
+            return Err(ErrorCode::DeprecatedAlgorithm
+                .err(format!("deprecated COSE alg {} (use -19/-9)", p.alg)));
+        }
+        match (p.alg, p.kid.len()) {
+            (-8, 32) => Some(COSE_ED25519),
+            (-7, 64) if allowed.esp256 => Some(COSE_ESP256),
+            (-7, _) => {
+                return Err(ErrorCode::UnexpectedHeaderParam.err(
+                    "historical ES256 (-7) needs P-256 enabled (with_esp256) plus historical policy",
+                ));
+            }
+            _ => {
+                return Err(ErrorCode::DeprecatedAlgorithm.err(format!(
+                    "deprecated COSE alg {} has no verifier support (decodable, not verifiable)",
+                    p.alg
+                )));
+            }
+        }
+    } else {
+        None
+    };
+    if historical_op.is_none() && !allowed.is_allowed(p.alg) {
         // Distinguish unknown vs known-but-disabled.
         if p.alg == COSE_ED25519 || p.alg == COSE_ESP256 {
             return Err(ErrorCode::UnexpectedHeaderParam
@@ -256,8 +281,11 @@ pub fn verify_sign1_with_aad(
         return Err(ErrorCode::SignatureInvalid.err("signature must be 64 bytes"));
     }
 
-    // Key binding: kid must equal the expected issuer pubkey.
-    match p.alg {
+    // Key binding: kid must equal the expected issuer pubkey. Historical ids
+    // verify with the mapped op over the ORIGINAL protected bytes (the
+    // signature was computed over header alg -8/-7, so tbs must match it).
+    let op = historical_op.unwrap_or(p.alg);
+    match op {
         x if x == COSE_ED25519 => {
             let expect = parse_ed25519_keyref(expected_issuer)?;
             if expect.as_slice() != p.kid.as_slice() {
@@ -476,12 +504,12 @@ mod tests {
         // ECDSA P-256 (RFC 6979 nonce derivation — relies on the ecdsa crate).
         let sk = p256::ecdsa::SigningKey::from_bytes(seed.as_slice().into()).unwrap();
         let pk = P256Key::from_seed(&seed).unwrap();
-        let c = sign_esp256(msg, &pk, &sk);
-        let d = sign_esp256(msg, &pk, &sk);
+        let c = sign_esp256(msg, &pk, &sk).unwrap();
+        let d = sign_esp256(msg, &pk, &sk).unwrap();
         assert_eq!(c, d, "ECDSA P-256 must be byte-deterministic (RFC 6979)");
         // Determinism must not be monotonicity-with-structure: different payload
         // -> different bytes.
-        let e = sign_esp256(b"other-payload", &pk, &sk);
+        let e = sign_esp256(b"other-payload", &pk, &sk).unwrap();
         assert_ne!(c, e);
         assert_ne!(a, sign_ed25519(b"other-payload", &ek));
     }
@@ -491,13 +519,13 @@ mod tests {
         let seed = [3u8; 32];
         let sk = p256::ecdsa::SigningKey::from_bytes(seed.as_slice().into()).unwrap();
         let pk = P256Key::from_seed(&seed).unwrap();
-        let bytes = sign_esp256(&payload(), &pk, &sk);
+        let bytes = sign_esp256(&payload(), &pk, &sk).unwrap();
         let mut bad = bytes.clone();
         let n = bad.len();
         bad[n - 1] ^= 0x01;
         let e = verify_sign1(
             &bad,
-            &pk.key_ref(),
+            &pk.key_ref().unwrap(),
             &AllowedAlgs::strict().with_esp256(),
             &lim(),
         )
@@ -514,15 +542,124 @@ mod tests {
         let sk = p256::ecdsa::SigningKey::from_bytes(seed.as_slice().into()).unwrap();
         let pk = P256Key::from_seed(&seed).unwrap();
         let other = P256Key::from_seed(&[7u8; 32]).unwrap();
-        let bytes = sign_esp256(&payload(), &pk, &sk);
+        let bytes = sign_esp256(&payload(), &pk, &sk).unwrap();
         let e = verify_sign1(
             &bytes,
-            &other.key_ref(),
+            &other.key_ref().unwrap(),
             &AllowedAlgs::strict().with_esp256(),
             &lim(),
         )
         .unwrap_err();
         assert_eq!(e.code, ErrorCode::SignatureInvalid);
+    }
+
+    /// Craft a COSE_Sign1 with an arbitrary header alg over `payload`,
+    /// correctly signed (Ed25519 op for 32B kids, P-256 op for 64B kids).
+    fn craft_deprecated(alg: i64, kid: &[u8], payload: &[u8], seed: &[u8; 32]) -> Vec<u8> {
+        let prot = {
+            let inner = CborValue::Map(vec![
+                (CborValue::Uint(1), CborValue::Nint(alg)),
+                (CborValue::Uint(4), CborValue::Bytes(kid.to_vec())),
+            ]);
+            encode_canonical(&inner)
+        };
+        let tbs = sig_structure_with_aad(&prot, EXTERNAL_AAD, payload);
+        let sig_bytes: Vec<u8> = if kid.len() == 32 {
+            let sk = Ed25519Key::from_seed(seed);
+            sk.sign(&tbs).to_vec()
+        } else {
+            use p256::ecdsa::signature::Signer as _;
+            let sk = p256::ecdsa::SigningKey::from_bytes(seed.as_slice().into()).unwrap();
+            let sig: p256::ecdsa::Signature = sk.sign(&tbs);
+            sig.to_bytes().to_vec()
+        };
+        let outer = CborValue::Array(vec![
+            CborValue::Bytes(prot),
+            CborValue::Map(vec![]),
+            CborValue::Bytes(payload.to_vec()),
+            CborValue::Bytes(sig_bytes),
+        ]);
+        encode_canonical(&outer)
+    }
+
+    #[test]
+    fn deprecated_rejected_by_default_but_verifiable_historically() {
+        // -8 EdDSA: same mathematics as Ed25519 (-19).
+        let ek = Ed25519Key::from_seed(&TEST_SEED);
+        let issuer = ek.key_ref();
+        let bytes = craft_deprecated(-8, &ek.pubkey_bytes(), &payload(), &TEST_SEED);
+        let e = verify_sign1(&bytes, &issuer, &AllowedAlgs::strict(), &lim()).unwrap_err();
+        assert_eq!(e.code, ErrorCode::DeprecatedAlgorithm);
+        // Explicit historical policy: "was this valid then?" → yes.
+        let p = verify_sign1(
+            &bytes,
+            &issuer,
+            &AllowedAlgs::strict().with_deprecated(),
+            &lim(),
+        )
+        .unwrap();
+        assert_eq!(p.alg, -8);
+        assert_eq!(p.payload, payload());
+    }
+
+    #[test]
+    fn historical_es256_needs_p256_enabled() {
+        // -7 ES256: same mathematics as ESP256 (-9); P-256 posture still applies.
+        let seed = [5u8; 32];
+        let pk = P256Key::from_seed(&seed).unwrap();
+        let kid = pk.pubkey_xy().unwrap();
+        let issuer = pk.key_ref().unwrap();
+        let bytes = craft_deprecated(-7, &kid, &payload(), &seed);
+        let e = verify_sign1(&bytes, &issuer, &AllowedAlgs::strict(), &lim()).unwrap_err();
+        assert_eq!(e.code, ErrorCode::DeprecatedAlgorithm);
+        // Historical alone is not enough: P-256 itself must be enabled.
+        let e = verify_sign1(
+            &bytes,
+            &issuer,
+            &AllowedAlgs::strict().with_deprecated(),
+            &lim(),
+        )
+        .unwrap_err();
+        assert_eq!(e.code, ErrorCode::UnexpectedHeaderParam);
+        let p = verify_sign1(
+            &bytes,
+            &issuer,
+            &AllowedAlgs::strict().with_esp256().with_deprecated(),
+            &lim(),
+        )
+        .unwrap();
+        assert_eq!(p.alg, -7);
+        // Tampering still fails under historical policy.
+        let mut bad = bytes.clone();
+        let n = bad.len();
+        bad[n - 1] ^= 0x01;
+        let e = verify_sign1(
+            &bad,
+            &issuer,
+            &AllowedAlgs::strict().with_esp256().with_deprecated(),
+            &lim(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            e.code,
+            ErrorCode::SignatureInvalid | ErrorCode::NonCanonical | ErrorCode::Malformed
+        ));
+    }
+
+    #[test]
+    fn deprecated_without_verifier_support_stays_rejected() {
+        // -35 ES384: retired with no verifier support — decodable, never
+        // verifiable, even under historical policy.
+        let ek = Ed25519Key::from_seed(&TEST_SEED);
+        let issuer = ek.key_ref();
+        let bytes = craft_deprecated(-35, &ek.pubkey_bytes(), &payload(), &TEST_SEED);
+        for allowed in [
+            AllowedAlgs::strict(),
+            AllowedAlgs::strict().with_deprecated(),
+        ] {
+            let e = verify_sign1(&bytes, &issuer, &allowed, &lim()).unwrap_err();
+            assert_eq!(e.code, ErrorCode::DeprecatedAlgorithm);
+        }
     }
 
     #[test]
@@ -532,7 +669,7 @@ mod tests {
         let sk = p256::ecdsa::SigningKey::from_bytes(seed.as_slice().into()).unwrap();
         let key = P256Key::from_seed(&seed).unwrap();
         let payload = payload();
-        let kid = key.pubkey_xy();
+        let kid = key.pubkey_xy().unwrap();
         let prot = {
             let inner = CborValue::Map(vec![
                 (CborValue::Uint(1), CborValue::Nint(COSE_ESP256)),
@@ -558,12 +695,18 @@ mod tests {
         ]);
         let bytes = encode_canonical(&outer);
         // Strict (default) policy rejects even a *valid* ESP256 sig.
-        let e = verify_sign1(&bytes, &key.key_ref(), &AllowedAlgs::strict(), &lim()).unwrap_err();
+        let e = verify_sign1(
+            &bytes,
+            &key.key_ref().unwrap(),
+            &AllowedAlgs::strict(),
+            &lim(),
+        )
+        .unwrap_err();
         assert_eq!(e.code, ErrorCode::UnexpectedHeaderParam);
         // Explicit opt-in verifies.
         verify_sign1(
             &bytes,
-            &key.key_ref(),
+            &key.key_ref().unwrap(),
             &AllowedAlgs::strict().with_esp256(),
             &lim(),
         )

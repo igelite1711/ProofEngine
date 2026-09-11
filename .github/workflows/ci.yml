@@ -51,6 +51,9 @@ jobs:
       - name: Core neutrality gate (PE-NEUT-001/004)
         run: make neutrality
 
+      - name: No-panic gate (PE-SEC-004)
+        run: make no-panic
+
 # PE-NEUT-003: the core must carry unrelated industries without
 # modification. The domain suite builds against the core as a pure external
 # consumer (not a workspace member) — exactly like a third-party application.
@@ -68,7 +71,7 @@ jobs:
             .
             domains/proof-domains
 
-      - name: Domain journeys (payment, credential, media, AI)
+      - name: Domain journeys (10 industries, same core)
         run: make domain-tests
 
       - name: Neutrality gate (no domain vocabulary in mechanism sources)

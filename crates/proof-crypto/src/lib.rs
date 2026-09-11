@@ -7,15 +7,23 @@ pub mod alg;
 pub mod build;
 pub mod claim;
 pub mod cose;
+pub mod envelope;
 pub mod hash;
 pub mod id;
 pub mod keys;
 
+pub use envelope::verify_envelope;
+
 pub use alg::{AllowedAlgs, COSE_ED25519, COSE_ESP256};
 pub use build::{
-    revoke_attestation, supersede_attestation, to_signed_status, verify_status_object,
-    CreatedAttestation, SignedStatus,
+    compromise_attestation, revoke_attestation, supersede_attestation, to_signed_status,
+    verify_status_object, withdraw_attestation, CreatedAttestation, SignedStatus,
 };
-pub use claim::{claim_kind, revocation_target, supersession_pair, ClaimKind};
+pub use claim::{
+    claim_kind, compromise_mark, denial_target, revocation_target, supersession_pair,
+    withdrawal_target, ClaimKind, CLAIM_COMPROMISE, CLAIM_DELEGATE, CLAIM_FIELD_DENIES,
+    CLAIM_IDENTITY_BIND, CLAIM_REVOKE, CLAIM_SUPERSEDE, CLAIM_TRANSPARENCY_CHECKPOINT,
+    CLAIM_WITHDRAW,
+};
 pub use hash::{compute_digest, verify_content_digest};
 pub use keys::{Ed25519Key, P256Key};

@@ -52,9 +52,18 @@ pub enum ErrorCode {
     /// Revocation status cannot be established: no or stale revocation
     /// information was supplied. Fail closed, never PASS.
     RevocationUnknown,
-    /// Signed status object (revoke/supersede) whose signer has no authority
-    /// over its target (not the original issuer, not in `revocation_authorities`).
+    /// Signed status object (revoke/supersede/withdraw/compromise) whose
+    /// signer has no authority over its target (not the original issuer,
+    /// bound-attestation issuer, self-report, or in `revocation_authorities`
+    /// as applicable to the kind).
     UnauthorizedStatus,
+    /// Evidence covered by a valid signed withdrawal (`claim.type="withdraw"`).
+    /// Administrative cease-reliance; history preserved.
+    Withdrawn,
+    /// Attestation or evidence tainted by a valid signed compromise marking
+    /// (`claim.type="compromise"`). Unlike revocation, compromise does not
+    /// preserve history at/after the compromise instant.
+    Compromised,
 }
 
 impl ErrorCode {
@@ -83,6 +92,8 @@ impl ErrorCode {
             Self::Revoked => "REVOKED",
             Self::RevocationUnknown => "REVOCATION_UNKNOWN",
             Self::UnauthorizedStatus => "UNAUTHORIZED_STATUS",
+            Self::Withdrawn => "WITHDRAWN",
+            Self::Compromised => "COMPROMISED",
         }
     }
 }

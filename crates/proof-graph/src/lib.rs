@@ -55,14 +55,30 @@ pub struct ValidatedGraph {
     pub longest_supersedes_chain: usize,
 }
 
-/// Validate edge topology:
-/// 1. counts within limits; 2. endpoints + refs resolve; 3. trust-relevant
-///    edges grounded; 4. SUPERSEDES subgraph linear, acyclic, depth-bounded.
+/// Validate edge topology.
+/// Counts enforced within limits; endpoints and refs resolve (EQUIVALENT
+/// edges may name identity refs — non-member strings — as endpoints, with
+/// shaped ids still required to resolve and free strings accepted as
+/// asserted); trust-relevant edges grounded; SUPERSEDES subgraph linear,
+/// acyclic, depth-bounded.
 // PE-GRAPH-001 (grounding) · PE-GRAPH-002 (dangling) · PE-GRAPH-004 (limits).
 pub fn validate_graph(
     edges: &[EdgeRecord],
     nodes: &NodeSet,
     limits: &Limits,
+) -> Result<ValidatedGraph, ProofError> {
+    validate_graph_with_grounding(edges, nodes, limits, None)
+}
+
+/// Same as [`validate_graph`] but with a caller-supplied trust-relevant edge
+/// set. `extra_grounded` adds to the default `requires_grounding()` set, so
+/// future vocabularies declare their own trust-relevant kinds without a core
+/// change (AUDIT §5). Pass `None` for V1 defaults.
+pub fn validate_graph_with_grounding(
+    edges: &[EdgeRecord],
+    nodes: &NodeSet,
+    limits: &Limits,
+    extra_grounded: Option<&std::collections::HashSet<String>>,
 ) -> Result<ValidatedGraph, ProofError> {
     if edges.len() > limits.max_edges {
         return Err(ErrorCode::LimitExceeded.err(format!(
@@ -84,16 +100,35 @@ pub fn validate_graph(
         if r.from == r.to {
             return Err(ErrorCode::SchemaViolation.err("self-edge forbidden"));
         }
-        if !nodes.contains(&r.from) {
-            return Err(ErrorCode::DanglingReference.err(format!("unknown from {}", r.from)));
+        if r.rel_type.as_str() == RelType::EQUIVALENT {
+            // Identity assertions name external identifiers: shaped ids must
+            // resolve (else DANGLING), free strings ride as asserted — the
+            // backing attestation (grounding, required) is where trust lives.
+            for (label, ep) in [("from", &r.from), ("to", &r.to)] {
+                if looks_like_artifact_id(ep) && !nodes.contains(ep) {
+                    return Err(ErrorCode::DanglingReference.err(format!("unknown {label} {ep}")));
+                }
+                // Member endpoints count toward node limits; identity refs
+                // are bounded by proof size instead.
+                if nodes.contains(ep) {
+                    endpoints.insert(ep.as_str());
+                }
+            }
+        } else {
+            if !nodes.contains(&r.from) {
+                return Err(ErrorCode::DanglingReference.err(format!("unknown from {}", r.from)));
+            }
+            if !nodes.contains(&r.to) {
+                return Err(ErrorCode::DanglingReference.err(format!("unknown to {}", r.to)));
+            }
+            endpoints.insert(r.from.as_str());
+            endpoints.insert(r.to.as_str());
         }
-        if !nodes.contains(&r.to) {
-            return Err(ErrorCode::DanglingReference.err(format!("unknown to {}", r.to)));
-        }
-        if r.rel_type.requires_grounding()
-            && r.evidence_ref.is_none()
-            && r.attestation_ref.is_none()
-        {
+        let grounded = r.rel_type.requires_grounding()
+            || extra_grounded
+                .map(|s| s.contains(r.rel_type.as_str()))
+                .unwrap_or(false);
+        if grounded && r.evidence_ref.is_none() && r.attestation_ref.is_none() {
             return Err(ErrorCode::RelationshipUngrounded.err(format!(
                 "edge {} ({}) lacks backing evidence",
                 e.id,
@@ -115,8 +150,8 @@ pub fn validate_graph(
                 }
             }
         }
-        endpoints.insert(r.from.as_str());
-        endpoints.insert(r.to.as_str());
+        // NOTE: endpoint accounting happens per-type above (EQUIVALENT counts
+        // member endpoints only); nothing is inserted here.
     }
     if endpoints.len() > limits.max_nodes {
         return Err(ErrorCode::LimitExceeded.err(format!(
@@ -134,6 +169,19 @@ pub fn validate_graph(
         edge_count: edges.len(),
         longest_supersedes_chain: longest,
     })
+}
+
+/// Shape heuristic: `<prefix>:v1:<suffix>` with a known artifact prefix.
+/// Shaped strings name proof members and must resolve; anything else in an
+/// EQUIVALENT endpoint is an external identity ref, accepted as asserted.
+fn looks_like_artifact_id(s: &str) -> bool {
+    let mut parts = s.splitn(3, ':');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(p), Some("v1"), Some(rest)) => {
+            matches!(p, "evt" | "att" | "evd" | "rel" | "prf") && !rest.is_empty()
+        }
+        _ => false,
+    }
 }
 
 /// SUPERSEDES subgraph must be a set of linear chains: acyclic, indegree ≤ 1,
@@ -177,15 +225,22 @@ fn check_supersedes(edges: &[EdgeRecord], limits: &Limits) -> Result<usize, Proo
     let mut longest = 1usize;
     while let Some(n) = stack.pop() {
         seen += 1;
-        let d = dist[&n];
+        let d = *dist.get(n).ok_or_else(|| {
+            ErrorCode::Malformed.err("supersedes graph invariant violated: missing distance")
+        })?;
         if let Some(nexts) = adj.get(n) {
             for m in nexts {
-                let dm = dist.get_mut(m).expect("node");
+                let dm = dist.get_mut(*m).ok_or_else(|| {
+                    ErrorCode::Malformed.err("supersedes graph invariant violated: missing node")
+                })?;
                 if *dm < d + 1 {
                     *dm = d + 1;
                     longest = longest.max(d + 1);
                 }
-                let e = indeg.get_mut(m).expect("node");
+                let e = indeg.get_mut(*m).ok_or_else(|| {
+                    ErrorCode::Malformed
+                        .err("supersedes graph invariant violated: missing indegree")
+                })?;
                 *e -= 1;
                 if *e == 0 {
                     stack.push(m);
@@ -264,6 +319,63 @@ mod tests {
         assert_eq!(g.edge_count, 3);
         assert_eq!(g.node_count, 4);
         assert_eq!(g.edge_ids.len(), 3);
+    }
+
+    #[test]
+    fn equivalent_identity_refs_accepted_when_grounded() {
+        // Identity refs are not members: accepted as asserted, trust carried
+        // by the required grounding — the core never merges globally.
+        let n = nodes(&["obj:co"]);
+        let e = edge(
+            "did:example:alice",
+            RelType::new(RelType::EQUIVALENT),
+            "account:alice-1",
+            true,
+        );
+        let g = validate_graph(&[e], &n, &lim()).unwrap();
+        assert_eq!(g.edge_count, 1);
+        // Member endpoints still count; identity refs do not inflate nodes.
+        assert_eq!(g.node_count, 0);
+    }
+
+    #[test]
+    fn equivalent_bare_edges_rejected() {
+        // EQUIVALENT is trust-relevant: bare edges fail like SETTLES.
+        let n = nodes(&["a"]);
+        let e = edge("a", RelType::new(RelType::EQUIVALENT), "b", false);
+        let err = validate_graph(&[e], &n, &lim()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::RelationshipUngrounded);
+    }
+
+    #[test]
+    fn equivalent_shaped_but_unknown_rejected() {
+        // Shaped ids must resolve even on EQUIVALENT edges (else DANGLING).
+        let n = nodes(&["a"]);
+        let e = edge(
+            "a",
+            RelType::new(RelType::EQUIVALENT),
+            "evt:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            true,
+        );
+        let err = validate_graph(&[e], &n, &lim()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::DanglingReference);
+    }
+
+    #[test]
+    fn contradicts_requires_grounding_and_resolves() {
+        let n = nodes(&["att:v1:a", "att:v1:b"]);
+        let mut e = edge(
+            "att:v1:a",
+            RelType::new(RelType::CONTRADICTS),
+            "att:v1:b",
+            false,
+        );
+        let err = validate_graph(&[e.clone()], &n, &lim()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::RelationshipUngrounded);
+        e.content.evidence_ref = Some("evd:v1:g".to_string());
+        // Grounded but to a resolvable ref: passes shape validation here
+        // (pipeline decides attestation-ness for conflict recording).
+        validate_graph(&[e], &n, &lim()).unwrap();
     }
 
     #[test]

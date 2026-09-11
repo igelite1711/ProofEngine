@@ -4,6 +4,7 @@
 //! the text can never contradict the machine verdict (tested on every vector).
 
 use crate::eval::PolicyOutcome;
+use crate::policy::Policy;
 use proof_verify::{PolicyDecision, VerifyReport};
 
 /// One line per failed check plus a one-line verdict summary of the report.
@@ -42,6 +43,26 @@ pub fn explain_report(report: &VerifyReport) -> String {
         );
     }
     out
+}
+
+/// Policy shape: the boolean structure a v2 decision came from (v1 lists
+/// its implicit AND). Pure projection of the parsed policy.
+pub fn explain_policy(policy: &Policy) -> String {
+    match policy.version {
+        2 => match &policy.expression {
+            Some(expr) => format!("EXPRESSION: {}\n", expr.describe()),
+            None => "EXPRESSION: (missing)\n".into(),
+        },
+        _ => format!(
+            "REQUIREMENTS (all): {}\n",
+            policy
+                .requirements
+                .iter()
+                .map(|r| r.describe())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 /// Requirement-by-requirement verdict for one policy evaluation.

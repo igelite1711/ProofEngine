@@ -147,9 +147,9 @@ fn main() {
     let esp_seed: [u8; 32] = [3u8; 32];
     let esp_sk = p256::ecdsa::SigningKey::from_bytes(esp_seed.as_slice().into()).unwrap();
     let esp_pk = P256Key::from_seed(&esp_seed).unwrap();
-    let esp_issuer = esp_pk.key_ref();
+    let esp_issuer = esp_pk.key_ref().unwrap();
     let esp_payload = b"attestation-content-canonical-placeholder";
-    let esp_sign1 = sign_esp256(esp_payload, &esp_pk, &esp_sk);
+    let esp_sign1 = sign_esp256(esp_payload, &esp_pk, &esp_sk).unwrap();
     write(
         "golden-21.json",
         serde_json::json!({
@@ -183,7 +183,7 @@ fn main() {
             "description": "Vector 21 bytes, checked under a different issuer; key binding must fail.",
             "alg": -9,
             "cose_sign1_hex": hex::encode(&esp_sign1),
-            "verify_ctx": {"issuer": other_pk.key_ref(), "allowed_algs": [-19, -9]},
+            "verify_ctx": {"issuer": other_pk.key_ref().unwrap(), "allowed_algs": [-19, -9]},
             "expected": {"verify": "fail", "code": "SIGNATURE_INVALID"}
         }),
     );

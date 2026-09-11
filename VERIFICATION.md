@@ -28,7 +28,7 @@ changing the exit contract, and `explain` remains prose-only.
 
 ## Golden vectors
 
-`fixtures/golden-*.json` cover the negative matrix and lifecycle: tampered
+`fixtures/golden-*.json` (01..31) cover the negative matrix and lifecycle: tampered
 signatures, wrong keys, expired / revoked / superseded attestations, missing
 revocation info, malformed CBOR, duplicate map keys, non-canonical ints,
 oversized proofs, ungrounded edges, dangling references, cycles, unauthorized
@@ -54,7 +54,7 @@ typed prefix; signatures are COSE_Sign1 with Ed25519 (-19) required and
 ESP256 (-9) accepted. Recompute ids and signature checks over
 `fixtures/golden-01..05` and compare PASS/FAIL with the harness.
 
-## Error codes (complete table, stable wire strings)
+## Error codes (complete table, stable wire strings — 24 codes)
 
 | Code | Meaning (failure stage) |
 |------|--------------------------|
@@ -80,6 +80,8 @@ ESP256 (-9) accepted. Recompute ids and signature checks over
 | `REVOKED` | attestation covered by a valid signed revocation (REVOCATION) |
 | `REVOCATION_UNKNOWN` | no/stale revocation info for a proof-bearing attestation (REVOCATION) |
 | `UNAUTHORIZED_STATUS` | status object signer has no authority over its target (REVOCATION) |
+| `WITHDRAWN` | covered by a valid signed withdrawal (REVOCATION/EVIDENCE) |
+| `COMPROMISED` | tainted by a valid signed compromise marking (REVOCATION/EVIDENCE) |
 
 ## Current limitations (honest list)
 

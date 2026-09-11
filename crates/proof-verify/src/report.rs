@@ -3,6 +3,7 @@
 //! Verification report: three distinct outcomes, never collapsed.
 //! Every record is derived from actual verification state (explainability basis).
 
+use proof_core::model::{EvidenceStatus, VocabularyDecl};
 use proof_core::{ErrorCode, LifecycleStatus};
 
 /// One outcome dimension: valid or invalid. There is no "unknown-as-valid":
@@ -100,6 +101,67 @@ pub struct LifecycleRecord {
     pub message: String,
 }
 
+/// Per-evidence status outcome (EVIDENCE stage). Derived from availability,
+/// the backing attestation's lifecycle, withdrawals, and compromises.
+/// Informational derivation: validity verdicts follow the same fail records
+/// (WITHDRAWN/COMPROMISED/REVOKED/UNKNOWN flip evidence validity; SUPERSEDED
+/// and EXPIRED preserve the attestation-level convention).
+#[derive(Debug, Clone)]
+pub struct EvidenceStatusRecord {
+    /// Evidence id (`evd:<id>`) the status concerns.
+    pub object: String,
+    pub status: EvidenceStatus,
+    /// Failure code for withdrawn/compromised/revoked/unknown; `None` for
+    /// available (and superseded, history preserved). Mirrors the
+    /// attestation-level `Expired`-is-ok quirk for expired backing.
+    pub code: Option<ErrorCode>,
+    pub message: String,
+}
+
+/// How a conflict was established. Divergent claims are detected
+/// structurally; denials and contradictions are explicit assertions.
+/// All three are representation only — policy adjudicates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConflictKind {
+    /// Same `(claim.type, subject)`, differing fields, among verified
+    /// statements. Corroboration (identical re-assertion) is excluded.
+    DivergentClaims,
+    /// A verified statement carries `denies: <attestation-id>` targeting
+    /// another verified statement.
+    Denial,
+    /// A grounded `CONTRADICTS` edge connects two verified statements.
+    Contradiction,
+}
+
+impl ConflictKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DivergentClaims => "divergent_claims",
+            Self::Denial => "denial",
+            Self::Contradiction => "contradiction",
+        }
+    }
+}
+
+/// Divergent assertions requiring caller adjudication (SPEC §17).
+/// Two or more signature-verified *statement* attestations share the same
+/// `(claim.type, subject)` but carry different claim fields. The core records
+/// the divergence and arbitrates nothing: verification validity is unchanged,
+/// and policy/context decides (preferred issuer, threshold, recency,
+/// corroboration, human decision). Status attestations (revoke/supersede/
+/// withdraw/compromise) are lifecycle, never conflicts. Cross-type semantic
+/// contradictions (same fact encoded under different claim types) remain the
+/// domain/policy's job — the core surfaces structural divergence only,
+/// plus explicit `denies`/`CONTRADICTS` opposition as stated.
+#[derive(Debug, Clone)]
+pub struct ConflictRecord {
+    pub kind: ConflictKind,
+    pub claim_type: String,
+    pub subject: String,
+    /// `att:<id>` of each involved attestation, sorted ascending.
+    pub attestation_ids: Vec<String>,
+}
+
 /// Full verification output.
 #[derive(Debug, Clone)]
 pub struct VerifyReport {
@@ -123,10 +185,27 @@ pub struct VerifyReport {
     /// statement attestation.
     pub lifecycle: Vec<LifecycleRecord>,
     /// Ids of signature-verified embedded *status* attestations (revoke/
-    /// supersede claims), in proof order. Caller-supplied status objects are
-    /// not proof members and never appear here. Consumers (e.g. policy state
-    /// projection) must never treat a status attestation as a statement.
+    /// supersede/withdraw/compromise claims), in proof order. Caller-supplied
+    /// status objects are not proof members and never appear here. Consumers
+    /// (e.g. policy state projection) must never treat a status attestation
+    /// as a statement.
     pub status_objects: Vec<String>,
+    /// Artifact ids covered by *applied* (authorized, timely) withdrawals.
+    /// Policy uses this for evidence/adjudication decisions.
+    pub withdrawn_ids: Vec<String>,
+    /// Composition linkage carried by the verified proof (possibly empty).
+    /// Linkage only: referenced content is never fetched and contributes
+    /// nothing to validity. Empty when the envelope never parsed.
+    pub referenced_proofs: Vec<String>,
+    /// Declared vocabularies carried by the verified proof (possibly empty).
+    /// Declaration is provenance, not permission; acceptance is policy.
+    /// Empty when the envelope never parsed.
+    pub vocabularies: Vec<VocabularyDecl>,
+    /// Per-evidence derived status (possibly empty on early exit).
+    pub evidence_status: Vec<EvidenceStatusRecord>,
+    /// Structural divergence groups (possibly empty). Representation only:
+    /// never changes validity by itself; policy adjudicates.
+    pub conflicts: Vec<ConflictRecord>,
     pub checks: Vec<CheckRecord>,
 }
 
@@ -142,5 +221,171 @@ impl VerifyReport {
 
     pub fn passed_crypto(&self) -> bool {
         self.cryptographic_validity == Validity::Valid
+    }
+
+    /// Additive dimensioned projection (PROOF-ENGINE-SPEC §9.2, P2).
+    /// The v1 triple is preserved; this derives per-dimension verdicts from
+    /// existing stage records without changing any verification semantics.
+    /// Aggregation: any INVALID in an applicable dimension ⇒ overall INVALID;
+    /// any INDETERMINATE (and no INVALID) ⇒ overall INDETERMINATE;
+    /// NOT_APPLICABLE never fails on its own.
+    pub fn dimensions(&self) -> Vec<(Dimension, Verdict)> {
+        let verdict_for = |stages: &[&str], empty_ok: bool, empty_verdict: Verdict| -> Verdict {
+            let relevant: Vec<&CheckRecord> = self
+                .checks
+                .iter()
+                .filter(|c| stages.contains(&c.stage))
+                .collect();
+            // No records and no lifecycle input for this dimension.
+            if relevant.is_empty() {
+                return if empty_ok {
+                    Verdict::Valid
+                } else {
+                    empty_verdict
+                };
+            }
+            if relevant.iter().any(|c| !c.ok) {
+                // Distinguish hard failure from unknown-where-applicable:
+                // REVOCATION/TIME unknowns surface as INDETERMINATE at the
+                // overall layer via evidence_validity, but per-dimension they
+                // are INVALID (a check failed). Callers needing the
+                // unknown-vs-broken distinction inspect lifecycle/codes.
+                return Verdict::Invalid;
+            }
+            Verdict::Valid
+        };
+
+        let structural = verdict_for(
+            &["PARSE", "SCHEMA", "CANONICAL"],
+            false,
+            Verdict::Indeterminate,
+        );
+        let cryptographic = verdict_for(
+            &["IDENTIFIERS", "SIGNATURES", "KEYS"],
+            false,
+            Verdict::Indeterminate,
+        );
+        let evidence = match self.evidence_validity {
+            Validity::Valid => Verdict::Valid,
+            Validity::Invalid => {
+                // Missing lifecycle info (early exit) means we cannot
+                // distinguish broken from unknown → INDETERMINATE, never Valid.
+                if !self.lifecycle_checked {
+                    Verdict::Indeterminate
+                } else {
+                    Verdict::Invalid
+                }
+            }
+        };
+        let provenance = {
+            let rel: Vec<&CheckRecord> = self
+                .checks
+                .iter()
+                .filter(|c| c.stage == "RELATIONSHIPS" || c.stage == "GRAPH")
+                .collect();
+            if rel.is_empty() {
+                Verdict::NotApplicable
+            } else if rel.iter().any(|c| !c.ok) {
+                Verdict::Invalid
+            } else {
+                Verdict::Valid
+            }
+        };
+        let temporal = verdict_for(&["TIME"], false, Verdict::Indeterminate);
+        let revocation = verdict_for(&["REVOCATION"], false, Verdict::Indeterminate);
+        let policy = match self.policy_decision {
+            PolicyDecision::Pass => Verdict::Valid,
+            PolicyDecision::Fail => Verdict::Invalid,
+            PolicyDecision::Indeterminate => Verdict::Indeterminate,
+        };
+        let overall = if [
+            structural,
+            cryptographic,
+            evidence,
+            provenance,
+            temporal,
+            revocation,
+            policy,
+        ]
+        .contains(&Verdict::Invalid)
+        {
+            Verdict::Invalid
+        } else if [
+            structural,
+            cryptographic,
+            evidence,
+            temporal,
+            revocation,
+            policy,
+        ]
+        .contains(&Verdict::Indeterminate)
+        {
+            // NOT_APPLICABLE provenance never forces INDETERMINATE alone.
+            Verdict::Indeterminate
+        } else {
+            Verdict::Valid
+        };
+
+        vec![
+            (Dimension::Structural, structural),
+            (Dimension::Cryptographic, cryptographic),
+            (Dimension::Evidence, evidence),
+            (Dimension::Provenance, provenance),
+            (Dimension::Temporal, temporal),
+            (Dimension::Revocation, revocation),
+            (Dimension::Policy, policy),
+            (Dimension::Overall, overall),
+        ]
+    }
+}
+
+/// Verification dimension (PROOF-ENGINE-SPEC §9.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dimension {
+    Structural,
+    Cryptographic,
+    Evidence,
+    Provenance,
+    Temporal,
+    Revocation,
+    Policy,
+    Overall,
+}
+
+impl Dimension {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Structural => "structural",
+            Self::Cryptographic => "cryptographic",
+            Self::Evidence => "evidence",
+            Self::Provenance => "provenance",
+            Self::Temporal => "temporal",
+            Self::Revocation => "revocation",
+            Self::Policy => "policy",
+            Self::Overall => "overall",
+        }
+    }
+}
+
+/// Per-dimension verdict. v1 triple maps: Valid/Invalid directly;
+/// pipeline-only INDETERMINATE (policy never evaluated by pipeline);
+/// NOT_APPLICABLE when a dimension has no input (e.g. provenance with no
+/// edges) and must not itself fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Verdict {
+    Valid,
+    Invalid,
+    Indeterminate,
+    NotApplicable,
+}
+
+impl Verdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Valid => "valid",
+            Self::Invalid => "invalid",
+            Self::Indeterminate => "indeterminate",
+            Self::NotApplicable => "not_applicable",
+        }
     }
 }

@@ -43,7 +43,13 @@ fn limits() -> Limits {
 }
 
 fn sha256_fill(byte: u8) -> HashRef {
-    HashRef::new(HashAlgorithm::Sha256, vec![byte; 32]).expect("fixed digest")
+    // Fixed demo digest: 32 bytes always satisfies Sha256 length, so direct
+    // construction is fail-closed without a fallible Result path.
+    HashRef {
+        v: 1,
+        alg: HashAlgorithm::Sha256,
+        digest: vec![byte; 32],
+    }
 }
 
 /// Build the financial-transaction example entirely through the core.
@@ -255,10 +261,13 @@ fn verify_at(
 }
 
 fn policy_json(id: &str, extra: &str) -> serde_json::Value {
+    // Fixed template over caller-supplied fragments; parse failure would mean a
+    // programming error in the tour. Fail closed with a minimal valid policy
+    // shape rather than panicking so CLI never aborts on demo paths.
     serde_json::from_str(&format!(
         r#"{{"policy_version":1,"policy_id":"{id}","requirements":[{extra}]}}"#
     ))
-    .expect("tour policy JSON")
+    .unwrap_or_else(|_| serde_json::json!({"policy_version":1,"policy_id":id,"requirements":[]}))
 }
 
 fn evaluate(

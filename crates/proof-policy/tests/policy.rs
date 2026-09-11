@@ -838,3 +838,147 @@ fn proof_fresh_zero_max_age_fails_immediately() {
     let out = evaluate_policy(&state, &zero_fresh, &inputs2);
     assert_eq!(out.decision, PolicyDecision::Fail);
 }
+
+#[test]
+fn verify_and_evaluate_pairs_one_context() {
+    use proof_policy::{verify_and_evaluate, RevocationSet as RS};
+    use proof_verify::VerificationContext;
+    let lim = limits();
+    let key = fixtures::test_key();
+    let pay = event(EventType::new(EventType::PAYMENT_CREATED), "payment:p9");
+    let inv = event(EventType::new(EventType::INVOICE_ISSUED), "invoice:i9");
+    let att = attest(
+        proof_core::model::AttestationContent {
+            v: 1,
+            issuer: key.key_ref(),
+            subject: "payment:p9".into(),
+            claim: proof_core::model::Claim {
+                claim_type: "payment.settled".into(),
+                fields: vec![("amount".into(), MetaValue::Uint(1))],
+            },
+            issued_at: ISSUED,
+            expires_at: Some(EXPIRES),
+            evidence_ref: None,
+        },
+        &key,
+        &lim,
+    )
+    .unwrap();
+    let evd = make_evidence(
+        EvidenceKind::new("transaction_record"),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap(),
+        Some(att.id.clone()),
+        None,
+        &lim,
+    )
+    .unwrap();
+    let rel = make_relationship(
+        Relationship {
+            v: 1,
+            from: pay.id.clone(),
+            rel_type: RelType::new("SETTLES"),
+            to: inv.id.clone(),
+            evidence_ref: Some(evd.id.clone()),
+            attestation_ref: Some(att.id.clone()),
+        },
+        &lim,
+    )
+    .unwrap();
+    let mut b = ProofBuilder::new(
+        Proposition {
+            v: 1,
+            kind: "payment.settles-invoice".into(),
+            subject: pay.id.clone(),
+            predicate: "settles".into(),
+            object: Some(inv.id.clone()),
+            at_time: Some(ISSUED),
+            context: vec![],
+        },
+        CLOCK_OK,
+    );
+    b.add_event(pay);
+    b.add_event(inv);
+    b.add_attestation(att);
+    b.add_evidence(evd);
+    b.add_relationship(rel);
+    let built = b.build(&lim).unwrap();
+    let u = VerificationContext {
+        verified_at: CLOCK_OK,
+        revocations_known_at: Some(CLOCK_OK),
+        trusted_issuers: vec![key.key_ref()],
+        ..VerificationContext::default()
+    };
+    let issuer = key.key_ref();
+    let policy = parse_policy(
+        &serde_json::json!({
+            "policy_version": 1,
+            "policy_id": "t",
+            "requirements": [
+                {"type": "signature_valid"},
+                {"type": "issuer_trusted", "issuer": issuer},
+            ],
+        }),
+        &lim,
+    )
+    .unwrap();
+    let d = verify_and_evaluate(&built.canonical, &u, &policy, RS::empty()).unwrap();
+    assert_eq!(d.outcome.decision, PolicyDecision::Pass);
+}
+
+#[test]
+fn created_at_restamp_moves_freshness_without_breaking_binding() {
+    // ATTACKER MODEL for `proof_fresh` (see `Requirement::ProofFresh`): the
+    // holder of a stale proof rewrites the unauthenticated `created_at` to
+    // look fresh. The binding and all signatures survive (by design), so the
+    // rewritten proof verifies — and `proof_fresh` flips to PASS. This test
+    // pins that behavior so nobody mistakes the check for a security
+    // boundary: strong freshness must come from signed attestation windows.
+    let (built, issuer, _) = setup();
+    let lim = limits();
+    let stale_clock = CLOCK_OK + 100_000;
+    let fresh_policy = parse_policy(
+        &serde_json::json!({
+            "policy_version": 1,
+            "policy_id": "fresh_v1",
+            "requirements": [{"type": "proof_fresh", "max_age_seconds": 300}]
+        }),
+        &lim,
+    )
+    .unwrap();
+    let eval_at = |proof: &proof_core::model::Proof, bytes: &[u8], clock: u64| {
+        let mut c = ctx();
+        c.verified_at = clock;
+        c.revocations_known_at = Some(clock);
+        let report = verify_proof(bytes, &c).unwrap();
+        let state = state_from_report_and_proof(&report, proof).unwrap();
+        let mut inp = inputs(&issuer);
+        inp.verified_at = clock;
+        (report, evaluate_policy(&state, &fresh_policy, &inp))
+    };
+    let (_, stale_out) = eval_at(&built.proof, &built.canonical, stale_clock);
+    assert_eq!(stale_out.decision, PolicyDecision::Fail);
+
+    // Re-stamp `created_at` in the envelope. No signature covers it.
+    let mut v = proof_format::decode_strict(&built.canonical, &lim).unwrap();
+    if let proof_format::CborValue::Map(pairs) = &mut v {
+        for (k, val) in pairs.iter_mut() {
+            if matches!(k, proof_format::CborValue::Text(s) if s == "created_at") {
+                *val = proof_format::CborValue::Uint(stale_clock);
+            }
+        }
+    }
+    let restamped = proof_format::encode_canonical(&v);
+    let restamped_proof = proof_format::cbor_to_proof(
+        &proof_format::decode_strict(&restamped, &lim).unwrap(),
+        &lim,
+    )
+    .unwrap();
+    let (report, fresh_out) = eval_at(&restamped_proof, &restamped, stale_clock);
+    // Binding untouched: same proof_id, IDENTIFIERS clean.
+    assert_eq!(restamped_proof.proof_id, built.proof.proof_id);
+    assert!(!report
+        .failure_codes()
+        .contains(&proof_core::ErrorCode::IdMismatch));
+    // ...but freshness now passes on holder-rewritten bytes. Advisory only.
+    assert_eq!(fresh_out.decision, PolicyDecision::Pass);
+}

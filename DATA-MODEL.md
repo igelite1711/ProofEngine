@@ -11,26 +11,42 @@
 | 2 | Attestation | `att:v1:` | Yes (COSE_Sign1) | issuer-bound claim over a subject + validity window |
 | 3 | Evidence | `evd:v1:` | No (id-bound) | digest-bound external reference + optional attestation ref |
 | 4 | Relationship | `rel:v1:` | No (id-bound) | typed edge from→to + optional evidence/attestation refs |
-| 5 | Proof | `prf:v1:` | No (binds member ids) | proposition + sorted member id sets + created_at (informational) |
+| 5 | Proof | `prf:v1:` | No (binds member ids) | proposition + sorted member id sets + optional `referenced_proofs` linkage + optional `vocabularies` declarations + created_at (informational) |
 
 Non-persisted roles: `Proposition` (value object: kind/subject/predicate/
 object/at_time/context), `Policy` (evaluation input), status objects
-(`claim.type` revoke/supersede attestation subtypes).
+(`claim.type` revoke/supersede/withdraw/compromise attestation subtypes).
 
-## Closed enums (unknown values rejected)
+## Open vocabularies, closed fields
 
-- `EventType` (7): `payment.created`, `payment.completed`, `invoice.issued`,
-  `document.signed`, `package.shipped`, `sensor.measurement.recorded`,
-  `ai.action.executed`.
-- `EvidenceKind` (9): `signed_event`, `signed_document`, `receipt`,
+Types are open strings transported verbatim (neutrality); well-known labels
+below carry pinned semantics. Unknown *fields* are rejected (fail closed).
+
+- `EventType` well-known: `payment.created`, `payment.completed`,
+  `invoice.issued`, `document.signed`, `package.shipped`,
+  `sensor.measurement.recorded`, `ai.action.executed`, …
+- `EvidenceKind` well-known: `signed_event`, `signed_document`, `receipt`,
   `credential`, `measurement`, `transaction_record`, `transparency_receipt`,
-  `device_attestation`, `external_reference`.
-- `RelType` (10): `OWNS`, `CREATED`, `SETTLES`, `REFERENCES`, `CONTAINS`,
-  `PRODUCED`, `EXECUTED`, `ISSUED`, `SUPERSEDES`, `REVOKES`.
+  `transparency_registration`, `transparency_checkpoint`,
+  `device_attestation`, `external_reference`, …
+- `RelType` well-known: `OWNS`, `CREATED`, `SETTLES`, `REFERENCES`,
+  `CONTAINS`, `PRODUCED`, `EXECUTED`, `ISSUED`, `SUPERSEDES`, `REVOKES`,
+  `EQUIVALENT`, `CONTRADICTS`, …
 - Grounding required (trust-relevant): `OWNS`, `CREATED`, `SETTLES`,
-  `EXECUTED` (PE-GRAPH-001). All others may ride bare (logged).
-- `LifecycleStatus` (5): `ACTIVE`, `EXPIRED`, `REVOKED`, `SUPERSEDED`,
-  `UNKNOWN` (see LIFECYCLE.md).
+  `EXECUTED`, `EQUIVALENT`, `CONTRADICTS` (PE-GRAPH-001). All others may
+  ride bare (logged). Callers may declare additional trust-relevant kinds
+  without a core change (`validate_graph_with_grounding`).
+- `LifecycleStatus` (6): `ACTIVE`, `EXPIRED`, `REVOKED`, `SUPERSEDED`,
+  `COMPROMISED`, `UNKNOWN` (see LIFECYCLE.md). Precedence:
+  `COMPROMISED > REVOKED > SUPERSEDED > EXPIRED > UNKNOWN > ACTIVE`.
+- `EvidenceStatus` (8, derived per evidence item): `AVAILABLE`,
+  `WITHDRAWN`, `COMPROMISED`, `REVOKED`, `SUPERSEDED`, `EXPIRED`,
+  `UNKNOWN`, `UNAVAILABLE` (adapter-reported only).
+- Reserved claim types: `revoke`, `supersede`, `withdraw`, `compromise`
+  (status, lifecycle-affecting); `delegate`, `identity.bind`,
+  `transparency.checkpoint` (statement conventions, policy-projected);
+  reserved field `denies` (opposition). All other claim types are plain
+  statements.
 - `MetaValue` (claim/metadata scalars): text, uint, bool only.
 
 ## Object rules (enforced)

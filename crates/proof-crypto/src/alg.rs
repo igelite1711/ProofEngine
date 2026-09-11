@@ -21,6 +21,13 @@ pub struct AllowedAlgs {
     pub ed25519: bool,
     /// Default false. Enable explicitly per deployment.
     pub esp256: bool,
+    /// Historical/forensic verification of deprecated ids (`-8` EdDSA via the
+    /// Ed25519 op, `-7` ES256 via the P-256 op). Default false. When enabled,
+    /// deprecated signatures *verify cryptographically* so a verifier can
+    /// answer "was this valid then?"; current acceptance is still decided by
+    /// policy, and the pipeline labels such acceptances historical-only.
+    /// `-35`/`-36` have no verifier support and stay rejected regardless.
+    pub allow_deprecated: bool,
 }
 
 impl Default for AllowedAlgs {
@@ -28,6 +35,7 @@ impl Default for AllowedAlgs {
         Self {
             ed25519: true,
             esp256: false,
+            allow_deprecated: false,
         }
     }
 }
@@ -40,6 +48,13 @@ impl AllowedAlgs {
 
     pub fn with_esp256(mut self) -> Self {
         self.esp256 = true;
+        self
+    }
+
+    /// Opt in to historical verification of deprecated alg ids. Forensics
+    /// only: enables the cryptographic check, never current trust.
+    pub fn with_deprecated(mut self) -> Self {
+        self.allow_deprecated = true;
         self
     }
 

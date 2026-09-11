@@ -1,14 +1,16 @@
 // Copyright 2026 Proof Engine Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Lifecycle golden-vector generator (vectors 15–18).
+//! Lifecycle golden-vector generator (vectors 15–18, 29–30).
 //! Deterministic: fixed seed, fixed timestamps, fixed payloads.
 //! Run: `cargo run -p proof-verify --example gen_lifecycle_vectors`
-//! Writes fixtures/golden-15..18.json.
+//! Writes fixtures/golden-15..18.json + golden-29..30.json.
 //!
 //! 15 expired     — attestation leaves its validity window → EXPIRED
 //! 16 revoked     — signed revoke status object embedded in the proof → REVOKED
 //! 17 superseded  — signed supersede old→new; historical record preserved
 //! 18 unknown     — no revocation information supplied → REVOCATION_UNKNOWN
+//! 29 withdrawn   — signed withdraw of evidence → WITHDRAWN (history preserved)
+//! 30 compromised — signed compromise marking → COMPROMISED (tainted, no history)
 
 use proof_core::model::{
     AttestationContent, Claim, EventType, EvidenceKind, MetaValue, Proposition, RelType,
@@ -16,8 +18,8 @@ use proof_core::model::{
 };
 use proof_core::{HashAlgorithm, HashRef, Limits};
 use proof_crypto::build::{
-    attest, create_event, fixtures, make_evidence, make_relationship, revoke_attestation,
-    supersede_attestation, CreatedAttestation,
+    attest, compromise_attestation, create_event, fixtures, make_evidence, make_relationship,
+    revoke_attestation, supersede_attestation, withdraw_attestation, CreatedAttestation,
 };
 use proof_verify::{verify_proof, BuiltProof, ProofBuilder, VerifyCtx};
 use std::path::PathBuf;
@@ -144,6 +146,8 @@ fn main() {
     vector_16_revoked();
     vector_17_superseded();
     vector_18_unknown();
+    vector_29_withdrawn();
+    vector_30_compromised();
 }
 
 /// Self-check helper: the embedded context must reproduce the expected
@@ -311,6 +315,121 @@ fn vector_18_unknown() {
                 "cryptographic_validity": "valid",
                 "evidence_validity": "invalid",
                 "codes": ["REVOCATION_UNKNOWN"]
+            }
+        }),
+    );
+}
+
+/// Vector 29 — withdrawn: signed withdraw of the evidence item by the issuer
+/// of its bound attestation → evidence WITHDRAWN (history preserved, like
+/// revocation, but a distinct administrative act). Evidence invalid, WITHDRAWN.
+fn vector_29_withdrawn() {
+    let lim = Limits::default();
+    let key = fixtures::test_key();
+    let st = statement(&key.key_ref());
+    // Evidence id is deterministic: build it first so the withdrawal can name it.
+    let evd = make_evidence(
+        EvidenceKind::new(EvidenceKind::TRANSACTION_RECORD),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xEEu8; 32]).unwrap(),
+        Some(st.id.clone()),
+        None,
+        &lim,
+    )
+    .unwrap();
+    let wd = withdraw_attestation(
+        &evd.id,
+        Some("superseded by audit trail"),
+        &key,
+        NOW_OK,
+        &lim,
+    )
+    .unwrap();
+    // Rebuild the standard chain around the same evidence, plus withdrawal.
+    let pay = event(EventType::new(EventType::PAYMENT_CREATED), "payment:p9");
+    let inv = event(EventType::new(EventType::INVOICE_ISSUED), "invoice:i9");
+    let edge = make_relationship(
+        Relationship {
+            v: 1,
+            from: pay.id.clone(),
+            rel_type: RelType::new(RelType::SETTLES),
+            to: inv.id.clone(),
+            evidence_ref: Some(evd.id.clone()),
+            attestation_ref: None,
+        },
+        &lim,
+    )
+    .unwrap();
+    let mut b = ProofBuilder::new(proposition(), 1_700_000_200);
+    b.add_event(pay);
+    b.add_event(inv);
+    b.add_attestation(st);
+    b.add_attestation(wd);
+    b.add_evidence(evd);
+    b.add_relationship(edge);
+    let built = b.build(&lim).unwrap();
+    expect(
+        &built,
+        NOW_OK,
+        Some(NOW_OK),
+        proof_verify::Validity::Invalid,
+        &[proof_core::ErrorCode::Withdrawn],
+    );
+    write(
+        "golden-29.json",
+        serde_json::json!({
+            "name": "29-withdrawn-evidence",
+            "description": "Signed withdraw status object (claim.type=withdraw) by the issuer of the evidence's bound attestation; applies at stage REVOCATION. Evidence WITHDRAWN (history preserved), evidence invalid.",
+            "proof_canonical_hex": hex::encode(&built.canonical),
+            "proof_id": built.id,
+            "verify_ctx": ctx_json(NOW_OK, Some(NOW_OK)),
+            "expected": {
+                "cryptographic_validity": "valid",
+                "evidence_validity": "invalid",
+                "codes": ["WITHDRAWN"]
+            }
+        }),
+    );
+}
+
+/// Vector 30 — compromised: signed compromise marking of the issuer key with
+/// at_time at issuance → statement COMPROMISED (tainted, history NOT
+/// preserved, unlike revocation). A pre-instant statement would stay Active;
+/// here the marking covers issuance, so the chain fails COMPROMISED.
+fn vector_30_compromised() {
+    let lim = Limits::default();
+    let key = fixtures::test_key();
+    let st = statement(&key.key_ref());
+    let mark = compromise_attestation(
+        &key.key_ref(),
+        1_700_000_000,
+        Some("key material exfiltrated"),
+        &key,
+        NOW_OK,
+        &lim,
+    )
+    .unwrap();
+    let built = build(vec![mark]);
+    // Silence unused warning for `st` (build() recreates it identically).
+    let _ = st;
+    expect(
+        &built,
+        NOW_OK,
+        Some(NOW_OK),
+        proof_verify::Validity::Invalid,
+        &[proof_core::ErrorCode::Compromised],
+    );
+    write(
+        "golden-30.json",
+        serde_json::json!({
+            "name": "30-compromised-issuer",
+            "description": "Signed compromise marking (claim.type=compromise, at_time at statement issuance) self-reported by the issuer; applies at stage REVOCATION. Statement COMPROMISED, evidence invalid, history not preserved.",
+            "proof_canonical_hex": hex::encode(&built.canonical),
+            "proof_id": built.id,
+            "verify_ctx": ctx_json(NOW_OK, Some(NOW_OK)),
+            "expected": {
+                "cryptographic_validity": "valid",
+                "evidence_validity": "invalid",
+                "codes": ["COMPROMISED"]
             }
         }),
     );

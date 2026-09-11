@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (V1 in development; protocol semantics evolve on `main`)
 
+### Added (convergence elevation: identity, delegation, transparency, lifecycle, conflict, versioning)
+
+- **Policy v2** (`policy_version: 2`): boolean `all`/`any`/`not`/`threshold{k,of}`
+  expressions over leaves; INDETERMINATE reserved for unevaluated policy;
+  vacuous shapes rejected; node budget enforced; v1 frozen byte-for-byte
+  (v1 rejects v2 leaf names; v2 rejects the `requirements` key). Six
+  adjudication leaves: `delegated_authority{root,issuer,scope?}`,
+  `identity_bound{a,b}`, `transparency_inclusion{log}`,
+  `no_conflicting_evidence`, `vocabulary_accepted{ns,max_version}`,
+  `evidence_usable{kind}`. Canonical CBOR mirrors the tree;
+  `policy:v2:…` hashes; golden-28; EBNF v2.
+- **Delegation chains**: `delegate` claim convention (subject = grantee,
+  optional opaque scope) resolved over ACTIVE links from trust-listed roots,
+  cycle-safe and scope-exact when required. Delegation without a trusted
+  root is nothing.
+- **Identity/equivalence**: `identity.bind` claims + grounded EQUIVALENT
+  edges (identity-ref endpoints allowed; shaped ids must resolve); honored
+  only from trust-listed asserters, never transitive-by-core, never global.
+- **Transparency abstract model** (SPEC §8b): registration → receipt →
+  inclusion → consistency/ordering; `transparency_registration`/
+  `transparency_checkpoint` kinds; checkpoints as ordinary log-issuer
+  attestations (freshness/rotation fall out of existing machinery).
+- **Lifecycle elevation**: `withdraw` (cease reliance, history preserved)
+  and `compromise` (taint at/after instant, history NOT preserved) status
+  kinds with kind-appropriate authority; `COMPROMISED` lifecycle state
+  (dominates precedence); per-evidence derived status
+  (`AVAILABLE→UNAVAILABLE` spectrum); `WITHDRAWN`/`COMPROMISED` codes
+  (append-only: 22→24); golden-29/30.
+- **Native opposition**: `denies` claim fields (external denials noted,
+  never failed) + grounded CONTRADICTS edges feed typed conflict records
+  (`divergent_claims`/`denial`/`contradiction`); validity unchanged, policy
+  adjudicates.
+- **Vocabulary evolution**: optional bound `vocabularies:[{ns,version}]`
+  declarations (absent → byte-identical V1); `accepted_vocabularies`
+  context; informational notes only (acceptance is policy); golden-27.
+  New namespaces need no core change; new structure needs a new `v`.
+- **Storage seam + bundles**: `ArtifactStore` (memory/filesystem) and
+  `Bundle` blobs authenticating against evidence digests.
+- **No-panic CI gate**, fuzz policy-parser 10-type coverage, CLI
+  `withdraw`/`compromise`/`export`/`import`/`convert`/`compose` commands,
+  independent secp256r1 verifier (37-check differential over 31 vectors).
+
+### Added (convergence: P1–P4 foundations, additive only)
+
+- **Unified `VerificationContext`** (`proof-verify::context`): single normative
+  object; `VerifyCtx`/`EvalInputs` are thin projections. One-shot
+  `verify_and_evaluate()` pairs pipeline+policy on one context.
+- **Dimensioned verdicts** (`VerifyReport::dimensions`): 8 dimensions ×
+  `VALID/INVALID/INDETERMINATE/NOT_APPLICABLE`; v1 triple preserved.
+- **Fail-collect diagnostics**: `report_all_failures:true` continues past
+  `CANONICAL` to report every stage (evidence forced Invalid either way).
+- **Standard envelope** (`proof-format::envelope` +
+  `proof-crypto::verify_envelope`; `export`/`import`/`convert` commands).
+- **Composition** (`compose` command): union of member sets, dedup by id,
+  provenance preserved, new `proof_id` binds the union.
+- **`StatusSource` registry contract** (`VecStatusSource` offline default).
+- **Configurable grounding** (`validate_graph_with_grounding`).
+- **No-panic hardening**: P-256/System/graph/CLI production paths return
+  `Result` instead of `expect`/`unwrap`.
+- **Ten-domain neutrality**: logistics, legal, supply-chain, health, gov join
+  payment, credential, media, AI, sensor (same core, same verdict shape).
+- **Architecture records**: `EXTENSION-MODEL`, `CRYPTOGRAPHY`,
+  `VERIFICATION-MODEL`, `POLICY-MODEL`, `COMPATIBILITY` (sub-references of
+  the unified spec; §50 review complete).
+- **Composition linkage** (`referenced_proofs`, SPEC §7): sorted/deduped/
+  bounded source ids bound by `proof_id` when present, byte-identical V1
+  binding when empty (generator reproduces golden-11/12 byte-identically);
+  self-links refused (`CYCLE_DETECTED`); `compose` records sources;
+  golden-24/25/26.
+- **Divergence representation** (SPEC §17): `report.conflicts[]` records
+  same-type/subject groups with differing fields; validity unchanged, policy
+  adjudicates; corroboration stays silent. Surfaced in CLI JSON.
+- **Historical crypto mode**: `AllowedAlgs::with_deprecated` verifies `-8`
+  via Ed25519 and `-7` via P-256 (labeled historical-only; `-35`/`-36`
+  never verifiable). Was-valid-then vs acceptable-now, no history rewrite.
+- **Independent P-256**: stdlib-only secp256r1 ECDSA in `interop/pengine.py`;
+  differential now 37 checks across all 31 vectors incl. refs and vocabulary
+  bindings, P-256 both directions, Python-composed proofs verified
+  by Rust, and closed-schema parity (unknown member fields rejected by
+  both implementations).
+- **Storage seam + bundles**: `ArtifactStore` trait with memory/filesystem
+  backends (conflict = corruption, never silent update); `Bundle` blobs
+  authenticate against evidence digests through the pipeline's own rule.
+- **No-panic CI gate**: `make no-panic` (`tools/check_no_panic.py`,
+  PE-SEC-004) enforced in CI; exhaustiveness arms return fail-closed errors.
+
+### Fixed (protocol-doc forks, no wire break)
+
+- **CDDL aligned to code**: `type` (not `event_type`), `claim:{type,…}` (not
+  `claim_type`+`claim` split), `[* tstr]` (empty member sets allowed).
+- **`FORMAT.md`**: `i64` nint range, schema caps, 50-char id bound, error-code
+  vector rule.
+- **`ARCHITECTURE.md`**: open-vocabulary sentence, empty `tests/` note.
+- **LONGEVITY/certification wording**: P-256 interop scope, advisory
+  continue-on-error.
+- **`proof_fresh` honesty**: documented as advisory (holder-rewritable
+  `created_at`), qualifier in the pass message, restamp behavior pinned by
+  test; `EvalInputs` bounds documented, one-shot path enforces
+  `LIMIT_EXCEEDED`.
+- **Fuzz drift**: policy-parser target covers all ten requirement types.
+
 ### Added
 
 - **Human-first commands**: `inspect` (read-only, never a trust decision),

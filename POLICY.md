@@ -32,15 +32,20 @@ versions are rejected with `POLICY_INVALID` before any evaluation. The
 | `not_superseded` | — | no signature-verified attestation in this proof is SUPERSEDED by a valid signed supersession. Without this requirement a superseded (stale but historical) attestation still satisfies the other requirements — PASS then means "valid", not "current" |
 | `evidence_present` | `kind` | evidence of that kind is present (digest-bound) |
 | `transparency_present` | — | a `transparency_receipt` evidence item is present |
-| `proof_fresh` | `max_age_seconds` | the proof's `created_at` is within `max_age_seconds` of the verifier clock. Provides replay protection against stale proofs |
+| `proof_fresh` | `max_age_seconds` | the proof's `created_at` is within `max_age_seconds` of the verifier clock. Advisory replay hygiene only: `created_at` is informational and outside `proof_id`, so a proof holder can re-stamp it without breaking the binding or any signature. Do not treat this as a security boundary; strong freshness comes from signed attestation windows (`not_expired`) and transparency anchoring |
 
 `issuer` must be a well-formed `key:*` KeyRef (validated at parse time);
-`relationship` is a closed `RelType` string (`OWNS`, `CREATED`, `SETTLES`,
-`REFERENCES`, `CONTAINS`, `PRODUCED`, `EXECUTED`, `ISSUED`, `SUPERSEDES`,
-`REVOKES`); `kind` is a closed `EvidenceKind` string (`signed_event`,
-`signed_document`, `receipt`, `credential`, `measurement`,
-`transaction_record`, `transparency_receipt`, `device_attestation`,
-`external_reference`).
+`relationship` and `kind` are open vocabulary strings (transported verbatim
+per FORMAT §4 / PE-FMT-008; acceptance is the policy's judgment, never a core
+rejection). Well-known V1 labels for readability: `RelType` (`OWNS`,
+`CREATED`, `SETTLES`, `REFERENCES`, `CONTAINS`, `PRODUCED`, `EXECUTED`,
+`ISSUED`, `SUPERSEDES`, `REVOKES`, plus `EQUIVALENT`, `CONTRADICTS`);
+`EvidenceKind` (`signed_event`, `signed_document`, `receipt`, `credential`,
+`measurement`, `transaction_record`, `transparency_receipt`,
+`device_attestation`, `external_reference`, plus `transparency_registration`,
+`transparency_checkpoint`). Unknown labels evaluate normally against the
+proof graph (present-or-not), so `acme:*` domain vocabularies need no core
+change.
 
 ## Decisions
 
@@ -50,9 +55,13 @@ versions are rejected with `POLICY_INVALID` before any evaluation. The
   the report and proof do not belong together. The policy was not evaluated;
   its requirements were neither satisfied nor refuted.
 
-Embed status attestations (revoke/supersede) can never satisfy
-`issuer_trusted` and never contribute validity intervals: a revocation
-authority is not a statement issuer.
+Embed status attestations (revoke/supersede/withdraw/compromise) can never
+satisfy `issuer_trusted` and never contribute validity intervals: a status
+authority is not a statement issuer. Authority per kind (see LIFECYCLE.md):
+revoke/supersede — target's original issuer or `revocation_authorities`;
+withdraw — authorities, target attestation's issuer, or bound-attestation
+issuer for evidence; compromise — target identity itself (self-report) or
+authorities.
 
 ## Trust inputs are explicit and caller-supplied
 
@@ -91,12 +100,61 @@ code. Unknown requirement types and unknown fields are rejected
 (`POLICY_INVALID`) — extension by schema-openness is deliberately NOT the
 mechanism here.
 
-- **New requirement semantics (OR, thresholds/quorum, freshness windows,
-  external-state checks) can only arrive via a new `policy_version` with a
-  documented capability row** (`docs/capability-map.md`). They will never be
-  smuggled into `policy_version: 1`. Unknown versions already fail closed.
+- **New requirement semantics arrive via `policy_version: 2`** (this
+  section), never smuggled into `policy_version: 1`. Unknown versions
+  already fail closed.
 - **Multi-signature authorization works in V1 without new machinery**: N
-  attestations + N `issuer_trusted` requirements = explicit AND-of-issuers
-  (k-of-N quorum is the V2 threshold row, not a V1 hack).
+  attestations + N `issuer_trusted` requirements = explicit AND-of-issuers.
 - These limits are a feature: every policy decision remains a deterministic
   function the second implementer can reproduce from this page.
+
+## Policy v2 (`policy_version: 2`)
+
+V2 keeps v1's guarantees (validated before evaluation, deterministic pure
+function, INDETERMINATE on broken preconditions, never evaluated partially)
+and adds boolean structure plus adjudication leaves. V1 policies parse and
+verify byte-identically; v1 leaf names are frozen.
+
+```json
+{
+  "policy_version": 2,
+  "policy_id": "either_authority_v2",
+  "expression": {"all": [
+    {"type": "signature_valid"},
+    {"any": [
+      {"type": "issuer_trusted", "issuer": "key:ed25519:AAA"},
+      {"type": "issuer_trusted", "issuer": "key:ed25519:BBB"}
+    ]},
+    {"type": "not_expired"}
+  ]}
+}
+```
+
+Connectives (children always evaluated, so explanations stay complete):
+
+| Form | Shape | Passes when |
+|------|-------|-------------|
+| `all` | `{"all": [...]}` non-empty | every child passes |
+| `any` | `{"any": [...]}` non-empty | some child passes |
+| `not` | `{"not": {...}}` single child | child fails |
+| `threshold` | `{"threshold": {"k": K, "of": [...]}}`, 1 ≤ K ≤ N | ≥ K children pass |
+
+Empty `all`/`any`/`of`, `k = 0`, `k > N`, mixed connectives per object, and
+unknown fields are `POLICY_INVALID` (no vacuous truth, no dead policy).
+Total nodes (leaves + connectives) ≤ `max_policy_requirements` (32 default).
+
+Adjudication leaves (v2-only; rejected under v1):
+
+| Type | Fields | Passes when |
+|------|--------|-------------|
+| `delegated_authority` | `root`, `issuer`, optional `scope` | root trust-listed AND issuer has a verified attestation AND (issuer == root OR an active `delegate` chain root→issuer; every link matches `scope` when set) |
+| `identity_bound` | `a`, `b` | a verifier-scoped path a≡b over `identity.bind` assertions and grounded EQUIVALENT edges from trust-listed asserters (reflexive) |
+| `transparency_inclusion` | `log` (keyref) | a `transparency_receipt` is bound to a currently-valid `transparency.checkpoint` by `log` |
+| `no_conflicting_evidence` | — | no conflict groups recorded |
+| `vocabulary_accepted` | `ns`, `max_version` | every declaration of `ns` has version ≤ max AND `ns` is not used-while-undeclared-or-over-max (unused passes vacuously) |
+| `evidence_usable` | `kind` | some evidence of kind has status AVAILABLE (strict counterpart to `evidence_present`) |
+
+INDETERMINATE stays reserved for unevaluated policy (broken proof
+preconditions), exactly like v1 — leaves evaluate boolean once the guard
+passes. Canonical CBOR mirrors the JSON tree; content hashes read
+`policy:v2:…` (v1 hashes unchanged).

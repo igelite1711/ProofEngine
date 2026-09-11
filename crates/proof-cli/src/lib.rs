@@ -12,6 +12,8 @@ pub mod graph;
 pub mod inspect;
 pub mod journey;
 pub mod make;
+pub mod port;
+pub mod store;
 
 use std::collections::{HashMap, HashSet};
 
@@ -80,7 +82,10 @@ impl Cli {
                 let long_name = short_flag_alias(name).to_string();
                 match it.peek() {
                     Some(v) if !v.starts_with('-') => {
-                        let value = it.next().unwrap().clone();
+                        let value = it
+                            .next()
+                            .ok_or_else(|| "missing value for short flag".to_string())?
+                            .clone();
                         cli.multi
                             .entry(long_name.clone())
                             .or_default()
@@ -111,7 +116,9 @@ impl Cli {
                     Some(v)
                         if v.as_str() == "-" || (!v.starts_with("--") && !v.starts_with('-')) =>
                     {
-                        it.next().unwrap().clone()
+                        it.next()
+                            .ok_or_else(|| "missing value for flag".to_string())?
+                            .clone()
                     }
                     _ => {
                         // Boolean flag (no value).
@@ -350,6 +357,12 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("build", "Assemble artifacts into a proof"),
     ("revoke", "Revoke an attestation"),
     ("supersede", "Supersede an attestation"),
+    ("withdraw", "Withdraw reliance on an artifact"),
+    ("compromise", "Mark an identity compromised from an instant"),
+    ("export", "Export an artifact to the standard envelope"),
+    ("import", "Import a standard envelope (validated)"),
+    ("convert", "Normalize a legacy artifact file idempotently"),
+    ("compose", "Compose proofs by union of members"),
     ("demo", "Run the end-to-end demonstration"),
     ("doctor", "Diagnose the local environment"),
     ("version", "Show version information"),
@@ -475,6 +488,37 @@ supersede — write a signed supersession status object.
 
 USAGE
   proof-cli supersede --seed <test|64hex> --old <id> --new <id> --at <u64> --out <file>",
+        "withdraw" => "\
+withdraw — write a signed withdrawal (cease reliance; history preserved).
+
+USAGE
+  proof-cli withdraw --seed <test|64hex> --target <id> [--reason <t>] --at <u64> --out <file>",
+        "compromise" => "\
+compromise — write a signed compromise marking (taints at/after the instant).
+
+USAGE
+  proof-cli compromise --seed <test|64hex> --target <keyref|id> --compromised-at <u64> [--reason <t>] --at <u64> --out <file>",
+        "export" => "\
+export — wrap a CLI artifact as a standard ArtifactEnvelope (validated).
+
+USAGE
+  proof-cli export --proof <file> --out <envelope.json>",
+        "import" => "\
+import — validate an ArtifactEnvelope and write the CLI artifact shape.
+
+USAGE
+  proof-cli import --proof <envelope.json> --out <file>",
+        "convert" => "\
+convert — normalize a legacy artifact file idempotently.
+
+USAGE
+  proof-cli convert --proof <file> --out <file>",
+        "compose" => "\
+compose — union member sets from multiple proofs into one composite proof,
+recording the sources as composition linkage (bound by the new proof_id).
+
+USAGE
+  proof-cli compose --proofs <a.json,b.json> --kind <k> --subject <s> --predicate <p> --created-at <u64> --out <proof.json>",
         "demo" => "\
 demo — deterministic end-to-end story: build → verify PASS → tamper → FAIL →
 revoke → FAIL. Uses the core only; no simulated results.

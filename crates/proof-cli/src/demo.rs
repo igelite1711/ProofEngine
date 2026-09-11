@@ -182,7 +182,9 @@ pub fn run(out_dir: &str) -> Result<i32, String> {
         .canonical
         .windows(needle.len())
         .position(|w| w == needle)
-        .expect("subject bytes present in canonical proof");
+        .ok_or_else(|| {
+            "demo invariant violated: subject bytes missing from canonical proof".to_string()
+        })?;
     let mut tampered = built.canonical.clone();
     tampered[pos] ^= 0x01;
     let bad = verify_proof(

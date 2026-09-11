@@ -12,6 +12,9 @@ categories = ["encoding", "cryptography"]
 
 [dependencies]
 proof-core = { version = "1.0.0", path = "../proof-core" }
+base64 = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

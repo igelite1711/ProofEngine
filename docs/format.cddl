@@ -23,7 +23,7 @@ hash-ref = {
 ; id = evt:v1:<b64u(sha256(canonical(event-content)))>
 event-content = {
     "v": 1,
-    "event_type": tstr,           ; open vocabulary, namespaced recommended
+    "type": tstr,                   ; open vocabulary, namespaced recommended
     "subject": tstr,              ; stable reference
     "effective_at": uint,         ; Unix seconds
     "payload_ref": hash-ref,      ; external payload, digest-only
@@ -38,8 +38,7 @@ attestation-content = {
     "v": 1,
     "issuer": tstr,               ; key:ed25519:<b64u> or key:p256:<b64u>
     "subject": tstr,              ; what this attestation is about
-    "claim_type": tstr,           ; open vocabulary
-    "claim": {* tstr => tstr / uint / bool},  ; structured claim data
+    "claim": {+ tstr => tstr / uint / bool},  ; MUST contain "type":tstr + fields
     "issued_at": uint,            ; Unix seconds, validity window start
     "expires_at": uint / null,    ; null = unbounded validity
     "evidence_ref": tstr / null   ; optional reference to evidence by id
@@ -95,24 +94,33 @@ proposition = {
 proof-binding = {
     "v": 1,
     "proposition": proposition,
-    "events": [+ tstr],           ; sorted event ids
-    "attestations": [+ tstr],     ; sorted attestation ids
-    "evidence": [+ tstr],         ; sorted evidence ids
-    "relationships": [+ tstr]     ; sorted relationship ids
+    "events": [* tstr],           ; sorted event ids (empty allowed; policy decides)
+    "attestations": [* tstr],     ; sorted attestation ids
+    "evidence": [* tstr],         ; sorted evidence ids
+    "relationships": [* tstr]     ; sorted relationship ids
 }
 proof = {
     "v": 1,
     "proof_id": tstr,             ; prf:v1:<b64u(sha256(canonical(binding)))>
     "proposition": proposition,
-    "events": [+ event-content],
-    "attestations": [+ attestation-entry],
-    "evidence": [+ evidence],
-    "relationships": [+ relationship-content],
+    "events": [* event-content],
+    "attestations": [* attestation-entry],
+    "evidence": [* evidence],
+    "relationships": [* relationship-content],
+    ; Composition linkage (SPEC §7): sorted `prf:v1:` ids, bound by proof_id
+    ; when present; absent in V1 bytes. Linkage only — content never embedded.
+    "referenced_proofs"?: [* tstr],
+    ; Declared vocabularies (SPEC §16b): sorted [{ns, version}], bound by
+    ; proof_id when present; absent in V1 bytes. Declaration is provenance.
+    "vocabularies"?: [* { "ns": tstr, "version": uint }],
     "created_at": uint            ; informational, NOT covered by proof_id
 }
 
 ; --- Status Objects ---
-; Signed revoke/supersession attestations (attestation subtypes).
+; Signed revoke/supersede/withdraw/compromise attestations (subtypes).
 ; Revocation: claim.type = "revoke", claim.target = <id>, claim.reason = tstr
 ; Supersession: claim.type = "supersede", claim.old = <id>, claim.new = <id>
+; Withdrawal: claim.type = "withdraw", claim.target = <any artifact id>
+; Compromise: claim.type = "compromise", claim.target = <keyref|id>,
+;   claim.at_time = uint (compromise instant)
 status-object = attestation-content  ; claim.type determines revoke vs supersede

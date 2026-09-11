@@ -64,12 +64,20 @@ fn run(args: &[String]) -> i32 {
         "relate" => proof_cli::artifact::write_relationship(&cli).map(|_| EXIT_OK),
         "revoke" => proof_cli::artifact::write_status_object(&cli, "revoke").map(|_| EXIT_OK),
         "supersede" => proof_cli::artifact::write_status_object(&cli, "supersede").map(|_| EXIT_OK),
+        "withdraw" => proof_cli::artifact::write_status_object(&cli, "withdraw").map(|_| EXIT_OK),
+        "compromise" => {
+            proof_cli::artifact::write_status_object(&cli, "compromise").map(|_| EXIT_OK)
+        }
         "build" => proof_cli::make::build(&cli).map(|_| EXIT_OK),
         "verify" => proof_cli::make::verify(&cli),
         "evaluate" => proof_cli::make::evaluate(&cli, false),
         "explain" => proof_cli::make::evaluate(&cli, true),
         "inspect" => proof_cli::inspect::inspect(&cli).map(|_| EXIT_OK),
         "graph" => proof_cli::graph::graph(&cli).map(|_| EXIT_OK),
+        "export" => proof_cli::port::export(&cli).map(|_| EXIT_OK),
+        "import" => proof_cli::port::import(&cli).map(|_| EXIT_OK),
+        "convert" => proof_cli::port::convert(&cli).map(|_| EXIT_OK),
+        "compose" => proof_cli::port::compose(&cli).map(|_| EXIT_OK),
         "doctor" => proof_cli::doctor::doctor(&cli).map(|_| EXIT_OK),
         "completion" => match cli.opt("shell").or_else(|| cli.positional.first().cloned()) {
             Some(shell) => match proof_cli::completion_script(&shell) {

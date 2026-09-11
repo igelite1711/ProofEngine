@@ -350,7 +350,10 @@ dependencies = [
 name = "proof-format"
 version = "1.0.1"
 dependencies = [
+ "base64",
+ "hex",
  "proof-core",
+ "sha2",
  "thiserror",
 ]
 

@@ -100,3 +100,16 @@ fn golden_14_strict_fail() {
 fn golden_19_superseded_fails_not_superseded() {
     check("golden-19.json");
 }
+
+#[test]
+fn golden_28_conflict_quorum_pass() {
+    check("golden-28.json");
+    // The v2 expression shape itself is pinned: quorum over two issuers.
+    let v = load("golden-28.json");
+    assert_eq!(v["policy"]["policy_version"], 2);
+}
+
+#[test]
+fn golden_31_sanctions_screen_fail() {
+    check("golden-31.json");
+}

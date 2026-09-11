@@ -10,11 +10,14 @@ reference to the Rust source (only FORMAT.md, INTEROPERABILITY.md, and
 interop/minicbor.py     strict CBOR subset (rejects floats/tags/indefinite/
                         bignums/simples/non-shortest/dup-keys/misorder/
                         trailing/bad-utf8; depth cap 16 like engine default)
-interop/pengine.py      ids (sha256+b64u), COSE_Sign1 verify, proof verify
-                        (stages 1-6 + proof_id binding), RFC 8032 sign,
-                        artifact creators (event/attestation/evidence/
-                        relationship/proof)
-interop/differential.py I2 + I3a + I3b + negative-differential runner
+interop/pengine.py      ids (sha256+b64u), COSE_Sign1 verify (Ed25519 +
+                        independent secp256r1 ECDSA), proof verify
+                        (stages 1-6 + proof_id binding incl. composition
+                        refs and vocabulary declarations), RFC 8032 sign,
+                        artifact creators
+                        (event/attestation/evidence/relationship/proof)
+interop/differential.py I2 (all 26 golden vectors) + I3a + I3b +
+                        negative-differential runner (37 checks, incl. closed-schema parity)
 ```
 
 ## Rules
@@ -26,9 +29,10 @@ interop/differential.py I2 + I3a + I3b + negative-differential runner
   caller-supplied inputs and live engine-side by design — the Python side
   never guesses them.
 - Known divergences from engine limits (all fail-closed direction):
-  decoder depth cap is fixed at 16 (no configurable `Limits`); no
-  P-256 ECDSA verification (independent secp256r1; golden-21..23 cross-check); no size caps (inputs here
-  are fixtures and own outputs, never hostile streams).
+  decoder depth cap is fixed at 16 (no configurable `Limits`); no size caps
+  (inputs here are fixtures and own outputs, never hostile streams).
+  Time/lifecycle/graph-pipeline/policy verdicts stay engine-side; Python
+  cross-checks their vectors at binding level (well-formed + binding holds).
 
 ## Run
 

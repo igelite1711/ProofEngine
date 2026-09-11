@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test fmt fmt-check clippy demo fuzzcheck trace neutrality domain-tests cddl-validate clean install
+.PHONY: help build test fmt fmt-check clippy demo fuzzcheck trace neutrality no-panic domain-tests cddl-validate clean install
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -47,6 +47,9 @@ trace: ## Check requirement traceability (CI)
 neutrality: ## Check domain neutrality (CI)
 	python3 tools/check_neutrality.py
 	cargo test --locked -p proof-core extensibility_demonstration
+
+no-panic: ## Check no unwrap/expect/panic in production paths (CI)
+	python3 tools/check_no_panic.py
 
 cddl-validate: ## Validate golden vectors against CDDL schema
 	python3 tools/validate_cddl.py

@@ -53,6 +53,9 @@ pub fn relationship_id(canonical_rel: &[u8]) -> String {
 /// `{"v":1, "proposition":<prop>, "events":[ids…], "attestations":[ids…],
 /// "evidence":[ids…], "relationships":[ids…]}` (each id list sorted ascending),
 /// hashed with SHA-256. `created_at` is intentionally NOT covered (informational).
+/// See [`proof_id_with_refs`] for the composition extension: when
+/// `referenced_proofs` is empty the binding — and every id it produces — is
+/// byte-identical to this function.
 // PE-CRYPTO-007 (member-set binding; created_at excluded).
 pub fn proof_id(
     proposition: &CborValue,
@@ -61,29 +64,125 @@ pub fn proof_id(
     evidence_ids: &[String],
     relationship_ids: &[String],
 ) -> String {
+    proof_id_with_refs(
+        proposition,
+        event_ids,
+        attestation_ids,
+        evidence_ids,
+        relationship_ids,
+        &[],
+    )
+}
+
+/// Proof id with composition linkage. `referenced_proofs` MUST already be
+/// sorted ascending and deduped (builders and schema parsing enforce this).
+/// An empty set encodes the identical binding map as [`proof_id`]: existing
+/// V1 proofs keep byte-identical ids. A non-empty set adds one sorted
+/// `"referenced_proofs"` key to the binding map, so linkage is tamper-evident
+/// (dropping or swapping a reference changes the id).
+pub fn proof_id_with_refs(
+    proposition: &CborValue,
+    event_ids: &[String],
+    attestation_ids: &[String],
+    evidence_ids: &[String],
+    relationship_ids: &[String],
+    referenced_proofs: &[String],
+) -> String {
+    proof_id_full(
+        proposition,
+        event_ids,
+        attestation_ids,
+        evidence_ids,
+        relationship_ids,
+        referenced_proofs,
+        &[],
+    )
+}
+
+/// Proof id with composition linkage and vocabulary declarations.
+/// `vocabularies` MUST already be sorted by ns and deduped. Empty sets encode
+/// the identical binding map as [`proof_id`]: V1 proofs keep byte-identical
+/// ids. Non-empty sets add sorted keys, so declarations are tamper-evident.
+pub fn proof_id_full(
+    proposition: &CborValue,
+    event_ids: &[String],
+    attestation_ids: &[String],
+    evidence_ids: &[String],
+    relationship_ids: &[String],
+    referenced_proofs: &[String],
+    vocabularies: &[(String, u64)],
+) -> String {
     fn sorted(ids: &[String]) -> CborValue {
         let mut v: Vec<String> = ids.to_vec();
         v.sort();
         CborValue::Array(v.into_iter().map(CborValue::Text).collect())
     }
-    let binding = CborValue::Map(vec![
-        (
-            CborValue::Text("attestations".into()),
-            sorted(attestation_ids),
-        ),
-        (CborValue::Text("events".into()), sorted(event_ids)),
-        (CborValue::Text("evidence".into()), sorted(evidence_ids)),
-        (
-            CborValue::Text("relationships".into()),
-            sorted(relationship_ids),
-        ),
-        (CborValue::Text("proposition".into()), proposition.clone()),
-        (CborValue::Text("v".into()), CborValue::Uint(1)),
-    ]);
+    let binding = CborValue::Map({
+        let mut pairs = vec![
+            (
+                CborValue::Text("attestations".into()),
+                sorted(attestation_ids),
+            ),
+            (CborValue::Text("events".into()), sorted(event_ids)),
+            (CborValue::Text("evidence".into()), sorted(evidence_ids)),
+            (
+                CborValue::Text("relationships".into()),
+                sorted(relationship_ids),
+            ),
+            (CborValue::Text("proposition".into()), proposition.clone()),
+            (CborValue::Text("v".into()), CborValue::Uint(1)),
+        ];
+        if !referenced_proofs.is_empty() {
+            pairs.push((
+                CborValue::Text("referenced_proofs".into()),
+                sorted(referenced_proofs),
+            ));
+        }
+        if !vocabularies.is_empty() {
+            pairs.push((
+                CborValue::Text("vocabularies".into()),
+                CborValue::Array(
+                    vocabularies
+                        .iter()
+                        .map(|(ns, version)| {
+                            CborValue::Map(vec![
+                                (CborValue::Text("ns".into()), CborValue::Text(ns.clone())),
+                                (CborValue::Text("version".into()), CborValue::Uint(*version)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ));
+        }
+        pairs
+    });
     id_with(
         proof_core::model::id_prefix::PROOF,
         &encode_canonical(&binding),
     )
+}
+
+/// Validate the *shape* of a composition reference (content is never embedded,
+/// so no digest can be recomputed): `prf:v1:` prefix, canonical no-pad
+/// base64url, exactly 32 digest bytes. Well-formed is necessary but not
+/// sufficient — the pipeline additionally rejects self-references and
+/// over-count sets, and treats every reference as linkage-only
+/// (REFERENCED, never verified content).
+pub fn check_proof_ref_shape(id: &str) -> Result<(), proof_core::ProofError> {
+    use proof_core::ErrorCode;
+    let rest = id.strip_prefix("prf:v1:").ok_or_else(|| {
+        ErrorCode::SchemaViolation.err("referenced proof id must start with prf:v1:")
+    })?;
+    let raw = b64u_decode(rest)?;
+    if b64u_nopad(&raw) != rest {
+        return Err(
+            ErrorCode::SchemaViolation.err("referenced proof id is not canonical base64url")
+        );
+    }
+    if raw.len() != 32 {
+        return Err(ErrorCode::SchemaViolation.err("referenced proof id digest must be 32 bytes"));
+    }
+    Ok(())
 }
 
 pub fn verify_id(prefix: &str, id: &str, canonical: &[u8]) -> Result<(), proof_core::ProofError> {

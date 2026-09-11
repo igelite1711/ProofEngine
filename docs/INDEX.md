@@ -9,6 +9,16 @@ Everything you need to understand, use, and contribute to Proof Engine.
 | [README](../README.md) | Everyone — overview and quick start |
 | [Architecture](../ARCHITECTURE.md) | How the engine works |
 | [Extending](../EXTENDING.md) | Adding your own industry/domain |
+| [Architecture Audit](../ARCHITECTURE-AUDIT.md) | As-built audit: what survives/changes |
+| [Protocol Spec](../PROOF-ENGINE-SPEC.md) | Unified normative protocol |
+| [Ecosystem Architecture](../ECOSYSTEM-ARCHITECTURE.md) | Target layering and boundaries |
+| [Extension Model](../EXTENSION-MODEL.md) | How extensions enter without rewrites |
+| [Cryptography](../CRYPTOGRAPHY.md) | Suites, agility, lifecycle |
+| [Verification Model](../VERIFICATION-MODEL.md) | Stages, context, verdicts |
+| [Policy Model](../POLICY-MODEL.md) | Decisions, conflicts, v2 path |
+| [Compatibility](../COMPATIBILITY.md) | Versioning, migration, longevity |
+| [Security Model](../SECURITY-MODEL.md) | Threats, mitigations, residuals |
+| [Migration Plan](../MIGRATION-PLAN.md) | Sequenced P0–P12 transition |
 
 ## Using Proof Engine
 
@@ -55,6 +65,7 @@ Everything you need to understand, use, and contribute to Proof Engine.
 | [Credential](domains/credential.md) | Credential proofs |
 | [Media](domains/media.md) | Media/content proofs |
 | [AI](domains/ai.md) | AI action proofs |
+| Sensor / Logistics / Legal / Supply-chain / Health / Gov | Test-only journeys in `domains/proof-domains/tests/` (same core, same verdict shape; guides land with P12) |
 
 ## Technical details
 

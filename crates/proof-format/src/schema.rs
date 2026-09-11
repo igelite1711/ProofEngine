@@ -6,7 +6,7 @@
 use proof_core::{
     model::{
         AttestationContent, Claim, EventContent, EventType, Evidence, EvidenceKind, MetaValue,
-        Proof, Proposition, RelType, Relationship, StoredAttestation,
+        Proof, Proposition, RelType, Relationship, StoredAttestation, VocabularyDecl,
     },
     ErrorCode, HashAlgorithm, HashRef, Limits, ProofError,
 };
@@ -651,8 +651,10 @@ const PROOF_FIELDS: &[&str] = &[
     "evidence",
     "proof_id",
     "proposition",
+    "referenced_proofs",
     "relationships",
     "v",
+    "vocabularies",
 ];
 
 fn attestation_entry_to_cbor(a: &StoredAttestation) -> CborValue {
@@ -705,7 +707,9 @@ pub fn proof_to_cbor(p: &Proof) -> Result<CborValue, ProofError> {
     for e in &p.events {
         events.push(event_to_cbor(e)?);
     }
-    Ok(CborValue::Map(vec![
+    // Composition linkage is additive: proofs without references encode the
+    // exact V1 map (byte-identical); the key appears only when non-empty.
+    let mut pairs = vec![
         (
             CborValue::Text("attestations".into()),
             CborValue::Array(
@@ -737,7 +741,40 @@ pub fn proof_to_cbor(p: &Proof) -> Result<CborValue, ProofError> {
             CborValue::Array(p.relationships.iter().map(relationship_to_cbor).collect()),
         ),
         (CborValue::Text("v".into()), CborValue::Uint(1)),
-    ]))
+    ];
+    if !p.referenced_proofs.is_empty() {
+        pairs.push((
+            CborValue::Text("referenced_proofs".into()),
+            CborValue::Array(
+                p.referenced_proofs
+                    .iter()
+                    .map(|s| CborValue::Text(s.clone()))
+                    .collect(),
+            ),
+        ));
+    }
+    // Vocabulary declarations are additive like linkage: absent/empty in V1
+    // bytes (byte-identical); bound when present.
+    if !p.vocabularies.is_empty() {
+        pairs.push((
+            CborValue::Text("vocabularies".into()),
+            CborValue::Array(
+                p.vocabularies
+                    .iter()
+                    .map(|vd| {
+                        CborValue::Map(vec![
+                            (CborValue::Text("ns".into()), CborValue::Text(vd.ns.clone())),
+                            (
+                                CborValue::Text("version".into()),
+                                CborValue::Uint(vd.version),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    Ok(CborValue::Map(pairs))
 }
 
 fn cbor_array<'a>(
@@ -791,6 +828,48 @@ pub fn cbor_to_proof(v: &CborValue, limits: &Limits) -> Result<Proof, ProofError
     for item in cbor_array(map, "relationships")? {
         relationships.push(cbor_to_relationship(item, limits)?);
     }
+    // Composition linkage (additive): absent in V1 bytes → empty vec.
+    // Present → sorted, deduped, well-formed `prf:v1:` ids within bound.
+    // Referenced content is never embedded, so no digest is recomputed here;
+    // the pipeline re-checks shape plus self-reference and treats every
+    // reference as linkage-only (REFERENCED, never verified content).
+    let referenced_proofs = match map
+        .iter()
+        .find(|(k, _)| matches!(k, CborValue::Text(s) if s == "referenced_proofs"))
+    {
+        None => vec![],
+        Some((_, CborValue::Array(items))) => {
+            if items.len() > limits.max_referenced_proofs {
+                return Err(ErrorCode::LimitExceeded.err("too many referenced proofs"));
+            }
+            let mut refs = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    CborValue::Text(s) => {
+                        check_proof_ref_shape(s)?;
+                        refs.push(s.clone());
+                    }
+                    _ => {
+                        return Err(ErrorCode::SchemaViolation
+                            .err("referenced_proofs entries must be text"));
+                    }
+                }
+            }
+            let mut sorted = refs.clone();
+            sorted.sort();
+            sorted.dedup();
+            if sorted.len() != refs.len() || sorted != refs {
+                return Err(ErrorCode::SchemaViolation
+                    .err("referenced_proofs must be sorted ascending with no duplicates"));
+            }
+            refs
+        }
+        Some(_) => {
+            return Err(
+                ErrorCode::SchemaViolation.err("referenced_proofs must be an array of text")
+            );
+        }
+    };
     // Semantic size bounds (decoder already caps raw array lengths).
     if relationships.len() > limits.max_edges {
         return Err(ErrorCode::LimitExceeded.err("too many relationships"));
@@ -807,8 +886,88 @@ pub fn cbor_to_proof(v: &CborValue, limits: &Limits) -> Result<Proof, ProofError
         attestations,
         evidence,
         relationships,
+        referenced_proofs,
+        vocabularies: cbor_to_vocabularies(map, limits)?,
         created_at,
     })
+}
+
+/// Declared vocabularies (additive): absent in V1 bytes → empty vec.
+/// Present → array of `{ns: tstr, version: uint}` sorted by ns, deduped,
+/// bounded. `ns` must be non-empty (≤128 chars); `legacy` (un-namespaced
+/// labels) may be declared explicitly like any namespace.
+fn cbor_to_vocabularies(
+    map: &[(CborValue, CborValue)],
+    limits: &Limits,
+) -> Result<Vec<VocabularyDecl>, ProofError> {
+    use proof_core::model::VocabularyDecl;
+    let arr = match map
+        .iter()
+        .find(|(k, _)| matches!(k, CborValue::Text(s) if s == "vocabularies"))
+    {
+        None => return Ok(vec![]),
+        Some((_, CborValue::Array(items))) => items,
+        Some(_) => {
+            return Err(ErrorCode::SchemaViolation.err("vocabularies must be an array"));
+        }
+    };
+    if arr.len() > limits.max_vocabularies {
+        return Err(ErrorCode::LimitExceeded.err("too many vocabularies"));
+    }
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        let pairs = match item {
+            CborValue::Map(p) => p,
+            _ => return Err(ErrorCode::SchemaViolation.err("vocabulary must be a map")),
+        };
+        check_closed(pairs, &["ns", "version"], "Vocabulary")?;
+        let ns = text_field(pairs, "ns")?;
+        if ns.is_empty() || ns.len() > 128 {
+            return Err(ErrorCode::SchemaViolation.err("vocabulary ns length out of bounds"));
+        }
+        // `:` would make the namespace unmatchable (`vocabulary_ns` takes
+        // text before the first `:`), whitespace is never significant.
+        if ns.contains(':') || ns.contains(char::is_whitespace) {
+            return Err(
+                ErrorCode::SchemaViolation.err("vocabulary ns must not contain ':' or whitespace")
+            );
+        }
+        let version = uint_field(pairs, "version")?;
+        out.push(VocabularyDecl { ns, version });
+    }
+    let mut sorted = out.clone();
+    sorted.sort_by(|a, b| a.ns.cmp(&b.ns));
+    sorted.dedup_by(|a, b| a.ns == b.ns);
+    if sorted.len() != out.len() || sorted.iter().map(|v| &v.ns).ne(out.iter().map(|v| &v.ns)) {
+        return Err(
+            ErrorCode::SchemaViolation.err("vocabularies must be sorted by ns with no duplicates")
+        );
+    }
+    Ok(out)
+}
+
+/// Shape of a composition reference: `prf:v1:` + canonical no-pad base64url
+/// of exactly 32 digest bytes. (Digest recomputation is impossible — content
+/// is never embedded — so this validates naming only; see
+/// `proof-crypto::id::check_proof_ref_shape`, which enforces the same rule
+/// pipeline-side.)
+fn check_proof_ref_shape(id: &str) -> Result<(), ProofError> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    let rest = id.strip_prefix("prf:v1:").ok_or_else(|| {
+        ErrorCode::SchemaViolation.err("referenced proof id must start with prf:v1:")
+    })?;
+    let raw = URL_SAFE_NO_PAD
+        .decode(rest)
+        .map_err(|_| ErrorCode::SchemaViolation.err("referenced proof id is not base64url"))?;
+    if URL_SAFE_NO_PAD.encode(&raw) != rest {
+        return Err(
+            ErrorCode::SchemaViolation.err("referenced proof id is not canonical base64url")
+        );
+    }
+    if raw.len() != 32 {
+        return Err(ErrorCode::SchemaViolation.err("referenced proof id digest must be 32 bytes"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1117,6 +1276,8 @@ mod tests {
             }],
             evidence: vec![],
             relationships: vec![],
+            referenced_proofs: vec![],
+            vocabularies: vec![],
             created_at: 1_700_000_000,
         };
         let v = proof_to_cbor(&p).unwrap();

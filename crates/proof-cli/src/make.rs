@@ -229,7 +229,11 @@ pub fn evaluate(cli: &Cli, explain: bool) -> Result<i32, String> {
         (true, None) => {}
     }
     if explain {
-        print!("{}", proof_policy::explain_full(&report, &outcome));
+        print!(
+            "{}{}",
+            proof_policy::explain_policy(&policy),
+            proof_policy::explain_full(&report, &outcome)
+        );
     } else if cli.has("json") {
         // PE-CLI-007: machine-readable policy decision. Same exit-code
         // contract as prose mode; `explain` never takes this path (PE-CLI-006).

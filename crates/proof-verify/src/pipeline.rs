@@ -8,20 +8,26 @@
 
 use std::collections::{HashMap, HashSet};
 
-use proof_core::model::AttestationContent;
+use proof_core::model::{AttestationContent, EvidenceStatus, VocabularyAccept, VocabularyDecl};
 use proof_core::{ErrorCode, LifecycleStatus, Limits, ProofError};
 use proof_crypto::build::verify_attestation;
 use proof_crypto::build::verify_status_object;
-use proof_crypto::claim::{claim_kind, revocation_target, supersession_pair, ClaimKind};
-use proof_crypto::id::{b64u_nopad, proof_id};
+use proof_crypto::claim::{
+    claim_kind, compromise_mark, denial_target, revocation_target, supersession_pair,
+    withdrawal_target, ClaimKind,
+};
+use proof_crypto::id::{b64u_nopad, check_proof_ref_shape, proof_id_full};
 use proof_crypto::{cose::parse_sign1, AllowedAlgs, COSE_ED25519, COSE_ESP256};
 use proof_format::{
     attestation_to_cbor, cbor_to_proof, decode_strict, encode_canonical, event_to_cbor,
     evidence_to_cbor, proposition_to_cbor, relationship_to_cbor,
 };
-use proof_graph::{validate_graph, EdgeRecord, NodeSet};
+use proof_graph::{validate_graph_with_grounding, EdgeRecord, NodeSet};
 
-use crate::report::{CheckRecord, LifecycleRecord, PolicyDecision, Validity, VerifyReport};
+use crate::report::{
+    CheckRecord, ConflictKind, ConflictRecord, EvidenceStatusRecord, LifecycleRecord,
+    PolicyDecision, Validity, VerifyReport,
+};
 
 /// Explicit verifier inputs. Anything the verdict depends on that is not in
 /// the Proof bytes must appear here (and is echoed in the explanation basis).
@@ -55,7 +61,23 @@ pub struct VerifyCtx {
     pub revocations_known_at: Option<u64>,
     /// If true, report all failures instead of stopping at the first.
     /// Useful for debugging; default false for fail-fast behavior (V1.1).
+    /// Semantics: PARSE/SCHEMA always fail fast (no proof object exists to
+    /// continue with). CANONICAL fails fast when false and continues
+    /// collecting when true (evidence forced Invalid either way).
+    /// IDENTIFIERS and all later stages always collect so structural facts
+    /// (grounding, lifecycle, graph) are visible alongside id mismatches.
     pub report_all_failures: bool,
+    /// Accepted label vocabularies: namespace → max acceptable version.
+    /// Empty (default) means no vocabulary restriction: the pipeline emits
+    /// no acceptance notes and policy decides everything. Non-empty enables
+    /// per-namespace ACCEPTED/UNKNOWN/version notes (informational only;
+    /// unknown vocabulary never fails the core — acceptance is policy).
+    pub accepted_vocabularies: Vec<VocabularyAccept>,
+    /// Extra trust-relevant edge types beyond the V1 `requires_grounding()`
+    /// set. Empty (default) = V1 defaults; threaded to
+    /// `validate_graph_with_grounding` so future vocabularies declare their
+    /// own trust-relevant kinds without a core change (AUDIT §5).
+    pub extra_grounded: Vec<String>,
 }
 
 impl Default for VerifyCtx {
@@ -71,7 +93,27 @@ impl Default for VerifyCtx {
             revocation_authorities: vec![],
             revocations_known_at: None,
             report_all_failures: false,
+            accepted_vocabularies: vec![],
+            extra_grounded: vec![],
         }
+    }
+}
+
+impl VerifyCtx {
+    /// Populate signed status inputs from a `StatusSource` adapter.
+    /// Offline default unchanged: direct `status_objects` users never call
+    /// this. Objects are still re-verified end-to-end; the source is never
+    /// trusted.
+    pub fn with_status_source<S: crate::status::StatusSource>(
+        mut self,
+        source: &S,
+    ) -> Result<Self, ProofError> {
+        let objects = source.status_at(self.verified_at)?;
+        self.status_objects = objects;
+        if self.revocations_known_at.is_none() {
+            self.revocations_known_at = source.known_at();
+        }
+        Ok(self)
     }
 }
 
@@ -96,12 +138,20 @@ fn stage_valid(checks: &[CheckRecord], stages: &[&str]) -> Validity {
 
 /// PE-VERIFY-010 (failures recorded never repaired) · PE-VERIFY-011 (early
 /// exit reports evidence Invalid) · PE-VERIFY-012 (deterministic output).
+/// Eight narrowly-typed inputs (allowed: one purpose-built assembler, not a
+/// general API — the arity is the report shape, not incidental complexity).
+#[allow(clippy::too_many_arguments)]
 fn finalize(
     proof_id: Option<String>,
     checks: Vec<CheckRecord>,
     note_extra: Option<CheckRecord>,
     lifecycle: Vec<LifecycleRecord>,
     status_objects: Vec<String>,
+    withdrawn_ids: Vec<String>,
+    referenced_proofs: Vec<String>,
+    vocabularies: Vec<VocabularyDecl>,
+    evidence_status: Vec<EvidenceStatusRecord>,
+    conflicts: Vec<ConflictRecord>,
     lifecycle_checked: bool,
 ) -> VerifyReport {
     let mut checks = checks;
@@ -126,6 +176,11 @@ fn finalize(
         lifecycle_checked,
         lifecycle,
         status_objects,
+        withdrawn_ids,
+        referenced_proofs,
+        vocabularies,
+        evidence_status,
+        conflicts,
         checks,
     }
 }
@@ -210,6 +265,11 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                 Some(policy_note()),
                 vec![],
                 vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
                 false,
             ));
         }
@@ -238,34 +298,141 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                 Some(policy_note()),
                 vec![],
                 vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
                 false,
             ));
         }
     };
     let stored_id = proof.proof_id.clone();
 
+    // ---- Vocabulary negotiation notes (informational only) ----
+    // Declaration is provenance, acceptance is policy: unknown or undeclared
+    // vocabulary NEVER fails the core. Notes are emitted only when the proof
+    // declares vocabularies or the context restricts them, so V1 proofs see
+    // zero new records.
+    {
+        use proof_core::model::vocabulary_ns;
+        use std::collections::BTreeSet;
+        let mut used: BTreeSet<&str> = BTreeSet::new();
+        for e in &proof.events {
+            used.insert(vocabulary_ns(e.event_type.as_str()));
+        }
+        for a in &proof.attestations {
+            used.insert(vocabulary_ns(a.content.claim.claim_type.as_str()));
+        }
+        for e in &proof.evidence {
+            used.insert(vocabulary_ns(e.kind.as_str()));
+        }
+        for r in &proof.relationships {
+            used.insert(vocabulary_ns(r.rel_type.as_str()));
+        }
+        used.insert(vocabulary_ns(proof.proposition.kind.as_str()));
+        used.insert(vocabulary_ns(proof.proposition.predicate.as_str()));
+        let declared: HashMap<&str, u64> = proof
+            .vocabularies
+            .iter()
+            .map(|vd| (vd.ns.as_str(), vd.version))
+            .collect();
+        if !proof.vocabularies.is_empty() {
+            let mut undeclared: Vec<&&str> = used
+                .iter()
+                .filter(|ns| !declared.contains_key(**ns))
+                .collect();
+            undeclared.sort();
+            for ns in undeclared {
+                checks.push(CheckRecord::note(
+                    "SCHEMA",
+                    format!("proof:{stored_id}"),
+                    format!(
+                        "vocabulary namespace `{ns}` used but not declared (declaration is provenance; acceptance is policy)"
+                    ),
+                ));
+            }
+        }
+        if !ctx.accepted_vocabularies.is_empty() {
+            for vd in &proof.vocabularies {
+                match ctx.accepted_vocabularies.iter().find(|a| a.ns == vd.ns) {
+                    None => checks.push(CheckRecord::note(
+                        "SCHEMA",
+                        format!("proof:{stored_id}"),
+                        format!(
+                            "vocabulary `{}` declared but not in accepted vocabularies (policy adjudicates)",
+                            vd.ns
+                        ),
+                    )),
+                    Some(acc) if vd.version > acc.max_version => {
+                        checks.push(CheckRecord::note(
+                            "SCHEMA",
+                            format!("proof:{stored_id}"),
+                            format!(
+                                "vocabulary `{}` declared at version {} exceeds accepted max {} (policy adjudicates)",
+                                vd.ns, vd.version, acc.max_version
+                            ),
+                        ))
+                    }
+                    _ => {}
+                }
+            }
+            let mut unknown: Vec<&&str> = used
+                .iter()
+                .filter(|ns| {
+                    !ctx.accepted_vocabularies
+                        .iter()
+                        .any(|a| a.ns.as_str() == **ns)
+                })
+                .collect();
+            unknown.sort();
+            for ns in unknown {
+                checks.push(CheckRecord::note(
+                    "SCHEMA",
+                    format!("proof:{stored_id}"),
+                    format!(
+                        "vocabulary namespace `{ns}` used but not in accepted vocabularies (policy adjudicates)"
+                    ),
+                ));
+            }
+        }
+    }
+
     // ---- 3. CANONICAL ----  PE-VERIFY-003
+    let mut canonical_failed = false;
     if encode_canonical(&value) != bytes {
+        canonical_failed = true;
         checks.push(CheckRecord::fail(
             "CANONICAL",
             format!("proof:{stored_id}"),
             ErrorCode::NonCanonical,
             "bytes are not the deterministic encoding",
         ));
-        return Ok(finalize(
-            Some(stored_id),
-            checks,
-            Some(policy_note()),
-            vec![],
-            vec![],
-            false,
+        if !ctx.report_all_failures {
+            return Ok(finalize(
+                Some(stored_id),
+                checks,
+                Some(policy_note()),
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                false,
+            ));
+        }
+        // Fail-collect: continue so IDENTIFIERS/SIGNATURES/TIME/etc. also
+        // report. Evidence stays Invalid (forced below) because non-canonical
+        // bytes must never yield valid evidence.
+    } else {
+        checks.push(CheckRecord::ok(
+            "CANONICAL",
+            format!("proof:{stored_id}"),
+            "re-encoded bytes identical",
         ));
     }
-    checks.push(CheckRecord::ok(
-        "CANONICAL",
-        format!("proof:{stored_id}"),
-        "re-encoded bytes identical",
-    ));
 
     // ---- Member canonicals + ids (shared basis for IDENTIFIERS and later) ----
     let mut event_ids = vec![];
@@ -295,12 +462,22 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
     }
 
     // ---- 4. IDENTIFIERS ----  PE-VERIFY-004
-    let recomputed = proof_id(
+    // The binding covers member id sets plus composition linkage and
+    // vocabulary declarations (empty sets → byte-identical V1 binding, so
+    // existing proofs keep identical ids).
+    let vocab_pairs: Vec<(String, u64)> = proof
+        .vocabularies
+        .iter()
+        .map(|vd| (vd.ns.clone(), vd.version))
+        .collect();
+    let recomputed = proof_id_full(
         &proposition_to_cbor(&proof.proposition),
         &event_ids,
         &att_ids,
         &evd_ids,
         &rel_ids,
+        &proof.referenced_proofs,
+        &vocab_pairs,
     );
     if recomputed != stored_id {
         checks.push(CheckRecord::fail(
@@ -309,6 +486,11 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
             ErrorCode::IdMismatch,
             format!("recomputed id {recomputed} (member set or proposition tampered?)"),
         ));
+        // Always continue to SIGNATURES/etc. after an id mismatch: later
+        // stage records (e.g. RELATIONSHIPS grounding) are structural facts
+        // callers and the neutrality suite rely on. Crypto is already Invalid
+        // via this record; fail-fast vs collect is governed at CANONICAL
+        // (where bytes cannot be trusted further) not here.
     } else {
         checks.push(CheckRecord::ok(
             "IDENTIFIERS",
@@ -330,7 +512,8 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
     for (entry, att_id) in proof.attestations.iter().zip(att_ids.iter()) {
         let obj = format!("att:{att_id}");
         // Derive the self-bound issuer from the kid BEFORE crypto: the key the
-        // signature must come from. Unknown/deprecated algs fail in verify.
+        // signature must come from. Unknown algs fail in verify; deprecated
+        // ids map onto their fully-specified key shape for historical mode.
         let parsed = match parse_sign1(&entry.sign1, &ctx.limits) {
             Ok(p) => p,
             Err(e) => {
@@ -341,6 +524,12 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
         let expected = match parsed.alg {
             COSE_ED25519 => format!("key:ed25519:{}", b64u_nopad(&parsed.kid)),
             COSE_ESP256 => format!("key:p256:{}", b64u_nopad(&parsed.kid)),
+            -8 if parsed.kid.len() == 32 => {
+                format!("key:ed25519:{}", b64u_nopad(&parsed.kid))
+            }
+            -7 if parsed.kid.len() == 64 => {
+                format!("key:p256:{}", b64u_nopad(&parsed.kid))
+            }
             _ => "key:unknown:placeholder".to_string(),
         };
         match verify_attestation(&entry.sign1, &expected, &ctx.allowed_algs, &ctx.limits) {
@@ -358,7 +547,14 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                 checks.push(CheckRecord::ok(
                     "SIGNATURES",
                     obj.clone(),
-                    format!("COSE alg {} verified", parsed.alg),
+                    if proof_crypto::AllowedAlgs::is_deprecated(parsed.alg) {
+                        format!(
+                            "COSE alg {} verified under explicit historical policy (was-valid-then; current acceptance still decided by policy)",
+                            parsed.alg
+                        )
+                    } else {
+                        format!("COSE alg {} verified", parsed.alg)
+                    },
                 ));
                 checks.push(CheckRecord::ok(
                     "KEYS",
@@ -412,12 +608,15 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
         }
     }
 
-    // ---- 8. REVOCATION + SUPERSESSION ----  PE-VERIFY-008 PE-LIFE-001 PE-LIFE-004 PE-LIFE-005 PE-LIFE-006
+    // ---- 8. REVOCATION + SUPERSESSION + WITHDRAWAL + COMPROMISE ----
+    // PE-VERIFY-008 PE-LIFE-001 PE-LIFE-004 PE-LIFE-005 PE-LIFE-006.
     // Status effects come from (a) embedded status attestations whose signature
     // already passed at SIGNATURES and (b) caller-supplied signed status
     // objects (VerifyCtx.status_objects). An effect applies only if its claim
-    // is well-formed, its signer has authority over the target (original
-    // issuer or a revocation authority), and it is not future-dated.
+    // is well-formed, its signer has authority over the target, and it is not
+    // future-dated. Revoke/supersede end currency of attestations; withdraw
+    // ends reliance on any artifact (evidence status); compromise taints an
+    // identity at/after its instant (history not preserved, unlike revocation).
     #[derive(Debug, Clone)]
     struct StatusEffect {
         target: String,
@@ -425,6 +624,8 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
         issuer: String,
         issued_at: u64,
         object: String,
+        /// Compromise instant for `Compromise` (from `at_time`); else `None`.
+        at_time: Option<u64>,
     }
     let mut effects: Vec<StatusEffect> = vec![];
     let mut status_objects: Vec<String> = vec![];
@@ -442,6 +643,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         issuer: content.issuer.clone(),
                         issued_at: content.issued_at,
                         object: obj,
+                        at_time: None,
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
                         "REVOCATION",
@@ -460,12 +662,51 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         issuer: content.issuer.clone(),
                         issued_at: content.issued_at,
                         object: obj,
+                        at_time: None,
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
                         "REVOCATION",
                         obj,
                         e.code,
                         format!("malformed supersede claim: {}", e.message),
+                    )),
+                }
+            }
+            ClaimKind::Withdraw => {
+                status_objects.push(att_id.clone());
+                match withdrawal_target(content) {
+                    Ok(target) => effects.push(StatusEffect {
+                        target: target.to_string(),
+                        kind: ClaimKind::Withdraw,
+                        issuer: content.issuer.clone(),
+                        issued_at: content.issued_at,
+                        object: obj,
+                        at_time: None,
+                    }),
+                    Err(e) => checks.push(CheckRecord::fail(
+                        "REVOCATION",
+                        obj,
+                        e.code,
+                        format!("malformed withdraw claim: {}", e.message),
+                    )),
+                }
+            }
+            ClaimKind::Compromise => {
+                status_objects.push(att_id.clone());
+                match compromise_mark(content) {
+                    Ok((target, at_time)) => effects.push(StatusEffect {
+                        target: target.to_string(),
+                        kind: ClaimKind::Compromise,
+                        issuer: content.issuer.clone(),
+                        issued_at: content.issued_at,
+                        object: obj,
+                        at_time: Some(at_time),
+                    }),
+                    Err(e) => checks.push(CheckRecord::fail(
+                        "REVOCATION",
+                        obj,
+                        e.code,
+                        format!("malformed compromise claim: {}", e.message),
                     )),
                 }
             }
@@ -491,6 +732,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         issuer: content.issuer.clone(),
                         issued_at: content.issued_at,
                         object: label,
+                        at_time: None,
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
                         "REVOCATION",
@@ -506,6 +748,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         issuer: content.issuer.clone(),
                         issued_at: content.issued_at,
                         object: label,
+                        at_time: None,
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
                         "REVOCATION",
@@ -514,11 +757,43 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         format!("malformed supersede claim: {}", e.message),
                     )),
                 },
+                ClaimKind::Withdraw => match withdrawal_target(&content) {
+                    Ok(target) => effects.push(StatusEffect {
+                        target: target.to_string(),
+                        kind: ClaimKind::Withdraw,
+                        issuer: content.issuer.clone(),
+                        issued_at: content.issued_at,
+                        object: label,
+                        at_time: None,
+                    }),
+                    Err(e) => checks.push(CheckRecord::fail(
+                        "REVOCATION",
+                        label,
+                        e.code,
+                        format!("malformed withdraw claim: {}", e.message),
+                    )),
+                },
+                ClaimKind::Compromise => match compromise_mark(&content) {
+                    Ok((target, at_time)) => effects.push(StatusEffect {
+                        target: target.to_string(),
+                        kind: ClaimKind::Compromise,
+                        issuer: content.issuer.clone(),
+                        issued_at: content.issued_at,
+                        object: label,
+                        at_time: Some(at_time),
+                    }),
+                    Err(e) => checks.push(CheckRecord::fail(
+                        "REVOCATION",
+                        label,
+                        e.code,
+                        format!("malformed compromise claim: {}", e.message),
+                    )),
+                },
                 ClaimKind::Statement => checks.push(CheckRecord::fail(
                     "REVOCATION",
                     label,
                     ErrorCode::SchemaViolation,
-                    "supplied object is not a status claim (revoke/supersede)",
+                    "supplied object is not a status claim (revoke/supersede/withdraw/compromise)",
                 )),
             },
             Err(e) => checks.push(CheckRecord::fail(
@@ -531,19 +806,62 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
     }
 
     // Authority + own-timeliness validation; effects that fail never apply.
+    // Revoke/supersede: original issuer of the target attestation, or an
+    // explicit authority. Withdraw: an explicit authority, the issuer of the
+    // target attestation, or the issuer of an evidence item's bound
+    // attestation (events/relationships need explicit authority — unsigned
+    // happenings have no issuer of their own). Compromise: the target
+    // identity itself (self-report) or an explicit authority. Compromise only
+    // ever invalidates (fail-closed direction), so self-report grants nothing.
     let statement_by_id: HashMap<&str, &AttestationContent> = verified
         .iter()
         .filter(|(_, c)| claim_kind(c) == ClaimKind::Statement)
         .map(|(id, c)| (id.as_str(), c))
         .collect();
+    let issuer_by_att_id: HashMap<&str, &str> = verified
+        .iter()
+        .map(|(id, c)| (id.as_str(), c.issuer.as_str()))
+        .collect();
     let mut applies: Vec<(String, ClaimKind)> = vec![];
+    let mut compromises: Vec<(String, u64)> = vec![];
+    let mut withdrawn: Vec<String> = vec![];
     for eff in &effects {
-        let target_content = statement_by_id.get(eff.target.as_str());
-        let empowered = match target_content {
-            Some(tc) => tc.issuer == eff.issuer || ctx.revocation_authorities.contains(&eff.issuer),
-            // Target outside this proof: only an explicit authority may claim
-            // to touch it, and it has no lifecycle impact here regardless.
-            None => ctx.revocation_authorities.contains(&eff.issuer),
+        let empowered = match eff.kind {
+            ClaimKind::Compromise => {
+                eff.issuer == eff.target || ctx.revocation_authorities.contains(&eff.issuer)
+            }
+            ClaimKind::Withdraw => {
+                if ctx.revocation_authorities.contains(&eff.issuer) {
+                    true
+                } else if let Some(iss) = issuer_by_att_id.get(eff.target.as_str()) {
+                    // Target is a known attestation: its own issuer may
+                    // withdraw it.
+                    *iss == eff.issuer
+                } else {
+                    // Target is evidence: the issuer of its bound attestation
+                    // (if any) may withdraw it. Events/relationships need
+                    // explicit authority.
+                    proof.evidence.iter().zip(evd_ids.iter()).any(|(ev, eid)| {
+                        eid == &eff.target
+                            && ev.attestation_ref.as_deref().is_some_and(|aref| {
+                                issuer_by_att_id
+                                    .get(aref)
+                                    .is_some_and(|iss| *iss == eff.issuer)
+                            })
+                    })
+                }
+            }
+            _ => {
+                let target_content = statement_by_id.get(eff.target.as_str());
+                match target_content {
+                    Some(tc) => {
+                        tc.issuer == eff.issuer || ctx.revocation_authorities.contains(&eff.issuer)
+                    }
+                    // Target outside this proof: only an explicit authority may claim
+                    // to touch it, and it has no lifecycle impact here regardless.
+                    None => ctx.revocation_authorities.contains(&eff.issuer),
+                }
+            }
         };
         if !empowered {
             checks.push(CheckRecord::fail(
@@ -551,7 +869,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                 eff.object.clone(),
                 ErrorCode::UnauthorizedStatus,
                 format!(
-                    "{} has no authority over {} (not the original issuer of the target, not in revocation_authorities)",
+                    "{} has no authority for this status kind over {} (needs original issuer, bound-attestation issuer, self-report, or revocation_authorities as applicable)",
                     eff.issuer, eff.target
                 ),
             ));
@@ -568,6 +886,14 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
         }
         if empowered && timely {
             applies.push((eff.target.clone(), eff.kind));
+            if eff.kind == ClaimKind::Withdraw && !withdrawn.contains(&eff.target) {
+                withdrawn.push(eff.target.clone());
+            }
+            if eff.kind == ClaimKind::Compromise {
+                if let Some(at) = eff.at_time {
+                    compromises.push((eff.target.clone(), at));
+                }
+            }
         }
     }
 
@@ -583,6 +909,11 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
         if claim_kind(content) != ClaimKind::Statement {
             continue;
         }
+        // Compromise taints by issuer at/after the instant (history not
+        // preserved); an id-targeted marking taints that attestation too.
+        let compromised = compromises
+            .iter()
+            .any(|(t, at)| (*t == content.issuer || *t == *att_id) && content.issued_at >= *at);
         let revoked = applies
             .iter()
             .any(|(t, k)| t == att_id && *k == ClaimKind::Revoke);
@@ -590,7 +921,9 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
             .iter()
             .any(|(t, k)| t == att_id && *k == ClaimKind::Supersede);
         let expired = time_failed.contains(att_id);
-        let status = if revoked {
+        let status = if compromised {
+            LifecycleStatus::Compromised
+        } else if revoked {
             LifecycleStatus::Revoked
         } else if superseded {
             LifecycleStatus::Superseded
@@ -618,6 +951,11 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                 None,
                 true,
                 "lifecycle SUPERSEDED — historical record preserved; a signed supersession points to a newer attestation".to_string(),
+            ),
+            LifecycleStatus::Compromised => (
+                Some(ErrorCode::Compromised),
+                false,
+                "lifecycle COMPROMISED by a valid signed compromise marking (tainted at/after its instant; history not preserved)".to_string(),
             ),
             LifecycleStatus::Expired => (
                 Some(ErrorCode::Expired),
@@ -666,6 +1004,14 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
     // ---- 9. EVIDENCE ----  PE-VERIFY-009 PE-EVID-002
     // Digest bindings were recomputed above (ids). Here: attestation→evidence
     // references resolve, and external digests are marked digest-only.
+    // Per-evidence status derives from withdrawals, compromise markings, and
+    // the backing attestation's lifecycle when that attestation is verified
+    // in this proof. `attestation_ref` is a provenance hint, never a validity
+    // input: a backing that is present-but-bad fails (disproven), while a
+    // backing that is absent (dangling, or left behind by renewal carrying
+    // old evidence forward) is recorded UNKNOWN with validity preserved —
+    // fail on disproof, note on absence. Strict policies adjudicate via
+    // `evidence_usable`, which requires AVAILABLE.
     let node_ids: Vec<String> = event_ids
         .iter()
         .chain(att_ids.iter())
@@ -673,6 +1019,12 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
         .cloned()
         .collect();
     let node_set = NodeSet::new(node_ids);
+    // Lifecycle key: lifecycle objects are "att:<full-id>".
+    let lifecycle_by_att: HashMap<&str, LifecycleStatus> = lifecycle
+        .iter()
+        .filter_map(|l| l.object.strip_prefix("att:").map(|id| (id, l.status)))
+        .collect();
+    let mut evidence_status: Vec<EvidenceStatusRecord> = vec![];
     let mut evidence_bad = false;
     for a in &proof.attestations {
         if let Some(r) = &a.content.evidence_ref {
@@ -686,6 +1038,112 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                 evidence_bad = true;
             }
         }
+    }
+    // Evidence lifecycle derivation. Precedence: COMPROMISED > WITHDRAWN >
+    // REVOKED > SUPERSEDED > EXPIRED > UNKNOWN > AVAILABLE. Withdrawn,
+    // compromised, revoked, and unknown states fail (flip evidence validity);
+    // superseded preserves history and expired mirrors the attestation-level
+    // convention (ok record carrying the code).
+    for (ev, eid) in proof.evidence.iter().zip(evd_ids.iter()) {
+        let obj = format!("evd:{eid}");
+        let withdrawn = applies
+            .iter()
+            .any(|(t, k)| t == eid && *k == ClaimKind::Withdraw);
+        let marked = compromises.iter().any(|(t, _)| t == eid);
+        let backing = ev
+            .attestation_ref
+            .as_deref()
+            .and_then(|aref| lifecycle_by_att.get(aref).copied());
+        let (status, code, ok, msg) = if marked {
+            (
+                EvidenceStatus::Compromised,
+                Some(ErrorCode::Compromised),
+                false,
+                "evidence tainted by a valid signed compromise marking".to_string(),
+            )
+        } else if withdrawn {
+            (
+                EvidenceStatus::Withdrawn,
+                Some(ErrorCode::Withdrawn),
+                false,
+                "evidence covered by a valid signed withdrawal (history preserved)".to_string(),
+            )
+        } else {
+            match backing {
+                Some(LifecycleStatus::Compromised) => (
+                    EvidenceStatus::Compromised,
+                    Some(ErrorCode::Compromised),
+                    false,
+                    "backing attestation COMPROMISED".to_string(),
+                ),
+                Some(LifecycleStatus::Revoked) => (
+                    EvidenceStatus::Revoked,
+                    Some(ErrorCode::Revoked),
+                    false,
+                    "backing attestation REVOKED".to_string(),
+                ),
+                Some(LifecycleStatus::Superseded) => (
+                    EvidenceStatus::Superseded,
+                    None,
+                    true,
+                    "backing attestation SUPERSEDED — historical record preserved".to_string(),
+                ),
+                Some(LifecycleStatus::Expired) => (
+                    EvidenceStatus::Expired,
+                    Some(ErrorCode::Expired),
+                    true,
+                    "backing attestation EXPIRED".to_string(),
+                ),
+                Some(LifecycleStatus::Unknown) => (
+                    EvidenceStatus::Unknown,
+                    Some(ErrorCode::RevocationUnknown),
+                    false,
+                    "backing attestation state UNKNOWN — fail closed".to_string(),
+                ),
+                Some(LifecycleStatus::Active) => (
+                    EvidenceStatus::Available,
+                    None,
+                    true,
+                    "evidence digest-bound and available".to_string(),
+                ),
+                None if ev.attestation_ref.is_none() => (
+                    EvidenceStatus::Available,
+                    None,
+                    true,
+                    "evidence digest-bound and available".to_string(),
+                ),
+                // Backing attestation not verified in this proof (dangling or
+                // left behind, e.g. renewal carrying old evidence forward).
+                // `attestation_ref` is a provenance hint, never a validity
+                // input: nothing is disproven, so validity is preserved and
+                // the gap is recorded UNKNOWN for auditors and policy
+                // (`evidence_usable` stays strict). Spoofed hints are visible
+                // here; digest binding still holds.
+                _ => (
+                    EvidenceStatus::Unknown,
+                    Some(ErrorCode::RevocationUnknown),
+                    true,
+                    "backing attestation not verified in this proof — provenance hint unverified, validity preserved".to_string(),
+                ),
+            }
+        };
+        if ok {
+            checks.push(CheckRecord::ok("EVIDENCE", obj.clone(), msg.clone()));
+        } else {
+            checks.push(CheckRecord::fail(
+                "EVIDENCE",
+                obj.clone(),
+                code.unwrap_or(ErrorCode::RevocationUnknown),
+                msg.clone(),
+            ));
+            evidence_bad = true;
+        }
+        evidence_status.push(EvidenceStatusRecord {
+            object: obj,
+            status,
+            code,
+            message: msg,
+        });
     }
     if !evidence_bad {
         checks.push(CheckRecord::ok(
@@ -705,7 +1163,12 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
         .zip(rel_ids.iter())
         .map(|(r, id)| EdgeRecord::new(r.clone(), id.clone()))
         .collect();
-    match validate_graph(&edges, &node_set, &ctx.limits) {
+    let extra_set: Option<HashSet<String>> = if ctx.extra_grounded.is_empty() {
+        None
+    } else {
+        Some(ctx.extra_grounded.iter().cloned().collect())
+    };
+    match validate_graph_with_grounding(&edges, &node_set, &ctx.limits, extra_set.as_ref()) {
         Ok(g) => {
             checks.push(CheckRecord::ok(
                 "RELATIONSHIPS",
@@ -735,14 +1198,239 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
         }
     }
 
-    Ok(finalize(
+    // ---- Composition linkage (SPEC §7) ----
+    // References are validated as topology (shape/sorted/bound/self) and
+    // reported as an availability note. Referenced content is never embedded,
+    // never fetched, and contributes nothing to validity: every reference is
+    // REFERENCED (digest-named via its id, content withheld), never VERIFIED.
+    // A bundle layer may resolve these ids against sibling proofs; the core
+    // only guarantees the linkage itself is tamper-evident (bound in proof_id).
+    if !proof.referenced_proofs.is_empty() {
+        let mut refs_ok = true;
+        if proof.referenced_proofs.len() > ctx.limits.max_referenced_proofs {
+            checks.push(CheckRecord::fail(
+                "GRAPH",
+                format!("proof:{stored_id}"),
+                ErrorCode::LimitExceeded,
+                format!(
+                    "referenced proofs {} > max_referenced_proofs {}",
+                    proof.referenced_proofs.len(),
+                    ctx.limits.max_referenced_proofs
+                ),
+            ));
+            refs_ok = false;
+        }
+        let mut sorted = proof.referenced_proofs.clone();
+        sorted.sort();
+        sorted.dedup();
+        if sorted.len() != proof.referenced_proofs.len() || sorted != proof.referenced_proofs {
+            checks.push(CheckRecord::fail(
+                "GRAPH",
+                format!("proof:{stored_id}"),
+                ErrorCode::SchemaViolation,
+                "referenced_proofs must be sorted ascending with no duplicates",
+            ));
+            refs_ok = false;
+        }
+        for r in &proof.referenced_proofs {
+            if let Err(e) = check_proof_ref_shape(r) {
+                checks.push(CheckRecord::fail(
+                    "GRAPH",
+                    format!("proof:{stored_id}"),
+                    e.code,
+                    e.message,
+                ));
+                refs_ok = false;
+                break;
+            }
+            if *r == stored_id {
+                checks.push(CheckRecord::fail(
+                    "GRAPH",
+                    format!("proof:{stored_id}"),
+                    ErrorCode::CycleDetected,
+                    "proof cannot reference itself",
+                ));
+                refs_ok = false;
+                break;
+            }
+        }
+        if refs_ok {
+            checks.push(CheckRecord::note(
+                "GRAPH",
+                format!("proof:{stored_id}"),
+                format!(
+                    "{} referenced proof(s) REFERENCED — linkage only, content not embedded, contributes nothing to validity",
+                    proof.referenced_proofs.len()
+                ),
+            ));
+        }
+    }
+
+    // ---- Divergence representation (SPEC §17) ----
+    // Three opposition shapes, one rule: record, never arbitrate. Validity is
+    // unchanged in every case; policy adjudicates (preferred issuer,
+    // threshold, recency, corroboration, human decision).
+    // 1. Divergent claims: same (claim.type, subject), differing fields.
+    // 2. Denials: a verified statement carries `denies: <attestation-id>`
+    //    targeting another verified statement. Unresolvable targets are
+    //    external denials (noted with the target as stated, never failed):
+    //    denying another system's claim is legitimate.
+    // 3. Contradictions: a grounded CONTRADICTS edge between two verified
+    //    statement attestations (third-party contradiction assertions).
+    let conflicts: Vec<ConflictRecord> = {
+        use std::collections::BTreeMap;
+        // Verified statements by id, for opposition resolution.
+        let statements: HashMap<&str, &AttestationContent> = verified
+            .iter()
+            .filter(|(_, c)| claim_kind(c) == ClaimKind::Statement)
+            .map(|(id, c)| (id.as_str(), c))
+            .collect();
+        let mut out = vec![];
+        let mut groups: BTreeMap<(String, String), Vec<(String, AttestationContent)>> =
+            BTreeMap::new();
+        for (att_id, content) in &verified {
+            if claim_kind(content) != ClaimKind::Statement {
+                continue;
+            }
+            groups
+                .entry((content.claim.claim_type.clone(), content.subject.clone()))
+                .or_default()
+                .push((att_id.clone(), content.clone()));
+        }
+        for ((ctype, subject), members) in &groups {
+            if members.len() < 2 {
+                continue;
+            }
+            let first = &members[0].1.claim;
+            if members.iter().all(|(_, c)| c.claim == *first) {
+                continue; // corroboration, not divergence
+            }
+            let mut ids: Vec<String> = members.iter().map(|(id, _)| format!("att:{id}")).collect();
+            ids.sort();
+            out.push(ConflictRecord {
+                kind: ConflictKind::DivergentClaims,
+                claim_type: ctype.clone(),
+                subject: subject.clone(),
+                attestation_ids: ids,
+            });
+        }
+        // Explicit denials and contradictions.
+        let mut opposed: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+        for (att_id, content) in &verified {
+            if claim_kind(content) != ClaimKind::Statement {
+                continue;
+            }
+            if let Some(target) = denial_target(content) {
+                // Resolvable targets anchor on the denied claim; external
+                // targets anchor on (denying type, "external:<id>") and still
+                // record the asserter as denial provenance.
+                let (key, mut ids) = match statements.get(target) {
+                    Some(denied) => (
+                        (denied.claim.claim_type.clone(), denied.subject.clone()),
+                        vec![format!("att:{att_id}"), format!("att:{target}")],
+                    ),
+                    None => (
+                        (
+                            content.claim.claim_type.clone(),
+                            format!("external:{target}"),
+                        ),
+                        vec![format!("att:{att_id}")],
+                    ),
+                };
+                ids.sort();
+                ids.dedup();
+                opposed.entry(key).or_default().extend(ids);
+            }
+        }
+        for edge in proof
+            .relationships
+            .iter()
+            .filter(|r| r.rel_type.as_str() == proof_core::model::RelType::CONTRADICTS)
+        {
+            let from_ok = statements.contains_key(edge.from.as_str());
+            let to_ok = statements.contains_key(edge.to.as_str());
+            if from_ok && to_ok {
+                let denied = &statements[edge.to.as_str()];
+                let mut ids = vec![format!("att:{}", edge.from), format!("att:{}", edge.to)];
+                ids.sort();
+                ids.dedup();
+                out.push(ConflictRecord {
+                    kind: ConflictKind::Contradiction,
+                    claim_type: denied.claim.claim_type.clone(),
+                    subject: denied.subject.clone(),
+                    attestation_ids: ids,
+                });
+            } else {
+                // Grounded but not between two verified statements: the
+                // assertion is kept (graph-valid) but records no conflict —
+                // contradiction needs two verified claims to oppose.
+                checks.push(CheckRecord::note(
+                    "EVIDENCE",
+                    format!("proof:{stored_id}"),
+                    "CONTRADICTS edge does not connect two verified statements — no conflict recorded",
+                ));
+            }
+        }
+        for ((ctype, subject), mut ids) in opposed {
+            ids.sort();
+            ids.dedup();
+            out.push(ConflictRecord {
+                kind: ConflictKind::Denial,
+                claim_type: ctype,
+                subject,
+                attestation_ids: ids,
+            });
+        }
+        out.sort_by(|a, b| {
+            (
+                a.kind.as_str(),
+                &a.claim_type,
+                &a.subject,
+                &a.attestation_ids,
+            )
+                .cmp(&(
+                    b.kind.as_str(),
+                    &b.claim_type,
+                    &b.subject,
+                    &b.attestation_ids,
+                ))
+        });
+        out
+    };
+    for c in &conflicts {
+        checks.push(CheckRecord::note(
+            "EVIDENCE",
+            format!("proof:{stored_id}"),
+            format!(
+                "conflicting evidence [{}]: claim `{}` about `{}` opposed across {} attestation(s) ({}) — representation only, policy adjudicates",
+                c.kind.as_str(),
+                c.claim_type,
+                c.subject,
+                c.attestation_ids.len(),
+                c.attestation_ids.join(", ")
+            ),
+        ));
+    }
+
+    let mut report = finalize(
         Some(stored_id),
         checks,
         Some(policy_note()),
         lifecycle,
         status_objects,
+        withdrawn.clone(),
+        proof.referenced_proofs.clone(),
+        proof.vocabularies.clone(),
+        evidence_status,
+        conflicts,
         true,
-    ))
+    );
+    // Non-canonical bytes must never yield valid evidence, even in
+    // fail-collect mode where later stages also ran for diagnostics.
+    if canonical_failed {
+        report.evidence_validity = Validity::Invalid;
+    }
+    Ok(report)
 }
 
 fn policy_note() -> CheckRecord {

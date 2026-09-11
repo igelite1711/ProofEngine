@@ -89,6 +89,13 @@ impl EvidenceKind {
     pub const MEASUREMENT: &'static str = "measurement";
     pub const TRANSACTION_RECORD: &'static str = "transaction_record";
     pub const TRANSPARENCY_RECEIPT: &'static str = "transparency_receipt";
+    // Transparency as a first-class abstract capability (registration →
+    // receipt → inclusion → consistency/ordering). The core models the
+    // evidence slots and bindings; log verification lives in adapters.
+    // A registration binds a statement digest to a log; a checkpoint is a
+    // log-signed tree state carriers check for freshness and consistency.
+    pub const TRANSPARENCY_REGISTRATION: &'static str = "transparency_registration";
+    pub const TRANSPARENCY_CHECKPOINT: &'static str = "transparency_checkpoint";
     pub const DEVICE_ATTESTATION: &'static str = "device_attestation";
     pub const EXTERNAL_REFERENCE: &'static str = "external_reference";
 
@@ -110,6 +117,8 @@ impl EvidenceKind {
                 | Self::MEASUREMENT
                 | Self::TRANSACTION_RECORD
                 | Self::TRANSPARENCY_RECEIPT
+                | Self::TRANSPARENCY_REGISTRATION
+                | Self::TRANSPARENCY_CHECKPOINT
                 | Self::DEVICE_ATTESTATION
                 | Self::EXTERNAL_REFERENCE
         )
@@ -156,6 +165,16 @@ impl RelType {
     pub const ISSUED: &'static str = "ISSUED";
     pub const SUPERSEDES: &'static str = "SUPERSEDES";
     pub const REVOKES: &'static str = "REVOKES";
+    // Identity/equivalence (architectural elevation): asserts two identifiers
+    // name the same subject *as far as the backing asserter is concerned*.
+    // Never global, never transitive-by-core; honored only from trusted
+    // asserters via policy. Endpoints may be member ids or identity refs.
+    pub const EQUIVALENT: &'static str = "EQUIVALENT";
+    // Explicit contradiction: asserts the `from` attestation's claim is
+    // denied by the `to` attestation's claim (graph-native form of a `denies`
+    // field). Endpoints must resolve to member attestations. Recorded, never
+    // arbitrated: policy adjudicates.
+    pub const CONTRADICTS: &'static str = "CONTRADICTS";
 
     pub fn new(s: impl Into<String>) -> Self {
         Self(s.into())
@@ -167,10 +186,18 @@ impl RelType {
 
     /// Trust-relevant edges MUST carry backing evidence.
     /// This list is part of V1 semantics; well-known types are stable (see VERSIONING.md).
+    /// EQUIVALENT and CONTRADICTS are trust-relevant: identity and
+    /// contradiction assertions shape trust adjudication, so bare edges are
+    /// rejected exactly like other trust-relevant types.
     pub fn requires_grounding(&self) -> bool {
         matches!(
             self.0.as_str(),
-            Self::OWNS | Self::CREATED | Self::SETTLES | Self::EXECUTED
+            Self::OWNS
+                | Self::CREATED
+                | Self::SETTLES
+                | Self::EXECUTED
+                | Self::EQUIVALENT
+                | Self::CONTRADICTS
         )
     }
 
@@ -187,6 +214,8 @@ impl RelType {
                 | Self::ISSUED
                 | Self::SUPERSEDES
                 | Self::REVOKES
+                | Self::EQUIVALENT
+                | Self::CONTRADICTS
         )
     }
 }
@@ -299,6 +328,13 @@ pub struct StoredAttestation {
 /// Portable proof package (without canonical bytes). `proof_id` binds the
 /// proposition plus the exact member id sets (see `proof-crypto::id`).
 /// `created_at` is informational only and is NOT covered by the id.
+/// `referenced_proofs` (additive composition linkage): sorted, deduped ids of
+/// proofs this proof was composed from. Empty (the V1 shape) encodes to
+/// byte-identical bytes as before; when non-empty the binding covers the set.
+/// References are linkage only: the verifier never fetches, and referenced
+/// content contributes nothing to validity (see PROOF-ENGINE-SPEC §7).
+/// `vocabularies`: declared label namespaces (additive, same binding rule:
+/// absent/empty in V1 bytes → byte-identical; bound when present).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Proof {
     pub v: u8,
@@ -308,13 +344,19 @@ pub struct Proof {
     pub attestations: Vec<StoredAttestation>,
     pub evidence: Vec<Evidence>,
     pub relationships: Vec<Relationship>,
+    pub referenced_proofs: Vec<String>,
+    pub vocabularies: Vec<VocabularyDecl>,
     pub created_at: u64,
 }
 
 /// Per-attestation lifecycle state, computed by verification stages TIME and
 /// REVOCATION (ARCHITECTURE §4, stages 7–8). Authority: the pipeline only.
-/// `SUPERSEDED` keeps evidence validity (historical record preserved); every
-/// other non-`ACTIVE` state fails closed.
+/// Precedence: COMPROMISED > REVOKED > SUPERSEDED > EXPIRED > UNKNOWN > ACTIVE.
+/// `SUPERSEDED` keeps evidence validity (historical record preserved);
+/// `COMPROMISED` does not (a compromised key taints everything at/after the
+/// compromise instant, unlike revocation which ends currency only).
+/// `COMPROMISED` arises solely from valid `compromise` status claims, so
+/// proofs predating the elevation keep identical verdicts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 // PE-LIFE-001.
 pub enum LifecycleStatus {
@@ -326,6 +368,9 @@ pub enum LifecycleStatus {
     Revoked,
     /// Replaced by a newer attestation via a valid signed supersession.
     Superseded,
+    /// Issued at/after a valid signed compromise instant for its issuer.
+    /// History is NOT preserved: unlike revocation, compromise taints.
+    Compromised,
     /// Revocation information missing or stale — fail closed.
     Unknown,
 }
@@ -337,6 +382,7 @@ impl LifecycleStatus {
             Self::Expired => "EXPIRED",
             Self::Revoked => "REVOKED",
             Self::Superseded => "SUPERSEDED",
+            Self::Compromised => "COMPROMISED",
             Self::Unknown => "UNKNOWN",
         }
     }
@@ -347,9 +393,98 @@ impl LifecycleStatus {
             "EXPIRED" => Some(Self::Expired),
             "REVOKED" => Some(Self::Revoked),
             "SUPERSEDED" => Some(Self::Superseded),
+            "COMPROMISED" => Some(Self::Compromised),
             "UNKNOWN" => Some(Self::Unknown),
             _ => None,
         }
+    }
+}
+
+/// Per-evidence status, derived by the pipeline from availability, backing
+/// attestation lifecycle, withdrawals, and compromises. Informational
+/// derivation: validity verdicts are unchanged by this projection (old proofs
+/// keep identical verdicts); policy v2 consumes it for evidence adjudication.
+/// Precedence: COMPROMISED > WITHDRAWN > REVOKED > SUPERSEDED > EXPIRED >
+/// UNKNOWN > AVAILABLE. UNAVAILABLE is adapter-determined (referenced content
+/// not supplied) and never emitted by the core pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvidenceStatus {
+    /// Digest-bound and present with no adverse signal.
+    Available,
+    /// Covered by a valid signed withdrawal (`claim.type="withdraw"`).
+    /// Administrative cease-reliance; history preserved.
+    Withdrawn,
+    /// Tainted via a valid signed compromise (backing attestation issuer
+    /// compromised, or direct evidence compromise marking).
+    Compromised,
+    /// Backing attestation revoked.
+    Revoked,
+    /// Backing attestation superseded (historical record preserved).
+    Superseded,
+    /// Backing attestation outside its validity window.
+    Expired,
+    /// Backing state cannot be established — fail closed.
+    Unknown,
+    /// Referenced content not supplied (adapter/bundle layer reports this).
+    Unavailable,
+}
+
+impl EvidenceStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "AVAILABLE",
+            Self::Withdrawn => "WITHDRAWN",
+            Self::Compromised => "COMPROMISED",
+            Self::Revoked => "REVOKED",
+            Self::Superseded => "SUPERSEDED",
+            Self::Expired => "EXPIRED",
+            Self::Unknown => "UNKNOWN",
+            Self::Unavailable => "UNAVAILABLE",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "AVAILABLE" => Some(Self::Available),
+            "WITHDRAWN" => Some(Self::Withdrawn),
+            "COMPROMISED" => Some(Self::Compromised),
+            "REVOKED" => Some(Self::Revoked),
+            "SUPERSEDED" => Some(Self::Superseded),
+            "EXPIRED" => Some(Self::Expired),
+            "UNKNOWN" => Some(Self::Unknown),
+            "UNAVAILABLE" => Some(Self::Unavailable),
+            _ => None,
+        }
+    }
+}
+
+/// A declared vocabulary: namespace `ns` used at `version`.
+/// Proofs declare the vocabularies their labels come from; declarations are
+/// bound by `proof_id` when present (absent in V1 bytes → byte-identical).
+/// Labels without a `ns:` prefix belong to the implicit `legacy` namespace.
+/// Declaration is provenance, not permission: acceptance is the
+/// verifier's policy decision (see `VocabularyAccept`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VocabularyDecl {
+    pub ns: String,
+    pub version: u64,
+}
+
+/// Verifier-side vocabulary acceptance: namespace `ns` is acceptable up to
+/// and including `max_version`. Carried in the verification context; echoed
+/// in notes, never stored, never trusted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VocabularyAccept {
+    pub ns: String,
+    pub max_version: u64,
+}
+
+/// Namespace of a vocabulary label: text before the first `:`, or `legacy`
+/// for un-namespaced labels (`payment.created`, `SETTLES`, ...).
+pub fn vocabulary_ns(label: &str) -> &str {
+    match label.find(':') {
+        Some(i) if i > 0 => &label[..i],
+        _ => "legacy",
     }
 }
 

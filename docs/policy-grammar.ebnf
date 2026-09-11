@@ -1,14 +1,21 @@
-; ProofEngine V1 Policy Language Grammar
+; ProofEngine Policy Language Grammar (V1 + V2)
 ; RFC 5234 (ABNF) + JSON RFC 8259
 ; This is the authoritative grammar for the policy language.
 ; POLICY.md describes semantics; this grammar defines syntax.
 
 (* Root policy object *)
 policy            = ws '{' ws
-                    '"policy_version"': ws number ws ','
+                    '"policy_version"': ws version ws ','
                     '"policy_id"': ws json-string ws ','
-                    '"requirements"': ws '[' ws requirement-list ws ']'
+                    policy-body
                     ws '}' ws
+
+version           = '1' / '2'
+
+(* V1 body: implicit-AND requirements list (frozen) *)
+(* V2 body: boolean expression tree *)
+policy-body       = '"requirements"': ws '[' ws requirement-list ws ']'
+                  | '"expression"': ws expression ws
 
 requirement-list  = requirement
                   | requirement ws ',' ws requirement-list
@@ -18,7 +25,23 @@ requirement       = ws '{' ws
                     ws requirement-fields?
                     ws '}' ws
 
-(* Closed requirement set (V1.1) *)
+(* Boolean structure (V2 only) *)
+expression        = requirement
+                  | all-expr | any-expr | not-expr | threshold-expr
+
+all-expr          = ws '{' ws '"all"': ws '[' ws expression-list ws ']' ws '}' ws
+any-expr          = ws '{' ws '"any"': ws '[' ws expression-list ws ']' ws '}' ws
+not-expr          = ws '{' ws '"not"': ws expression ws '}' ws
+threshold-expr    = ws '{' ws '"threshold"': ws '{' ws
+                    '"k"': ws number ws ',' ws
+                    '"of"': ws '[' ws expression-list ws ']'
+                    ws '}' ws '}' ws
+
+expression-list   = expression
+                  | expression ws ',' ws expression-list
+
+(* Closed requirement set: ten V1 leaves + six V2 adjudication leaves.
+   V1 policies accept V1 leaves only; V2 expressions accept all sixteen. *)
 requirement-type  = '"signature_valid"'
                   | '"issuer_trusted"'
                   | '"issuer_excluded"'
@@ -29,17 +52,33 @@ requirement-type  = '"signature_valid"'
                   | '"evidence_present"'
                   | '"transparency_present"'
                   | '"proof_fresh"'
+                  | '"delegated_authority"'
+                  | '"identity_bound"'
+                  | '"transparency_inclusion"'
+                  | '"no_conflicting_evidence"'
+                  | '"vocabulary_accepted"'
+                  | '"evidence_usable"'
 
 (* Optional fields per requirement type *)
 requirement-fields = ws ',' ws issuer-field
                   | ws ',' ws relationship-field
                   | ws ',' ws evidence-field
                   | ws ',' ws max-age-field
+                  | ws ',' ws root-field
+                  | ws ',' ws ab-fields
+                  | ws ',' ws log-field
+                  | ws ',' ws ns-fields
+                  | ws ',' ws scope-field
 
 issuer-field      = '"issuer"': ws json-string
 relationship-field = '"relationship"': ws json-string
 evidence-field    = '"kind"': ws json-string
 max-age-field     = '"max_age_seconds"': ws number
+root-field        = '"root"': ws json-string
+ab-fields         = '"a"': ws json-string ws ',' ws '"b"': ws json-string
+log-field         = '"log"': ws json-string
+ns-fields         = '"ns"': ws json-string ws ',' ws '"max_version"': ws number
+scope-field       = '"scope"': ws json-string
 
 (* JSON primitives *)
 json-string       = '"' string-char* '"'
@@ -53,9 +92,14 @@ ws                = *( ' ' / %x0A / %x0D / %x09 )
 
 (*
   Notes:
-  - policy_version must be 1 for V1
+  - policy_version 1: V1 body (`requirements`, implicit AND, V1 leaves only)
+  - policy_version 2: V2 body (`expression` tree; all sixteen leaves)
+  - v2 rejects the `requirements` key and v1 rejects v2 leaf names (strict
+    separation; unknown versions fail closed)
   - policy_id is an arbitrary string (recommended: namespaced like "merchant_payment_v1")
-  - requirements array must have at least 1 element (empty = POLICY_INVALID)
+  - requirements array / all / any / threshold-of must have at least 1 element
+  - threshold needs 1 <= k <= len(of); exactly one connective per object
+  - total expression nodes <= max_policy_requirements (32 default)
   - Extra fields in any object = POLICY_INVALID
   - Unknown requirement type = POLICY_INVALID
 *)

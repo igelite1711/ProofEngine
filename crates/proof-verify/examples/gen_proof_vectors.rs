@@ -1,6 +1,6 @@
 // Copyright 2026 Proof Engine Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Proof golden-vector generator (vectors 11–12).
+//! Proof golden-vector generator (vectors 11–12, 24–26).
 //! Run: `cargo run -p proof-verify --example gen_proof_vectors`
 
 use proof_core::model::{EventType, EvidenceKind, MetaValue, Proposition, RelType, Relationship};
@@ -181,4 +181,236 @@ fn main() {
     )
     .unwrap();
     println!("wrote golden-12.json");
+
+    // Vectors 24–26: composition linkage (SPEC §7).
+    // 24: the vector-11 members rebuilt with referenced_proofs=[REF24], where
+    // REF24 is a deterministic, well-formed `prf:v1:` id whose content is
+    // intentionally NOT embedded (linkage only — the verifier never fetches).
+    // Triple must stay valid; the report echoes the linkage as REFERENCED.
+    let ref24 = format!(
+        "prf:v1:{}",
+        proof_crypto::id::b64u_nopad(&proof_crypto::hash::sha256(
+            b"proof-engine:golden-24-referenced-proof"
+        ))
+    );
+    let mut b24 = ProofBuilder::new(
+        Proposition {
+            v: 1,
+            kind: "payment.settles-invoice".into(),
+            subject: "payment:p9".into(),
+            predicate: "settles".into(),
+            object: Some("invoice:i9".into()),
+            at_time: Some(1_700_000_100),
+            context: vec![],
+        },
+        1_700_000_200,
+    );
+    // Rebuild members (builders consume inputs; recreate deterministically).
+    let pay24 = event(EventType::new(EventType::PAYMENT_CREATED), "payment:p9");
+    let inv24 = event(EventType::new(EventType::INVOICE_ISSUED), "invoice:i9");
+    let att24 = attest(
+        fixtures::fixed_attestation_content(&key.key_ref(), &pay24.id),
+        &key,
+        &lim,
+    )
+    .unwrap();
+    let evd24 = make_evidence(
+        EvidenceKind::new(EvidenceKind::TRANSACTION_RECORD),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xEEu8; 32]).unwrap(),
+        Some(att24.id.clone()),
+        None,
+        &lim,
+    )
+    .unwrap();
+    let edge24 = make_relationship(
+        Relationship {
+            v: 1,
+            from: pay24.id.clone(),
+            rel_type: RelType::new(RelType::SETTLES),
+            to: inv24.id.clone(),
+            evidence_ref: Some(evd24.id.clone()),
+            attestation_ref: None,
+        },
+        &lim,
+    )
+    .unwrap();
+    b24.add_referenced_proof(ref24.clone()).unwrap();
+    b24.add_event(pay24);
+    b24.add_event(inv24);
+    b24.add_attestation(att24);
+    b24.add_evidence(evd24);
+    b24.add_relationship(edge24);
+    let built24 = b24.build(&lim).unwrap();
+    let report24 = verify_proof(&built24.canonical, &vector_ctx()).unwrap();
+    assert_eq!(
+        report24.evidence_validity,
+        proof_verify::Validity::Valid,
+        "vector-24 must stay valid with linkage"
+    );
+    assert_eq!(report24.referenced_proofs, vec![ref24.clone()]);
+    std::fs::write(
+        dir.join("golden-24.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "name": "24-composed-proof-with-references",
+            "description": "Vector-11 members plus referenced_proofs=[REF24] (content not embedded); triple valid, linkage echoed as REFERENCED.",
+            "proof_canonical_hex": hex::encode(&built24.canonical),
+            "proof_id": built24.id,
+            "referenced_proofs": [ref24],
+            "verify_ctx": ctx_json(),
+            "expected": {
+                "cryptographic_validity": "valid",
+                "evidence_validity": "valid",
+                "policy_decision": "indeterminate"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    println!("wrote golden-24.json {}", built24.id);
+
+    // 25: stale self-link — vector-11 bytes plus referenced_proofs=[own id]
+    // without rebinding. Must fail ID_MISMATCH *and* carry an explicit
+    // CYCLE_DETECTED (a matching self-link is a hash preimage, so the stale
+    // envelope is the feasible attack shape).
+    let mut v25: proof_format::CborValue =
+        proof_format::decode_strict(&built.canonical, &lim).unwrap();
+    if let proof_format::CborValue::Map(pairs) = &mut v25 {
+        pairs.push((
+            proof_format::CborValue::Text("referenced_proofs".into()),
+            proof_format::CborValue::Array(vec![proof_format::CborValue::Text(built.id.clone())]),
+        ));
+    }
+    let bad25 = proof_format::encode_canonical(&v25);
+    std::fs::write(
+        dir.join("golden-25.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "name": "25-self-referencing-proof",
+            "description": "Vector 11 plus referenced_proofs=[own id] without rebinding; must fail ID_MISMATCH with explicit CYCLE_DETECTED.",
+            "proof_canonical_hex": hex::encode(&bad25),
+            "verify_ctx": ctx_json(),
+            "expected": {
+                "cryptographic_validity": "invalid",
+                "codes": ["ID_MISMATCH", "CYCLE_DETECTED"]
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    println!("wrote golden-25.json");
+
+    // 26: malformed reference string. Must fail closed at SCHEMA.
+    let mut v26: proof_format::CborValue =
+        proof_format::decode_strict(&built.canonical, &lim).unwrap();
+    if let proof_format::CborValue::Map(pairs) = &mut v26 {
+        pairs.push((
+            proof_format::CborValue::Text("referenced_proofs".into()),
+            proof_format::CborValue::Array(vec![proof_format::CborValue::Text(
+                "not-a-proof-id".into(),
+            )]),
+        ));
+    }
+    let bad26 = proof_format::encode_canonical(&v26);
+    std::fs::write(
+        dir.join("golden-26.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "name": "26-malformed-reference",
+            "description": "Vector 11 plus a malformed referenced_proofs entry; must fail SCHEMA_VIOLATION at SCHEMA.",
+            "proof_canonical_hex": hex::encode(&bad26),
+            "verify_ctx": ctx_json(),
+            "expected": {
+                "cryptographic_validity": "invalid",
+                "stage": "SCHEMA",
+                "code": "SCHEMA_VIOLATION"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    println!("wrote golden-26.json");
+
+    // Vector 27: vocabulary declarations bind. Same shape as vector 11 but
+    // with an `acme:`-namespaced vocabulary declared at version 2; the
+    // binding covers the declaration set (dropping it changes the id), the
+    // triple stays valid, and the report echoes the declaration. Legacy
+    // labels alongside trigger an undeclared-vocabulary note (informational).
+    let pay27 = event(EventType::new("acme:payment.created"), "payment:p27");
+    let inv27 = event(EventType::new("acme:invoice.issued"), "invoice:i27");
+    let att27 = attest(
+        fixtures::fixed_attestation_content(&key.key_ref(), &pay27.id),
+        &key,
+        &lim,
+    )
+    .unwrap();
+    let evd27 = make_evidence(
+        EvidenceKind::new(EvidenceKind::TRANSACTION_RECORD),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xEEu8; 32]).unwrap(),
+        Some(att27.id.clone()),
+        None,
+        &lim,
+    )
+    .unwrap();
+    let edge27 = make_relationship(
+        Relationship {
+            v: 1,
+            from: pay27.id.clone(),
+            rel_type: RelType::new(RelType::SETTLES),
+            to: inv27.id.clone(),
+            evidence_ref: Some(evd27.id.clone()),
+            attestation_ref: None,
+        },
+        &lim,
+    )
+    .unwrap();
+    let mut b27 = ProofBuilder::new(
+        Proposition {
+            v: 1,
+            kind: "acme:payment.settles-invoice".into(),
+            subject: "payment:p27".into(),
+            predicate: "settles".into(),
+            object: Some("invoice:i27".into()),
+            at_time: Some(1_700_000_100),
+            context: vec![],
+        },
+        1_700_000_200,
+    );
+    b27.add_event(pay27);
+    b27.add_event(inv27);
+    b27.add_attestation(att27);
+    b27.add_evidence(evd27);
+    b27.add_relationship(edge27);
+    b27.add_vocabulary("acme".into(), 2).unwrap();
+    let built27 = b27.build(&lim).unwrap();
+    let report27 = verify_proof(&built27.canonical, &vector_ctx()).unwrap();
+    assert_eq!(
+        report27.evidence_validity,
+        proof_verify::Validity::Valid,
+        "vector-27 ctx must produce a valid report"
+    );
+    assert_eq!(
+        report27
+            .vocabularies
+            .iter()
+            .map(|vd| (vd.ns.as_str(), vd.version))
+            .collect::<Vec<_>>(),
+        vec![("acme", 2)]
+    );
+    std::fs::write(
+        dir.join("golden-27.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "name": "27-vocabulary-declaration-binds",
+            "description": "Vector-11 shape with acme:-namespaced labels and vocabularies=[acme:2]; binding covers declarations, triple valid, declaration echoed.",
+            "proof_canonical_hex": hex::encode(&built27.canonical),
+            "proof_id": built27.id,
+            "vocabularies": [{"ns": "acme", "version": 2}],
+            "verify_ctx": ctx_json(),
+            "expected": {
+                "cryptographic_validity": "valid",
+                "evidence_validity": "valid",
+                "policy_decision": "indeterminate"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    println!("wrote golden-27.json {}", built27.id);
 }

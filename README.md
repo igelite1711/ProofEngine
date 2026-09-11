@@ -10,7 +10,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 
-**V1 in development · 4 fuzz targets · 5 industries · 2 independent implementations**
+**V1 in development · 4 fuzz targets · 10 industries · 2 independent implementations (Ed25519 + P-256) · 26 golden vectors**
 
 ---
 
@@ -31,7 +31,7 @@ It is a **protocol-level foundation** that applications and industries can build
 | [Five Primitives](#the-five-core-primitives) | Event, Attestation, Evidence, Relationship, Proof |
 | [Verification](#verification) | The 11-stage deterministic pipeline |
 | [Policy](#policy) | Caller-supplied trust decisions |
-| [Neutral by Design](#neutral-by-design) | 5 industries, zero core changes |
+| [Neutral by Design](#neutral-by-design) | 10 industries, zero core changes |
 | [Quick Start](#quick-start) | Get running in 30 seconds |
 | [For Developers](#for-developers) | Cargo dependency + code example |
 | [Repository](#repository) | 7 focused crates |
@@ -310,7 +310,7 @@ The core does **not** belong to:
 
 Those are **applications** of the protocol.
 
-**The proof:** 5 radically different industries traverse the same core, producing identical verdict shapes. The differential tests in `domains/proof-domains/` prove this:
+**The proof:** 10 radically different industries traverse the same core, producing identical verdict shapes. The differential tests in `domains/proof-domains/` prove this:
 
 | Domain | Industry | What it proves |
 |--------|----------|----------------|
@@ -319,8 +319,13 @@ Those are **applications** of the protocol.
 | Media | Content | Work → License → Rights with license certificate evidence |
 | AI | Software | Request → Tool call → Execution with training log evidence |
 | **Sensor** | **Physical** | Device → Calibration → Measurement with calibration certificate evidence |
+| Logistics | Transport | Dispatch → Delivery with receipt evidence |
+| Legal | Law | Draft → Signature with execution record |
+| Supply-chain | Manufacturing | Batch → Shipment with production record |
+| Health | Healthcare | Record → Consent with consent receipt |
+| Gov | Government | Application → Permit with issuance record |
 
-All 5 use the **same** builder, **same** 11-stage pipeline, **same** policy engine. The verdict shape is a pure function of artifact structure, never of domain vocabulary.
+All 10 use the **same** builder, **same** 11-stage pipeline, **same** policy engine. The verdict shape is a pure function of artifact structure, never of domain vocabulary.
 
 The core remains the same.
 
@@ -625,7 +630,7 @@ Run `make help` to see all available commands.
 | `make help` | Show all available commands |
 | `make neutrality` | Verify no domain vocabulary in mechanism sources |
 | `make trace` | Verify requirement traceability matrix |
-| `make domain-tests` | Run all 5 industry domain differential tests |
+| `make domain-tests` | Run all 10 industry domain differential tests |
 
 ### CLI Commands (V1.1)
 
@@ -636,6 +641,12 @@ Run `make help` to see all available commands.
 | `proof-cli explain` | Explain a verification result (requires `--policy`) |
 | `proof-cli inspect` | Inspect a proof (read-only, no trust decisions) |
 | `proof-cli graph` | Visualize proof relationships (text/dot/mermaid) |
+| `proof-cli export` | Export an artifact to the standard envelope (validated) |
+| `proof-cli import` | Import a standard envelope (validated) |
+| `proof-cli convert` | Normalize a legacy artifact file idempotently |
+| `proof-cli compose` | Compose proofs by union of members (linkage recorded) |
+| `proof-cli withdraw` | Withdraw reliance on an artifact (history preserved) |
+| `proof-cli compromise` | Mark an identity compromised from an instant (taints) |
 | `proof-cli doctor` | Diagnose the local environment |
 | `proof-cli version` | Show version information |
 | `proof-cli completion` | Print shell completion (bash/zsh/fish/powershell) |

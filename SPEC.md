@@ -58,15 +58,21 @@ Exactly five persisted objects:
 ### 2.3 Lifecycle States
 
 Every attestation has exactly one lifecycle state, computed by the
-verification pipeline:
+verification pipeline (see LIFECYCLE.md for precedence and evidence
+derivation):
 
 | State | Meaning |
 |-------|---------|
 | `ACTIVE` | Within validity, no valid revocation/supersession |
 | `EXPIRED` | Outside validity window at verifier clock |
 | `REVOKED` | Covered by a valid signed revocation |
-| `SUPERSEDED` | Replaced by a newer signed supersession |
+| `SUPERSEDED` | Replaced by a newer signed supersession (history preserved) |
+| `COMPROMISED` | Tainted by a valid signed compromise marking (history not preserved) |
 | `UNKNOWN` | Revocation status cannot be determined (fail closed) |
+
+Precedence: `COMPROMISED > REVOKED > SUPERSEDED > EXPIRED > UNKNOWN > ACTIVE`.
+Per evidence item, one derived status: `AVAILABLE · WITHDRAWN · COMPROMISED ·
+REVOKED · SUPERSEDED · EXPIRED · UNKNOWN · UNAVAILABLE` (see LIFECYCLE.md).
 
 ### 2.4 Open Vocabularies
 
@@ -89,8 +95,11 @@ acceptable.
 `OWNS`, `CREATED`, `SETTLES`, `REFERENCES`, `CONTAINS`, `PRODUCED`,
 `EXECUTED`, `ISSUED`, `SUPERSEDES`, `REVOKES`
 
-**Trust-relevant relationships** (require backing evidence or attestation):
-`OWNS`, `CREATED`, `SETTLES`, `EXECUTED`
+**Trust-relevant relationships** (require backing evidence or attestation,
+else `RELATIONSHIP_UNGROUNDED`): `OWNS`, `CREATED`, `SETTLES`, `EXECUTED`,
+`EQUIVALENT`, `CONTRADICTS`. Additional future kinds plug in via
+`extra_grounded` without a core change; all other labels (including unknown
+`acme:*`) ride bare by design.
 
 ---
 
@@ -119,7 +128,8 @@ byte-compares to input. Mismatch = `NON_CANONICAL`.
 ### 3.2 Hash Abstraction
 
 ```
-HashRef = { "v": 1, "alg": <enum>, "digest": <bytes> }
+HashRef(CBOR) = { "v": 1, "alg": <enum>, "digest": <bytes> }
+HashRef(JSON) = { "v": 1, "alg": "sha-256"|"sha-384", "digest": "<hex lowercase>" }
 ```
 
 | alg | Algorithm | Digest length |
@@ -192,9 +202,11 @@ All objects are CBOR maps. Unknown fields cause rejection.
 }
 ```
 
-Trust-relevant types (`OWNS`, `CREATED`, `SETTLES`, `EXECUTED`) require
+Trust-relevant types (`OWNS`, `CREATED`, `SETTLES`, `EXECUTED`, `EQUIVALENT`,
+`CONTRADICTS`) require
 one of `evidence_ref` or `attestation_ref`. Bare edges are rejected with
-`RELATIONSHIP_UNGROUNDED`.
+`RELATIONSHIP_UNGROUNDED`. Extra future kinds plug in via `extra_grounded`
+without a core change.
 
 #### Proposition
 
@@ -221,6 +233,8 @@ one of `evidence_ref` or `attestation_ref`. Bare edges are rejected with
   "attestations": [AttestationEntry+],
   "evidence": [Evidence+],
   "relationships": [Relationship+],
+  "referenced_proofs": [tstr] (optional, sorted prf:v1: ids; absent in V1 bytes),
+  "vocabularies": [{ns, version}] (optional, bound when present; absent → byte-identical),
   "created_at": uint
 }
 ```
@@ -231,16 +245,30 @@ Arrays sorted by ID at build time. All relationship endpoints and
 evidence references must resolve to member IDs within the same Proof
 (portability rule). External payload content stays outside — digests only.
 
-#### Revocation / Supersession
+Composition linkage (`referenced_proofs`, §7): sorted, deduped ids of proofs
+this proof was composed from (≤ `max_referenced_proofs`, no self-reference).
+The binding covers the set when present (dropping a reference changes the
+id); empty linkage binds byte-identically to V1. References are linkage
+only — content is never embedded or fetched and contributes nothing to
+validity (reported REFERENCED, never VERIFIED).
 
-Revocation and supersession are signed attestations (not deletions):
+#### Revocation / Supersession / Withdrawal / Compromise
+
+Status objects are signed attestations (not deletions); unsigned lists are
+never trusted (see LIFECYCLE.md, FORMAT §4.7):
 
 - **Revocation:** `claim.type = "revoke"`, `claim.target = <id>`,
   `claim.reason = tstr`
 - **Supersession:** `claim.type = "supersede"`, `claim.old = <id>`,
   `claim.new = <id>`
+- **Withdrawal:** `claim.type = "withdraw"`, `claim.target = <any artifact id>`
+- **Compromise:** `claim.type = "compromise"`, `claim.target = <keyref|id>`,
+  `claim.at_time = <uint instant>`
 
-Must be signed by original issuer OR a key in `revocation_authorities`.
+Authority: revoke/supersede — original issuer OR `revocation_authorities`;
+withdraw — authorities, target attestation's issuer, or bound-attestation
+issuer for evidence; compromise — target identity itself (self-report) or
+authorities. Must not be future-dated (`issued_at ≤ now+skew`).
 
 ---
 
@@ -257,7 +285,7 @@ auto-increment. Format: `<prefix>:v1:<b64uNoPad(sha256(bytes))>`.
 | Attestation | All AttestationContent fields except `attestation_id` and `signature` |
 | Evidence | All Evidence fields except `evidence_id` |
 | Relationship | All RelationshipContent fields (`from`, `type`, `to`, `evidence_ref`, `attestation_ref`) except `rel_id` |
-| Proof | Canonical CBOR map `{"v":1, "proposition":<p>, "events":[sorted ids], "attestations":[sorted ids], "evidence":[sorted ids], "relationships":[sorted ids]}` |
+| Proof | Canonical CBOR map `{"v":1, "proposition":<p>, "events":[sorted ids], "attestations":[sorted ids], "evidence":[sorted ids], "relationships":[sorted ids]}` plus `"referenced_proofs":[sorted prf ids]` only when linkage is non-empty (empty → byte-identical map) |
 
 `b64uNoPad` = RFC 4648 base64url without padding.
 
@@ -316,6 +344,13 @@ Deprecated algorithms (-8 EdDSA, -7 ES256, -35, -36) are rejected with
 `DEPRECATED_ALGORITHM`. Unknown algorithms are rejected with
 `UNKNOWN_ALGORITHM`.
 
+Historical verification (explicit opt-in): with `allow_deprecated`, `-8`
+verifies via the Ed25519 op and `-7` via the P-256 op (which additionally
+requires P-256 enabled), answering "was this valid then?". Acceptances are
+labeled historical-only in the report; current acceptance stays a policy
+decision. `-35`/`-36` have no verifier support and stay rejected
+(decodable, not verifiable).
+
 ### 5.4 Verification Procedure
 
 1. Parse and validate protected header (closed set)
@@ -369,7 +404,14 @@ The pipeline emits a triple:
 }
 ```
 
-Plus `explanation[]` (human-readable audit trail) and stable error codes.
+Plus `referenced_proofs[]` (composition linkage carried by the proof),
+`conflicts[]` (divergent `(claim.type, subject)` groups with differing
+fields — representation only, validity unchanged, policy adjudicates),
+`explanation[]` (human-readable audit trail) and stable error codes.
+A dimensioned projection (structural / cryptographic / evidence /
+provenance / temporal / revocation / policy / overall ∈
+VALID | INVALID | INDETERMINATE | NOT_APPLICABLE) derives from the same
+stage records without changing the triple.
 
 ---
 
@@ -402,7 +444,20 @@ Plus `explanation[]` (human-readable audit trail) and stable error codes.
 | `not_superseded` | — | No verified attestation is superseded by a valid signed supersession |
 | `evidence_present` | `kind` | Evidence of that kind is present (digest-bound) |
 | `transparency_present` | — | A `transparency_receipt` evidence item is present |
-| `proof_fresh` | `max_age_seconds` | Proof's `created_at` is within max_age_seconds of verifier clock |
+| `proof_fresh` | `max_age_seconds` | Proof's `created_at` is within max_age_seconds of verifier clock. Advisory only: `created_at` is informational and outside `proof_id`, so a holder can re-stamp it without breaking the binding; strong freshness comes from signed attestation windows |
+
+### 7.2b Policy Version 2 (additive extension)
+
+`policy_version: 2` carries `expression` (never `requirements`; v1 rejects
+v2 leaf names, freezing v1). Connectives `all`/`any`/`not`/
+`threshold{k, of}` over leaves; every child evaluates (complete
+explanations). INDETERMINATE stays reserved for unevaluated policy.
+Vacuous shapes (`all[]`, `k = 0`, `k > n`, mixed connectives) are
+`POLICY_INVALID`; total nodes ≤ `max_policy_requirements`. New leaves:
+`delegated_authority{root, issuer, scope?}`, `identity_bound{a, b}`,
+`transparency_inclusion{log}`, `no_conflicting_evidence`,
+`vocabulary_accepted{ns, max_version}`, `evidence_usable{kind}`.
+Canonical CBOR mirrors the tree; content hashes read `policy:v2:…`.
 
 ### 7.3 Decisions
 
@@ -423,16 +478,16 @@ All trust inputs are **caller-supplied**. The engine holds no global state:
 
 Zero clock fails time requirements (fail-closed default).
 
-### 7.5 Revocation Authority
+### 7.5 Status Authority
 
-Embed status attestations (revoke/supersede) can never satisfy
-`issuer_trusted`. A revocation authority is not a statement issuer.
+Embed status attestations (revoke/supersede/withdraw/compromise) can never
+satisfy `issuer_trusted`. A status authority is not a statement issuer.
 
 ---
 
 ## 8. Error Codes
 
-22 stable error codes. Human messages may change; codes must not.
+24 stable error codes. Human messages may change; codes must not.
 
 | Code | Wire String |
 |------|-------------|
@@ -458,6 +513,8 @@ Embed status attestations (revoke/supersede) can never satisfy
 | Revoked | `REVOKED` |
 | RevocationUnknown | `REVOCATION_UNKNOWN` |
 | UnauthorizedStatus | `UNAUTHORIZED_STATUS` |
+| Withdrawn | `WITHDRAWN` |
+| Compromised | `COMPROMISED` |
 
 ---
 
@@ -533,8 +590,8 @@ as documented MAJOR changes.
    detection is primary verification.
 6. **Signature covers content:** Signatures are over canonical CBOR bytes,
    not JSON, not display form.
-7. **Revocation is signed:** Status objects (revoke/supersede) are
-   attestations, not database mutations.
+7. **Revocation is signed:** Status objects (revoke/supersede/withdraw/
+   compromise) are attestations, not database mutations.
 
 ---
 

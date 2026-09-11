@@ -17,7 +17,7 @@ use proof_format::{
 };
 
 use crate::alg::AllowedAlgs;
-use crate::claim::{claim_kind, CLAIM_REVOKE, CLAIM_SUPERSEDE};
+use crate::claim::{claim_kind, CLAIM_COMPROMISE, CLAIM_REVOKE, CLAIM_SUPERSEDE, CLAIM_WITHDRAW};
 use crate::cose::{sign_ed25519, verify_sign1};
 use crate::id::{attestation_id, event_id, evidence_id, relationship_id, verify_id};
 use crate::keys::Ed25519Key;
@@ -216,13 +216,100 @@ pub fn supersede_attestation(
     )
 }
 
+/// Build a signed `withdraw` status object: `claim.type="withdraw"`,
+/// `target=<any artifact id>`, optional `reason`. `subject` mirrors `target`.
+/// Withdrawal is administrative cease-reliance (history preserved); compromise
+/// taint is separate (see `compromise_attestation`).
+pub fn withdraw_attestation(
+    target: &str,
+    reason: Option<&str>,
+    by: &Ed25519Key,
+    issued_at: u64,
+    limits: &Limits,
+) -> Result<CreatedAttestation, ProofError> {
+    if target.is_empty() {
+        return Err(ErrorCode::SchemaViolation.err("withdraw target must not be empty"));
+    }
+    let mut fields = vec![];
+    if let Some(r) = reason {
+        if r.is_empty() {
+            return Err(ErrorCode::SchemaViolation.err("withdraw reason must not be empty"));
+        }
+        fields.push(("reason".into(), MetaValue::Text(r.into())));
+    }
+    fields.push(("target".into(), MetaValue::Text(target.into())));
+    attest(
+        AttestationContent {
+            v: 1,
+            issuer: by.key_ref(),
+            subject: target.into(),
+            claim: Claim {
+                claim_type: CLAIM_WITHDRAW.into(),
+                fields,
+            },
+            issued_at,
+            expires_at: None,
+            evidence_ref: None,
+        },
+        by,
+        limits,
+    )
+}
+
+/// Build a signed `compromise` status object: `claim.type="compromise"`,
+/// `target=<keyref|id>`, `at_time=<uint compromise instant>`, optional
+/// `reason`. `subject` mirrors `target`. Statements by `target` issued
+/// at/after `at_time` verify as COMPROMISED (tainted, history not preserved);
+/// earlier statements keep their prior status.
+pub fn compromise_attestation(
+    target: &str,
+    at_time: u64,
+    reason: Option<&str>,
+    by: &Ed25519Key,
+    issued_at: u64,
+    limits: &Limits,
+) -> Result<CreatedAttestation, ProofError> {
+    if target.is_empty() {
+        return Err(ErrorCode::SchemaViolation.err("compromise target must not be empty"));
+    }
+    // Sorted-by-encoded-key order keeps the canonical round-trip stable:
+    // CBOR text keys sort bytewise on (major+length, bytes), so "reason"
+    // (0x66…) < "target" (0x66 0x74…) < "at_time" (0x67…).
+    let mut fields = vec![];
+    if let Some(r) = reason {
+        if r.is_empty() {
+            return Err(ErrorCode::SchemaViolation.err("compromise reason must not be empty"));
+        }
+        fields.push(("reason".into(), MetaValue::Text(r.into())));
+    }
+    fields.push(("target".into(), MetaValue::Text(target.into())));
+    fields.push(("at_time".into(), MetaValue::Uint(at_time)));
+    attest(
+        AttestationContent {
+            v: 1,
+            issuer: by.key_ref(),
+            subject: target.into(),
+            claim: Claim {
+                claim_type: CLAIM_COMPROMISE.into(),
+                fields,
+            },
+            issued_at,
+            expires_at: None,
+            evidence_ref: None,
+        },
+        by,
+        limits,
+    )
+}
+
 /// Verify a caller-supplied signed status object: signature + alg policy +
 /// issuer binding + claim shape. Returns the authenticated content.
 /// The caller states who must have signed it (`expected_issuer`); trust is
 /// never derived from the attacker-controlled COSE kid (audit P2). Authority
 /// over the target is decided later by the pipeline, never here.
 /// Structurally bad or non-status claims are errors — a status object MUST be
-/// a revoke or supersede, never a statement smuggled through this path.
+/// a revoke, supersede, withdraw, or compromise, never a statement smuggled
+/// through this path.
 pub fn verify_status_object(
     sign1: &[u8],
     expected_issuer: &str,
@@ -232,7 +319,7 @@ pub fn verify_status_object(
     let (content, id) = verify_attestation(sign1, expected_issuer, allowed, limits)?;
     if !claim_kind(&content).is_status() {
         return Err(ErrorCode::SchemaViolation.err(format!(
-            "status object {id} has claim.type neither revoke nor supersede"
+            "status object {id} has claim.type not in revoke|supersede|withdraw|compromise"
         )));
     }
     Ok(content)
@@ -374,7 +461,13 @@ pub mod fixtures {
             event_type: EventType::new(EventType::PAYMENT_CREATED),
             subject: "acct:merchant-01".into(),
             effective_at: 1_700_000_000,
-            payload_ref: HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap(),
+            // Fixed 32-byte digest always satisfies Sha256 length: direct
+            // construction keeps even fixture helpers panic-free (PE-SEC-004).
+            payload_ref: HashRef {
+                v: 1,
+                alg: HashAlgorithm::Sha256,
+                digest: vec![0xABu8; 32],
+            },
             metadata: vec![("order".into(), MetaValue::Text("ord-1".into()))],
         }
     }

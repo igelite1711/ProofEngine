@@ -25,12 +25,21 @@
 3. **Defaults fail closed** (PE-TRUST-003): zero clock, empty trust list,
    no status objects, unknown freshness — every default refuses.
 4. **Status attestations are not statements** (PE-TRUST-004): revoke/
-   supersede objects never satisfy `issuer_trusted` and never contribute
-   validity intervals, even when signed by a trusted key.
+   supersede/withdraw/compromise objects never satisfy `issuer_trusted` and
+   never contribute validity intervals, even when signed by a trusted key.
 5. **Authority is per-target and explicit**: a status object applies only if
-   its signer is the target's original issuer or a configured authority, the
-   claim is well-formed, and it is not future-dated. Anything else →
-   `UNAUTHORIZED_STATUS` (or `EXPIRED`/`SCHEMA_VIOLATION`) and never applies.
+   its signer is the target's original issuer (or bound-attestation issuer
+   for evidence withdrawal, or the target itself for compromise
+   self-report) or a configured authority, the claim is well-formed, and it
+   is not future-dated. Anything else → `UNAUTHORIZED_STATUS` (or
+   `EXPIRED`/`SCHEMA_VIOLATION`) and never applies.
+6. **Delegation never mints trust from nothing**: `delegated_authority`
+   requires the named root in the trust list plus an active chain to a
+   verified attestation. An unlisted root, an unknown issuer, a broken
+   (expired/revoked/compromised) link, or a scope mismatch fails closed.
+7. **Equivalence is verifier-scoped**: `identity.bind`/EQUIVALENT assertions
+   count only from trust-listed asserters and merge nothing globally; the
+   core is never tricked into substituting identities across trust domains.
 
 ## Unknown trust
 

@@ -13,7 +13,7 @@ use serde_json::json;
 
 /// Write a JSON artifact: to the file at `path`, or to stdout when `path`
 /// is `-` (Unix streaming; stdout then carries only the document).
-fn write_json(path: &str, value: serde_json::Value) -> Result<(), String> {
+pub fn write_json(path: &str, value: serde_json::Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
     if path == "-" {
         println!("{text}");
@@ -230,6 +230,24 @@ pub fn write_status_object(cli: &Cli, kind: &str) -> Result<String, String> {
     let created = if kind == "revoke" {
         proof_crypto::build::revoke_attestation(
             &cli.req("target")?,
+            cli.opt("reason").as_deref(),
+            &key,
+            at,
+            &crate::limits(),
+        )
+    } else if kind == "withdraw" {
+        proof_crypto::build::withdraw_attestation(
+            &cli.req("target")?,
+            cli.opt("reason").as_deref(),
+            &key,
+            at,
+            &crate::limits(),
+        )
+    } else if kind == "compromise" {
+        let at_time = cli.req_u64("compromised-at")?;
+        proof_crypto::build::compromise_attestation(
+            &cli.req("target")?,
+            at_time,
             cli.opt("reason").as_deref(),
             &key,
             at,

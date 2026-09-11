@@ -177,7 +177,9 @@ impl<'a> Decoder<'a> {
             }
             28..=30 => Err(ErrorCode::ForbiddenCborConstruct.err("reserved additional info")),
             31 => Err(ErrorCode::ForbiddenCborConstruct.err("indefinite length forbidden")),
-            _ => unreachable!(),
+            // `ai` is 5 bits: 0..=31 exhaustively covered above. This arm
+            // exists for exhaustiveness only and must never panic (PE-SEC-004).
+            _ => Err(ErrorCode::Malformed.err("additional info out of range")),
         }
     }
 
@@ -282,7 +284,9 @@ impl<'a> Decoder<'a> {
                     Err(ErrorCode::ForbiddenCborConstruct.err("simple/undefined values forbidden"))
                 }
             },
-            _ => unreachable!(),
+            // `major` is 3 bits: 0..=7 exhaustively covered above. This arm
+            // exists for exhaustiveness only and must never panic (PE-SEC-004).
+            _ => Err(ErrorCode::Malformed.err("major type out of range")),
         }
     }
 }
