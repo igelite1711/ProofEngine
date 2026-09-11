@@ -9,6 +9,7 @@ members = [
   "crates/proof-policy",
   "crates/proof-cli",
   "crates/proof-adapter-scitt",
+  "crates/proof-bench",
 ]
 # cargo-fuzz crate builds only under nightly with libFuzzer; kept out of the
 # workspace (see fuzz/README.md and .github/workflows/fuzz.yml).
@@ -25,6 +26,7 @@ default-members = [
   "crates/proof-policy",
   "crates/proof-cli",
   "crates/proof-adapter-scitt",
+  "crates/proof-bench",
 ]
 
 # PE-OPS-001: locked reproducible build (--locked enforced by Makefile/CI).

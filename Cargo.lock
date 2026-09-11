@@ -430,6 +430,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proof-bench"
+version = "0.1.0"
+dependencies = [
+ "proof-core",
+ "proof-crypto",
+ "proof-format",
+ "proof-graph",
+ "proof-policy",
+ "proof-verify",
+ "serde_json",
+]
+
+[[package]]
 name = "proof-cli"
 version = "1.1.0"
 dependencies = [

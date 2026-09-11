@@ -85,6 +85,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bench dimensions** (`tools/bench.sh`): large/wide/deep proofs, signing,
   parse-only, and batch throughputs with peak-RSS notes (subprocess
   end-to-end, honestly labeled); `BIN` override for custom target dirs.
+- **In-process bench** (`crates/proof-bench`, P5): 11 isolated scenarios
+  (create/sign/canon/hash/verify-small-large-deep/graph/policy/serde/
+  evidence) with latency + peak-RSS and a JSON baseline regression gate;
+  no new dependencies.
 - **Batch verification** (`proof_verify::verify_batch` + `batch-verify`
   CLI): many proofs under one shared context with per-member independent
   semantics (no sampling, no short-circuit, over-cap `LIMIT_EXCEEDED`);

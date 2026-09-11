@@ -163,9 +163,10 @@ are the *extension* track (versioned capability rows). Phases P10–P12 are the
   PQ row scaffolding, keyref prefix registry, `AllowedAlgs` per family).
 - Drill the hash-migration window (`:v1:`→`:v2:` dual-verify) with a
   simulated cutover test and migration fixtures.
-- Bench suite (`proof-bench`): creation, canonicalization, hashing, signing,
-  verification, graph traversal, policy evaluation, serialization — with
-  throughput/latency/memory and a regression gate.
+- Bench suite (`proof-bench`, landed): creation, canonicalization, hashing,
+  signing, verification (small/large/deep), graph traversal, policy
+  evaluation, serialization — with throughput/latency/memory and a JSON
+  baseline regression gate (`--write-baseline`/`--check-baseline`).
 - Keep Ed25519 required/default and ESP256 opt-in; no silent enable.
 
 **Gate**
