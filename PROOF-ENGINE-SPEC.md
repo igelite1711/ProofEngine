@@ -473,10 +473,13 @@ VerificationContext {
 The context is echoed (never trusted) in reports/explanations so a consumer
 can audit which inputs produced the verdict.
 
-## 15. Portable artifact container (standard, DEF until implemented)
+## 15. Portable artifact container (standard, IMP)
 
-The v1 CLI exchanges artifacts as ad-hoc JSON: `{"kind","id","cbor":hex}` +
-attestation extras (`sign1`, context). The v2 standard (AUDIT §8.3):
+The v1 CLI exchanges artifacts as versioned envelopes (`ArtifactEnvelope`,
+`proof-format/src/envelope.rs`): `{"container_version":1,"kind","id","cbor":
+hex}` + attestation extras (`sign1`, context), with `export`/`import`/
+`convert`/`compose` in `proof-cli/src/port.rs`. The shape below is the
+standard (AUDIT §8.3, CAP-047):
 
 ```
 ArtifactEnvelope {

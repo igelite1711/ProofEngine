@@ -21,7 +21,8 @@ carries ≥1 stable code; unknown never becomes valid.
 
 `VerificationContext {verified_at (0=sentinel), clock_skew_leeway,
 allowed_algs, trusted_issuers, revocation_authorities, status_objects,
-revocations_known_at, limits, allow_remote:false, report_all_failures}`.
+revocations_known_at, limits, allow_remote:false, report_all_failures,
+accepted_vocabularies, extra_grounded}`.
 `VerifyCtx`/`EvalInputs` are thin projections (no break). Context echoed in
 reports, never stored, never trusted. Zero network I/O in `verify_proof()`.
 
@@ -42,11 +43,17 @@ corroboration, not conflict).
 
 ## 4. Lifecycle & history
 
-Per-statement `ACTIVE | EXPIRED | REVOKED | SUPERSEDED | UNKNOWN`,
-precedence `REVOKED>SUPERSEDED>EXPIRED>UNKNOWN>ACTIVE`. `SUPERSEDED` preserves
-history (`evidence VALID`, `not_superseded` policy fails current use).
-Status objects are signed attestations with authority
-(original issuer OR `revocation_authorities`) + timeliness; unsigned lists
+Per-statement `ACTIVE | EXPIRED | REVOKED | SUPERSEDED | COMPROMISED |
+UNKNOWN`, precedence `COMPROMISED>REVOKED>SUPERSEDED>EXPIRED>UNKNOWN>ACTIVE`.
+`SUPERSEDED` preserves
+history (`evidence VALID`, `not_superseded` policy fails current use);
+`COMPROMISED` taints (history NOT preserved). Per-evidence `AVAILABLE |
+WITHDRAWN | COMPROMISED | REVOKED | SUPERSEDED | EXPIRED | UNKNOWN |
+UNAVAILABLE` (see LIFECYCLE.md). Status objects are signed attestations
+with kind-appropriate authority
+(revoke/supersede: original issuer OR `revocation_authorities`; withdraw:
+authorities/target-issuer/bound-attestation issuer; compromise: target
+identity OR authorities) + timeliness; unsigned lists
 never trusted. Freshness (`revocations_known_at`) missing/stale ⇒ UNKNOWN.
 
 ## 5. Partial & independent
@@ -56,7 +63,7 @@ VERIFIED / NOT_VERIFIED` matrix; missing evidence ⇒ INDETERMINATE, never
 VALID. Composition references are always REFERENCED (linkage only).
 Independent verifier (`interop/pengine.py`, stdlib-only, Ed25519 + P-256)
 agrees on bytes/ids/signatures/bindings for all golden vectors both
-directions (28-check differential); lifecycle/policy/graph verdicts stay
+directions (37-check differential); lifecycle/policy/graph verdicts stay
 engine-side with binding-only cross-checks.
 
 ## 6. Pointers

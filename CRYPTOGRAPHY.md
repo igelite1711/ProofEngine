@@ -49,4 +49,4 @@ context (was-valid-then), once with current context (acceptable-now).
 `crates/proof-crypto/src/{alg,cose,hash,id,keys,claim,build}.rs`;
 `crates/proof-format/src/cbor.rs`; `fixtures/golden-04/05/21/22/23`;
 `interop/pengine.py` (independent Ed25519 + P-256; golden-21/22/23 both
-directions, 28-check differential).
+directions, 37-check differential).

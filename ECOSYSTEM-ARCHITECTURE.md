@@ -230,13 +230,14 @@ accompanying property is that neither the API nor the UI may ever add a trust
 shortcut.
 
 ### 10.5 Ten-domains test
-Before declaring architectural success, represent meaningful workflows across
-**at least ten** unrelated domains (currently: payment, credential, media,
-AI, sensor — five). If the core requires domain-specific modification,
-document why; repeated core modifications are evidence the abstraction is
-wrong. The domain suite (`domains/proof-domains`) is the harness; target
-domains for the next five: software supply-chain, clinical/health records,
-IoT/fleet telemetry, legal contracts, education/verifiable claims.
+Represent meaningful workflows across **at least ten** unrelated domains —
+landed as twelve journeys in `domains/proof-domains/tests/` (payment,
+credential, media, AI, sensor, logistics, legal, supply-chain/manufacturing,
+health, government, science, cybersecurity), all traversing the same core
+with zero domain-specific modification. If the core ever requires
+domain-specific modification, document why; repeated core modifications are
+evidence the abstraction is wrong. The domain suite
+(`domains/proof-domains`) remains the harness for every future industry.
 
 ## 11. Proof lifecycle (target state)
 
@@ -270,7 +271,7 @@ Lifecycle responsibilities by layer:
 | Area | Done when |
 |---|---|
 | Protocol | consolidated spec (`PROOF-ENGINE-SPEC.md`) normative; canonical format frozen; versioning + compatibility rules enforced; artifact container standardized (§15) |
-| Core | universal model coherent (open vocabularies, §3); domain neutrality demonstrated (10 domains); deterministic serialization; cryptographic agility; composition semantics (§7); provenance graph traversal APIs |
+| Core | universal model coherent (open vocabularies, §3); domain neutrality demonstrated (12 journeys); deterministic serialization; cryptographic agility; composition semantics (§7); provenance graph traversal APIs |
 | Verification | dimensioned verdicts; contextual, partial (`NOT_APPLICABLE`), historical/current distinction; explainable; one-shot `verify+decide` |
 | Security | SECURITY-MODEL.md register green (T1–T18); fuzz on every parser surface; adversarial matrices; supply-chain controls (SBOM/signed releases/provenance); no-panic grep gate; resource limits enforced |
 | Interoperability | adapters (C2PA/VC/SCITT/PKI/logs) with differential tests both directions; offline verification; container interop across Rust/TS/Python/Go |

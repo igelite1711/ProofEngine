@@ -39,8 +39,10 @@ Core represents conflicts, never arbitrates truth. Same `(claim.type,
 subject)` with differing fields among verified statements is recorded in
 `report.conflicts` (with an EVIDENCE note) while validity stays unchanged;
 identical re-assertions are corroboration, not conflict. Policy resolves via
-preferred issuer / threshold / recency / corroboration / human decision. A
-dedicated `CONFLICT` verdict and threshold/quorum requirements are V2;
+preferred issuer / threshold / recency / corroboration / human decision.
+Conflict adjudication via v2 leaves is shipped (`any`/`threshold` quorums +
+`no_conflicting_evidence`, pinned by golden-28 conflict→quorum-PASS); only a
+dedicated report-level `CONFLICT` verdict remains V2;
 currency conflicts (`REVOKED>SUPERSEDED`) handled today.
 
 `proof_fresh` is advisory replay hygiene, not a boundary: `created_at` is

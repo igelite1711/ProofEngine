@@ -4,7 +4,9 @@
 //!
 //! Ten unrelated industries (payment, credential lifecycle, media licensing,
 //! AI-action provenance, sensor calibration, logistics, legal, supply-chain,
-//! healthcare, government) traverse the SAME core:
+//! healthcare, government) traverse the SAME core, with cybersecurity incident
+//! response and scientific replication riding the identical machinery as
+//! journeys eleven and twelve:
 //! same builder, same 11-stage pipeline, same policy engine. The differential
 //! assertions prove the verdict shape is a pure function of artifact STRUCTURE,
 //! never of the domain vocabulary riding on it. If a future change makes the
@@ -12,12 +14,14 @@
 
 mod ai;
 mod credential;
+mod cyber;
 mod gov;
 mod health;
 mod legal;
 mod logistics;
 mod media;
 mod payment;
+mod science;
 mod sensor;
 mod supplychain;
 
@@ -124,8 +128,7 @@ fn ten_domains_same_core_same_verdict_shape() {
         ("gov", gov::journey(), gov::policy(), gov::inputs()),
     ];
 
-    for (name, built, policy_json, inputs) in domains {
-        let lim = Limits::default();
+    for (name, built, policy_json, inputs) in domains {        let lim = Limits::default();
         let report = verify_proof(&built.canonical, &ctx(1_700_000_200)).unwrap();
         assert_healthy_shape(name, &report);
 
@@ -142,6 +145,42 @@ fn ten_domains_same_core_same_verdict_shape() {
 
         // Stage shape is domain-independent: the pipeline visits the same
         // stages in the same order regardless of industry.
+        let mut stages: Vec<&str> = report.checks.iter().map(|c| c.stage).collect();
+        stages.dedup();
+        let expected_prefix = ["PARSE", "SCHEMA", "CANONICAL", "IDENTIFIERS"];
+        assert_eq!(
+            &stages[..expected_prefix.len()],
+            &expected_prefix[..],
+            "{name}: pipeline stage order must be domain-independent"
+        );
+    }
+}
+
+#[test]
+fn science_and_cybersecurity_ride_the_same_core() {
+    // Journeys eleven and twelve (scientific replication, cybersecurity
+    // incident response): same builder, same pipeline, same verdict shape —
+    // the ten-domains gate holds past ten.
+    let domains: [DomainJourney; 2] = [
+        ("science", science::journey(), science::policy(), science::inputs()),
+        ("cyber", cyber::journey(), cyber::policy(), cyber::inputs()),
+    ];
+
+    for (name, built, policy_json, inputs) in domains {
+        let lim = Limits::default();
+        let report = verify_proof(&built.canonical, &ctx(1_700_000_200)).unwrap();
+        assert_healthy_shape(name, &report);
+
+        let state = state_from_report_and_proof(&report, &built.proof).unwrap();
+        let policy = parse_policy(&policy_json, &lim).unwrap();
+        let outcome = evaluate_policy(&state, &policy, &inputs);
+        assert_eq!(
+            outcome.decision,
+            PolicyDecision::Pass,
+            "{name}: healthy journey must PASS its own policy (results: {:?})",
+            outcome.results
+        );
+
         let mut stages: Vec<&str> = report.checks.iter().map(|c| c.stage).collect();
         stages.dedup();
         let expected_prefix = ["PARSE", "SCHEMA", "CANONICAL", "IDENTIFIERS"];

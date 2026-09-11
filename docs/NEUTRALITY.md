@@ -110,16 +110,26 @@ Machine-checked in `docs/requirements-matrix.md` (`PE-NEUT-*`) and enforced by
 | PE-NEUT-004 | Domain vocabulary lives only in tests/fixtures/docs/demos |
 | PE-NEUT-005 | A neutral capability spec + domain-mapping guide exist |
 
-## 6. The four domain instantiations
+## 6. The twelve domain journeys
 
 See `docs/domains/` and `domains/proof-domains/tests/`. The same pipeline and
-policy code — with zero domain branches — runs all four:
+policy code — with zero domain branches — runs all twelve:
 
 1. **Payment** (reference) — settlement chain; the existing demo/goldens.
 2. **Credential lifecycle** — issuance, verification, *expiry*, *supersession*,
    deny-list screening (identity domain).
 3. **Media provenance** — licensing, deepfake-response, transcode chaining.
 4. **AI-action provenance** — request → tool-call → attestation chain.
+5. **Sensor calibration** — device registration, measurement, NIST-traceable
+   calibration certificate.
+6. **Logistics** — dispatch → custody → delivery chain.
+7. **Legal** — draft → sign → authorization chain.
+8. **Supply-chain / manufacturing** — batch production → shipment.
+9. **Health** — clinical record provenance.
+10. **Government** — permit/attestation workflow.
+11. **Science** — experiment → independent replication with dataset backing.
+12. **Cybersecurity** — alert → patch mitigation with vulnerability-report
+    backing.
 
 The differential test (`PE-NEUT-003`) proves the engine's verdict shape is a
 pure function of the artifacts' structure, identical across unrelated
