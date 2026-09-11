@@ -1,4 +1,5 @@
-<img width="1254" height="1254" alt="file_00000000a9548211a34607705ea8a597" src="https://github.com/user-attachments/assets/2d7f1358-533f-4a83-97fd-a24fb0f64927" />
+<img width="1254" height="1254" alt="IMG-20260904-WA0030" src="https://github.com/user-attachments/assets/d52c3627-8bd7-42e9-be1a-2e52a9074064" />
+
 // Copyright 2026 Proof Engine Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
