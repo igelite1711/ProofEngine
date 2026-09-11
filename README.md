@@ -30,9 +30,9 @@ It is a **protocol-level foundation** that applications and industries can build
 | [The Problem](#the-problem) | Why Proof Engine exists |
 | [Core Model](#core-model) | The verification pipeline |
 | [Five Primitives](#the-five-core-primitives) | Event, Attestation, Evidence, Relationship, Proof |
-| [Verification](#verification) | The 11-stage deterministic pipeline |
+| [Verification](#verification) | The 11-check + POLICY + FINAL pipeline (13 fixed positions) |
 | [Policy](#policy) | Caller-supplied trust decisions |
-| [Neutral by Design](#neutral-by-design) | 10 industries, zero core changes |
+| [Neutral by Design](#neutral-by-design) | 12 industries, zero core changes |
 | [Quick Start](#quick-start) | Get running in 30 seconds |
 | [For Developers](#for-developers) | Cargo dependency + code example |
 | [Repository](#repository) | 7 focused crates |
@@ -311,7 +311,7 @@ The core does **not** belong to:
 
 Those are **applications** of the protocol.
 
-**The proof:** 10 radically different industries traverse the same core, producing identical verdict shapes. The differential tests in `domains/proof-domains/` prove this:
+**The proof:** 12 radically different industries traverse the same core, producing identical verdict shapes. The differential tests in `domains/proof-domains/` prove this:
 
 | Domain | Industry | What it proves |
 |--------|----------|----------------|
@@ -325,8 +325,10 @@ Those are **applications** of the protocol.
 | Supply-chain | Manufacturing | Batch → Shipment with production record |
 | Health | Healthcare | Record → Consent with consent receipt |
 | Gov | Government | Application → Permit with issuance record |
+| Science | Research | Experiment → Replication with dataset evidence |
+| Cyber | Security | Alert → Patch mitigation with vulnerability-report evidence |
 
-All 10 use the **same** builder, **same** 11-stage pipeline, **same** policy engine. The verdict shape is a pure function of artifact structure, never of domain vocabulary.
+All 12 use the **same** builder, **same** 11-check + POLICY + FINAL pipeline, **same** policy engine. The verdict shape is a pure function of artifact structure, never of domain vocabulary.
 
 The core remains the same.
 
@@ -780,7 +782,7 @@ println!("{}", proof_policy::explain_full(&report, &outcome));
 | `proof-format` | Canonical CBOR encode/decode | Depends on core |
 | `proof-crypto` | Ed25519/P-256 sign/verify | Depends on core, format |
 | `proof-graph` | DAG validation, cycle checks | Depends on core |
-| `proof-verify` | 11-stage verification pipeline | Depends on all above |
+| `proof-verify` | 11-check + POLICY + FINAL verification pipeline | Depends on all above |
 | `proof-policy` | Policy evaluation engine | Depends on verify |
 | `proof-cli` | Command-line tool | Depends on all above |
 

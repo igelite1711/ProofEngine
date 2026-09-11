@@ -708,6 +708,35 @@ fn explanations_never_contradict_verdicts() {
     assert!(full.contains("cryptographic_validity: valid"));
 }
 
+#[test]
+fn explanations_carry_no_secret_or_signature_payload() {
+    // PE-SEC: human/machine explanations echo ids, verdicts, and requirement
+    // outcomes only — never key material, never raw signature blobs. The
+    // fixed test seed is the canary: its hex/b64 must not appear in text.
+    use proof_policy::explain_report;
+    let (built, issuer, _) = setup();
+    let report = verify_proof(&built.canonical, &ctx()).unwrap();
+    let state = state_from_report_and_proof(&report, &built.proof).unwrap();
+    let outcome = evaluate_policy(&state, &merchant_policy(&issuer), &inputs(&issuer));
+    let texts = [
+        explain_report(&report),
+        explain_outcome(&outcome),
+        explain_full(&report, &outcome),
+    ];
+    let seed_hex = "09".repeat(32);
+    let sign1_hex = hex::encode(&built.proof.attestations[0].sign1);
+    for text in &texts {
+        assert!(
+            !text.contains(&seed_hex),
+            "seed hex leaked into explanation"
+        );
+        assert!(
+            !text.contains(&sign1_hex),
+            "raw signature blob leaked into explanation"
+        );
+    }
+}
+
 /// PE-CLI-007: the machine-readable policy contract (`evaluate --json`,
 /// POLICY.md "Machine-readable output") mirrors the evaluator exactly —
 /// decision vocabulary and per-requirement results — and can never upgrade

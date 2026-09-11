@@ -26,7 +26,7 @@
    assume SHA-256 forever (FORMAT §2).
 6. Canonical CBOR subset only ever shrinks (new rejections are safe);
    widening it is major (would fork identifier/signature agreement).
-7. Fixture vectors are append-only: once a vector ships in a release its semantics never change; new behavior gets new vectors. During development faulty vectors may be regenerated under review. Golden-19 covers `not_superseded`; golden-20..23 cover text/byte normalization and P-256.
+7. Fixture vectors are append-only: once a vector ships in a release its semantics never change; new behavior gets new vectors. During development faulty vectors may be regenerated under review. Golden-19 covers `not_superseded`; golden-20..23 cover text/byte normalization and P-256; golden-24..26 cover composition linkage; golden-27 covers vocabulary declarations; golden-28 covers conflict quorum; golden-29/30 cover withdrawal/compromise; golden-31 covers the newest frozen behavior.
 
 ## Compatibility promise
 

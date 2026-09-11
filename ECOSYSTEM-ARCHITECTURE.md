@@ -164,7 +164,7 @@ they compile to the same canonical bytes and verify against the same
 test-vector corpus. The existing `interop/` Python package is the seed for
 the Python SDK's verification core.
 
-**CLI (exceptional reference implementation).** Already strong (16 commands,
+**CLI (exceptional reference implementation).** Already strong (23 commands,
 0/1/2 contract, JSON, stdin/stdout, completion). Extend toward the full
 mental model (`proof create/attest/evidence/relate/build/verify/evaluate/
 inspect/explain/export/import/convert/doctor`) keeping: human-readable by

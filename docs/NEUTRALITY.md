@@ -37,7 +37,7 @@ primitives and their mechanics:
 Entity   → Event, Attestation, Evidence, Relationship, Proof, Proposition
 Identity → public keys, keyrefs, external identity references
 Time     → event/observation/issuance/expiry/revocation/supersession/verification clocks
-Status   → ACTIVE / EXPIRED / REVOKED / SUPERSEDED / UNKNOWN (fail closed on UNKNOWN)
+Status   → ACTIVE / EXPIRED / REVOKED / SUPERSEDED / COMPROMISED / UNKNOWN (fail closed on UNKNOWN)
 Policy   → a closed, caller-supplied requirement language (never executed as code)
 ```
 

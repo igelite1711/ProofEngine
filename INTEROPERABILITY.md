@@ -15,7 +15,7 @@
 
 ## Golden vectors (append-only; see VERSIONING.md)
 
-`fixtures/golden-01..18` (+19 `not_superseded`, +20 text-byte/normalization, +21/22/23 ESP256 P-256 valid/tampered/wrong-key) pin canonical bytes, ids and signatures (both COSE -19 Ed25519 and opt-in -9 ECDSA P-256) - see INTEROP and LONGEVITY;
+`fixtures/golden-01..31` (+19 `not_superseded`, +20 text-byte/normalization, +21/22/23 ESP256 P-256 valid/tampered/wrong-key, +24/25/26 composition linkage, +27 vocabulary declarations, +28 conflict quorum, +29/30 withdrawal/compromise, +31) pin canonical bytes, ids and signatures (both COSE -19 Ed25519 and opt-in -9 ECDSA P-256) - see INTEROP and LONGEVITY;
 ids, signatures, and expected verdict triples. Each embeds its expectation;
 generators under `crates/*/examples/gen_*vectors.rs` self-check before
 writing and harnesses re-verify on clean checkout. Required coverage:

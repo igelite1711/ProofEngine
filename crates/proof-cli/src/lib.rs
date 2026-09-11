@@ -706,6 +706,14 @@ CREATION
 LIFECYCLE
   revoke       Revoke an attestation
   supersede    Supersede an attestation
+  withdraw     Withdraw evidence (signed)
+  compromise   Mark an issuer compromised (signed)
+
+PORTABILITY
+  export       Export artifacts as envelopes
+  import       Import artifacts from envelopes
+  convert      Convert artifact formats
+  compose      Compose proofs with linkage
 
 DEVELOPMENT
   demo         Run the end-to-end demonstration (--interactive for the tour)

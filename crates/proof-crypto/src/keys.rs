@@ -164,4 +164,20 @@ mod tests {
         assert!(!is_supported_keyref(""));
         assert_eq!(KEYREF_PREFIXES.len(), 2);
     }
+
+    #[test]
+    fn secret_key_material_never_surfaces_in_debug() {
+        // PE-SEC: key Debug impls must be redacted — seed bytes, their hex,
+        // and their base64url must never appear in logs or panic messages.
+        let seed = [0x42u8; 32];
+        let ed = Ed25519Key::from_seed(&seed);
+        let dbg = format!("{ed:?}");
+        assert_eq!(dbg, "Ed25519Key(redacted)");
+        assert!(!dbg.contains("42"));
+        assert!(!dbg.contains("Qk"));
+        let p256 = P256Key::from_seed(&seed).unwrap();
+        let dbg_p = format!("{p256:?}");
+        assert_eq!(dbg_p, "P256Key(redacted)");
+        assert!(!dbg_p.contains("42"));
+    }
 }
