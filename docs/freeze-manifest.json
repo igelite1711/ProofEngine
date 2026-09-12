@@ -73,6 +73,14 @@
         "crates/proof-verify/src/pipeline.rs",
         "crates/proof-verify/src/report.rs"
       ]
+    },
+    {
+      "commit": "7676d73",
+      "class": "INFRASTRUCTURE",
+      "layer": "test-only: unit tests for ArtifactEnvelope (kinds, cbor_bytes bounds) appended to crates/proof-format/src/envelope.rs; zero behavior change, no wire/semantic impact",
+      "files": [
+        "crates/proof-format/src/envelope.rs"
+      ]
     }
   ]
 }
