@@ -90,8 +90,11 @@ release-meta: ## Assemble dist/ with SBOM + provenance + hashes (RELEASE.md)
 	(cd $(OUT) && sha256sum * > sha256sums.txt)
 	@echo "release metadata in $(OUT)/ (sign per RELEASE.md)"
 
-# Override when CARGO_TARGET_DIR is set (see .cargo/config.toml).
-TARGET_DIR ?= $(CURDIR)/target/release
+# Resolve the real cargo target dir via metadata (honors CARGO_TARGET_DIR
+# env and local .cargo/config.toml target-dir overrides); fall back to
+# ./target/release when cargo/metadata is unavailable.
+CARGO_TARGET = $(shell cargo metadata --format-version=1 --no-deps 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('target_directory',''))" 2>/dev/null)
+TARGET_DIR ?= $(if $(CARGO_TARGET),$(CARGO_TARGET)/release,$(CURDIR)/target/release)
 
 domain-tests: ## Run domain proof-suite tests
 	cd domains/proof-domains && cargo test --locked
