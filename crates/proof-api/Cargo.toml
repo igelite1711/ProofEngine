@@ -1,0 +1,23 @@
+[package]
+name = "proof-api"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Thin reference HTTP API for Proof Engine (P9, interface never trust root)"
+repository = "https://github.com/igelite1711/ProofEngine"
+
+[[bin]]
+name = "proof-api"
+path = "src/main.rs"
+
+[dependencies]
+proof-core = { version = "1.0.0", path = "../proof-core" }
+proof-format = { version = "1.0.0", path = "../proof-format" }
+proof-crypto = { version = "1.0.0", path = "../proof-crypto" }
+proof-verify = { version = "1.0.0", path = "../proof-verify" }
+proof-policy = { version = "1.0.0", path = "../proof-policy" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+proof-core = { version = "1.0.0", path = "../proof-core" }
+proof-crypto = { version = "1.0.0", path = "../proof-crypto" }

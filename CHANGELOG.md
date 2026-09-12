@@ -99,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the same builder as `create-event`; fail-closed with line numbers
   by default, `--skip-bad` lists skips in the manifest, `--dry-run`
   validates only; unknown fields rejected, never swallowed.
+- **Reference API** (`crates/proof-api`, P9): thin loopback-only HTTP
+  interface (no new dependencies — std sockets, `GET /v1/health|version`,
+  `POST /v1/verify|evaluate|explain`); every response re-derived from
+  request bytes + explicit context, never stored/cached/guessed; 8 MiB
+  body cap, structured errors; async/auth/rate-limit/TLS explicitly out
+  of scope per ECOSYSTEM §7.
 - **Traversal APIs**: `ResolutionReport::ancestors()` (transitive closure
   with shallowest depths, unavailable refs named as unresolved) and
   `descendants_of()` over an explicit candidate set with union-store
