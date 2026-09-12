@@ -83,7 +83,7 @@
       ]
     },
     {
-      "commit": "HEAD",
+      "commit": "0038026",
       "class": "GENERIC EXTENSION",
       "layer": "Independent external review hardening (additive only; verdicts unchanged): helper predicate fns (policy_uses_proof_fresh / policy_uses_not_expired) in crates/proof-policy/src/lib.rs so front ends can warn when advisory freshness stands alone without a signed window. No wire bytes, policy semantics, or verdicts change; frozen v1/v2 evaluation untouched.",
       "files": [
