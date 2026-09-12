@@ -25,7 +25,7 @@ mod sensor;
 mod supplychain;
 
 use proof_core::{ErrorCode, Limits};
-use proof_crypto::build::to_signed_status;
+use proof_crypto::build::{attest, supersede_attestation, to_signed_status};
 use proof_policy::{evaluate_policy, parse_policy, state_from_report_and_proof};
 use proof_verify::{verify_proof, PolicyDecision, Validity, VerifyCtx};
 
@@ -359,7 +359,12 @@ fn cross_domain_failure_verdict_shape_identical() {
         ),
         ("health", health::journey, health::policy, health::inputs),
         ("gov", gov::journey, gov::policy, gov::inputs),
-        ("science", science::journey, science::policy, science::inputs),
+        (
+            "science",
+            science::journey,
+            science::policy,
+            science::inputs,
+        ),
         ("cyber", cyber::journey, cyber::policy, cyber::inputs),
     ];
     for (name, journey_fn, policy_fn, inputs_fn) in cases {
@@ -450,6 +455,131 @@ fn foreign_policy_fails_closed_in_every_domain() {
             outcome.decision,
             PolicyDecision::Fail,
             "{name}: stranger policy must FAIL (results: {:?})",
+            outcome.results
+        );
+    }
+}
+
+#[test]
+fn cross_domain_supersession_preserves_history() {
+    // Supersede each domain's attestation with a newer sibling from the same
+    // issuer: history must stay valid (SUPERSEDED preserves evidence
+    // validity) while a `not_superseded` policy FAILs it for current use —
+    // identically across all twelve industries. This is the lifecycle
+    // dimension revocation alone cannot show (revocation kills validity;
+    // supersession preserves it).
+    let cases: [DomainCase; 12] = [
+        (
+            "payment",
+            payment::journey,
+            payment::policy,
+            payment::inputs,
+        ),
+        (
+            "credential",
+            credential::journey,
+            credential::policy,
+            credential::inputs,
+        ),
+        ("media", media::journey, media::policy, media::inputs),
+        ("ai", ai::journey, ai::policy, ai::inputs),
+        ("sensor", sensor::journey, sensor::policy, sensor::inputs),
+        (
+            "logistics",
+            logistics::journey,
+            logistics::policy,
+            logistics::inputs,
+        ),
+        ("legal", legal::journey, legal::policy, legal::inputs),
+        (
+            "supplychain",
+            supplychain::journey,
+            supplychain::policy,
+            supplychain::inputs,
+        ),
+        ("health", health::journey, health::policy, health::inputs),
+        ("gov", gov::journey, gov::policy, gov::inputs),
+        (
+            "science",
+            science::journey,
+            science::policy,
+            science::inputs,
+        ),
+        ("cyber", cyber::journey, cyber::policy, cyber::inputs),
+    ];
+    for (name, journey_fn, _, inputs_fn) in cases {
+        let built = journey_fn();
+        let old = attestation_id(&built);
+        // The per-domain helper must agree exactly: identifiers are a pure
+        // function of canonical bytes, so no domain remembers an id.
+        let remembered = match name {
+            "payment" => payment::attestation_id(),
+            "credential" => credential::attestation_id(),
+            "media" => media::attestation_id(),
+            "ai" => ai::attestation_id(),
+            "sensor" => sensor::attestation_id(),
+            "logistics" => logistics::attestation_id(),
+            "legal" => legal::attestation_id(),
+            "supplychain" => supplychain::attestation_id(),
+            "health" => health::attestation_id(),
+            "gov" => gov::attestation_id(),
+            "science" => science::attestation_id(),
+            "cyber" => cyber::attestation_id(),
+            _ => unreachable!("unknown domain {name}"),
+        };
+        assert_eq!(
+            remembered, old,
+            "{name}: helper id must equal recomputed id"
+        );
+        let lim = Limits::default();
+        // Sibling attestation: same claim, newer issuance, hence a new id.
+        let mut content = built.proof.attestations[0].content.clone();
+        content.issued_at += 50;
+        let next = attest(content, payment::issuer_key(), &lim).unwrap();
+        assert_ne!(next.id, old, "{name}: sibling must get a distinct id");
+        let sup = supersede_attestation(&old, &next.id, payment::issuer_key(), 1_700_000_250, &lim)
+            .unwrap();
+        let mut c = ctx(1_700_000_300);
+        c.status_objects = vec![to_signed_status(&sup).unwrap()];
+        let report = verify_proof(&built.canonical, &c).unwrap();
+        // History preserved: crypto and evidence stay Valid...
+        assert_eq!(
+            report.cryptographic_validity,
+            Validity::Valid,
+            "{name}: supersession must not rewrite crypto validity"
+        );
+        assert_eq!(
+            report.evidence_validity,
+            Validity::Valid,
+            "{name}: superseded evidence stays valid (history preserved)"
+        );
+        // ...while the lifecycle names the superseded attestation.
+        assert!(
+            report
+                .lifecycle
+                .iter()
+                .any(|l| l.status == proof_core::LifecycleStatus::Superseded),
+            "{name}: lifecycle must report SUPERSEDED"
+        );
+        // ...and current-use policy fails it.
+        let state = state_from_report_and_proof(&report, &built.proof).unwrap();
+        let policy = parse_policy(
+            &serde_json::json!({
+                "policy_version": 1,
+                "policy_id": "current_use_v1",
+                "requirements": [
+                    {"type": "signature_valid"},
+                    {"type": "not_superseded"},
+                ]
+            }),
+            &lim,
+        )
+        .unwrap();
+        let outcome = evaluate_policy(&state, &policy, &inputs_fn());
+        assert_eq!(
+            outcome.decision,
+            PolicyDecision::Fail,
+            "{name}: not_superseded must FAIL superseded material (results: {:?})",
             outcome.results
         );
     }

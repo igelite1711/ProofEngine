@@ -162,3 +162,14 @@ pub fn inputs() -> proof_policy::EvalInputs {
         ..proof_policy::EvalInputs::default()
     }
 }
+
+/// Recompute the journey's attestation id exactly as the pipeline does —
+/// identifiers are a pure function of canonical bytes (PE-CRYPTO-006), so a
+/// domain never needs to remember one.
+pub fn attestation_id() -> String {
+    let j = journey();
+    let canon = proof_format::encode_canonical(&proof_format::attestation_to_cbor(
+        &j.proof.attestations[0].content,
+    ));
+    proof_crypto::id::attestation_id(&canon)
+}

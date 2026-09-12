@@ -322,17 +322,32 @@ import {
   makeRelationship,
 } from "./make.js";
 
+// Resolve the CLI relative to the repo root, not the process cwd: `npm run`
+// executes with cwd interop/ts, where "./target/debug/proof-cli" never
+// exists — the old fallback spawned nothing (ENOENT) and reported the
+// vacuous `exit=1 err=`, failing I3a on every local run while CI (which sets
+// PROOF_CLI) stayed green.
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const proofCli =
   process.env.PROOF_CLI ??
   (process.env.CARGO_TARGET_DIR
     ? join(process.env.CARGO_TARGET_DIR, "debug", "proof-cli")
-    : "./target/debug/proof-cli");
+    : join(repoRoot, "target", "debug", "proof-cli"));
 const workDir = process.env.WORK_DIR ?? "/tmp/proof-interop-ts";
 mkdirSync(workDir, { recursive: true });
 
 function runCli(...args: string[]): { code: number; err: string } {
   const p = spawnSync(proofCli, args, { encoding: "utf8" });
-  return { code: p.status ?? 1, err: (p.stderr || "") + (p.stdout || "") };
+  // Surface spawn failures (e.g. missing binary): previously p.error was
+  // dropped, so a failure to launch read as a verdict FAIL with empty err.
+  const spawnErr = (p as unknown as { error?: Error }).error;
+  return {
+    code: p.status ?? 1,
+    err:
+      (spawnErr ? `spawn ${proofCli}: ${spawnErr.message}\n` : "") +
+      (p.stderr || "") +
+      (p.stdout || ""),
+  };
 }
 
 const seed = Uint8Array.from(Buffer.alloc(32, 9));
