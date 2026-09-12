@@ -359,7 +359,7 @@ pub fn load_attestation(
     let (content, id) = proof_crypto::build::verify_attestation(
         &sign1,
         &issuer,
-        &proof_crypto::AllowedAlgs::default(),
+        &proof_crypto::AllowedAlgs::strict(),
         limits,
     )
     .map_err(|e: ProofError| format!("{path}: {e}"))?;
@@ -453,7 +453,7 @@ pub fn load_status(
     let content = proof_crypto::build::verify_status_object(
         &sign1,
         &issuer,
-        &proof_crypto::AllowedAlgs::default(),
+        &proof_crypto::AllowedAlgs::strict(),
         limits,
     )
     .map_err(|e: ProofError| format!("{path}: {e}"))?;

@@ -367,6 +367,12 @@ fn eval_one(req: &Requirement, state: &VerifiedState, inputs: &EvalInputs) -> Re
         // `Requirement::ProofFresh`). The qualifier travels in the message so
         // explanations never oversell this check.
         Requirement::ProofFresh { max_age_seconds } => {
+            // Zero clock = no trustworthy time: fail closed like TIME and
+            // NotExpired do. Otherwise age saturates to 0 and any max_age
+            // would PASS without any time anchor (replay-guard bypass).
+            if inputs.verified_at == 0 {
+                return fail(&name, "no trustworthy verifier clock (verified_at=0)");
+            }
             let age = inputs.verified_at.saturating_sub(state.proof_created_at);
             if age <= *max_age_seconds {
                 pass(&name, format!("proof age {age}s <= {max_age_seconds}s (created_at unauthenticated — advisory)"))

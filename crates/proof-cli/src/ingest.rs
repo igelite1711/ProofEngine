@@ -85,8 +85,9 @@ fn ingest_line(
 
 /// `ingest`: JSONL records → event artifacts + manifest.
 ///
-/// Exit 0 with a manifest listing every artifact id. Default is fail-closed
-/// (first malformed line aborts, nothing after it is processed);
+/// Exit 0 with a manifest listing every artifact id; exit 1 when `--skip-bad`
+/// skipped ≥1 line (partial batch, see manifest `skipped`). Default is
+/// fail-closed (first malformed line aborts, nothing after it is processed);
 /// `--skip-bad` continues and lists skipped lines in the manifest instead.
 /// `--dry-run` validates only. `--out-dir` receives `<event-id>.json` files.
 pub fn ingest(cli: &Cli) -> Result<i32, String> {
@@ -132,5 +133,12 @@ pub fn ingest(cli: &Cli) -> Result<i32, String> {
         ),
         Some(path) => write_json(&path, manifest)?,
     }
-    Ok(crate::EXIT_OK)
+    // Partial ingest (some lines skipped via --skip-bad) is exit 1, not 0:
+    // callers must not mistake a partial batch for a clean one. Clean ingest
+    // (or dry-run with no skips) stays exit 0; hard errors stay Err → exit 2.
+    if skipped.is_empty() {
+        Ok(crate::EXIT_OK)
+    } else {
+        Ok(crate::EXIT_FAIL)
+    }
 }

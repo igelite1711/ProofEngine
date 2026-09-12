@@ -1,5 +1,9 @@
 # VERIFICATION.md — how to verify a checkout or release
 
+> How-to authority for checking out and releasing (commands, gates). Stages,
+> context, and verdicts live in `VERIFICATION-MODEL.md` (sub-reference of
+> `PROOF-ENGINE-SPEC.md` §§9–11,14); on semantics `PROOF-ENGINE-SPEC.md` wins.
+
 Everything below is runnable today. Anything not yet runnable is listed under
 "Current limitations" and must not be represented as done.
 

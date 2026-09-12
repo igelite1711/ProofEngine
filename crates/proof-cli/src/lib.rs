@@ -61,10 +61,18 @@ fn short_flag_alias(name: &str) -> &str {
 impl Cli {
     pub fn parse(args: &[String]) -> Result<Cli, String> {
         let mut it = args.iter().peekable();
-        let command = it
+        let raw = it
             .next()
             .ok_or_else(|| "missing command (try `help`)".to_string())?
             .clone();
+        // Normalize GNU-style top-level flags: `proof-cli --help` / `-h` acts
+        // like `help`, `--version` like `version`. Otherwise `--help` would be
+        // consumed as an unknown command name (exit 2) instead of help.
+        let command = match raw.as_str() {
+            "--help" | "-h" => "help".to_string(),
+            "--version" => "version".to_string(),
+            _ => raw,
+        };
         let mut cli = Cli {
             command,
             ..Cli::default()
@@ -391,6 +399,12 @@ OPTIONS
   --revocations-known-at <u64> revocation freshness bound (omit → lifecycle UNKNOWN, fail closed)
   --status <file>             status object(s), repeatable
   --authority <keyref>        revocation authority key(s), repeatable
+  --trusted <keyref>          trusted issuer(s) echoed in context, repeatable
+  --esp256                    enable P-256/ES256 in addition to Ed25519 (default Ed25519-only)
+  --historical                verify deprecated algs as was-valid-then (forensics; policy still decides current trust)
+  --report-all                collect past CANONICAL diagnostics instead of fail-fast
+  --accepted-vocab <ns:max>   accepted vocabulary namespace bound, repeatable + comma-separated (informational notes)
+  --extra-grounded <TYPE>     extra trust-relevant edge kind(s), repeatable + comma-separated
   --out, -o <file>            write JSON report to file (`-` = stdout); default prints JSON to stdout
   --quiet, -q                 suppress the human summary on stderr
 
@@ -406,10 +420,16 @@ USAGE
 
 OPTIONS
   --policy <file>             policy JSON (required)
+  --clock <u64>               verifier clock (required)
   --trusted <keyref>          trusted issuer(s), repeatable
   --revoked <id[,id…]>        revoked id(s), repeatable
+  --status <file>             signed status objects (repeatable)
+  --authority <keyref>        revocation authority (repeatable)
+  --revocations-known-at <u64> freshness bound (required for PASS)
+  --skew <u64>                clock skew leeway (default 300)
+  --esp256 --historical --report-all --accepted-vocab <ns:max> --extra-grounded <TYPE>
+                              verifier-policy flags (same semantics as verify)
   --json, -j                  print the merged policy_outcome + report JSON on stdout
-  (plus the verify clock/status/authority options)
 
   exit 0 = policy PASS, 1 = FAIL/INDETERMINATE, 2 = usage/engine error.",
         "explain" => "\
@@ -418,8 +438,9 @@ explain — verify + policy, then print a human-readable causal explanation.
 USAGE
   proof-cli explain --proof <file> --policy <file> --clock <u64> [options]
 
-Same flags as evaluate. Prints prose only on stdout (never JSON over prose;
-use --out <file> to also save the JSON report). Exit codes as evaluate.",
+Same required flags as evaluate (--clock, --revocations-known-at, --status,
+--authority, --trusted, --skew). Differences: --json is ignored (prose only
+on stdout; use --out <file> to also save the JSON report). Exit codes as evaluate.",
         "inspect" => "\
 inspect — show what a proof contains. Performs NO trust decisions.
 
@@ -528,21 +549,22 @@ resolve — fetch-and-verify transitive composition linkage against a file
 store (bundle layer; root validity unchanged, incompleteness is fail-closed).
 
 USAGE
-  proof-cli resolve --proof <file> --store <dir> --clock <u64> [--depth <n>=8] [--status <f>] [--authority <k>] [--revocations-known-at <u64>]",
+  proof-cli resolve --proof <file> --store <dir> --clock <u64> [--depth <u64>=8] [--status <f>] [--authority <k>] [--trusted <keyref>] [--revocations-known-at <u64>] [--esp256] [--historical] [--report-all] [--accepted-vocab <ns:max>] [--extra-grounded <TYPE>] (incomplete linkage → exit 1)",
         "batch-verify" => "\
 batch-verify — verify many proofs under one shared context. Each member
 verifies independently with identical semantics to verify (no sampling,
 no short-circuit); exit 0 iff every member is crypto- and evidence-Valid.
 
 USAGE
-  proof-cli batch-verify --proofs <a.json,b.json> --clock <u64> [--max-batch <n>=256] [--status <f>] [--authority <k>] [--revocations-known-at <u64>] [--out <file>]",
+  proof-cli batch-verify --proofs <a.json,b.json> --clock <u64> [--max-batch <u64>=256] [--status <f>] [--authority <k>] [--trusted <keyref>] [--revocations-known-at <u64>] [--esp256] [--historical] [--report-all] [--accepted-vocab <ns:max>] [--extra-grounded <TYPE>] [--out <file>]",
         "ingest" => "\
 ingest — read newline-delimited external event records (file or stdin) and
 write canonical event artifacts plus a manifest. Fail-closed: the first
 malformed line aborts unless --skip-bad lists skips in the manifest instead.
 
 USAGE
-  proof-cli ingest --in <records.jsonl> --out-dir <dir> [--out <manifest.json>] [--skip-bad] [--dry-run]",
+  proof-cli ingest [--in <records.jsonl>=stdin] --out-dir <dir> [--out <manifest.json>] [--skip-bad] [--dry-run]
+  manifest: {ingested, ids, skipped, dry_run}. Exit 0 clean, 1 partial (--skip-bad with skips), 2 usage/engine error.",
         "demo" => "\
 demo — deterministic end-to-end story: build → verify PASS → tamper → FAIL →
 revoke → FAIL. Uses the core only; no simulated results.
@@ -556,7 +578,7 @@ doctor — check the local environment (versions, limits, fixtures, examples).
 USAGE
   proof-cli doctor
 
-Distinguishes `environment healthy` from `proof verified`.",
+Exit 0 all checks pass, 1 any check fails. Distinguishes `environment healthy` from `proof verified`.",
         "version" => "\
 version — show CLI / protocol / format versions for reproducibility.
 
@@ -591,7 +613,7 @@ pub fn completion_script(shell: &str) -> Result<String, String> {
              \x20   if [ \"$COMP_CWORD\" -eq 1 ]; then\n\
              \x20       COMPREPLY=($(compgen -W \"{}\" -- \"$cur\"))\n\
              \x20   else\n\
-             \x20       COMPREPLY=($(compgen -W \"--proof --policy --clock --skew --out --quiet --json --trusted --authority --status --seed --seed-file --format\" -- \"$cur\"))\n\
+             \x20       COMPREPLY=($(compgen -W \"--proof --policy --clock --skew --out --quiet --json --trusted --authority --status --seed --seed-file --format --esp256 --historical --report-all --accepted-vocab --extra-grounded\" -- \"$cur\"))\n\
              \x20   fi\n\
              }}\n\
              complete -F _proof_cli_complete proof-cli\n",

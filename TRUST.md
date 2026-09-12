@@ -1,8 +1,9 @@
 # Proof Engine — Trust Model (V1 draft — in development)
 
-> Answers: who is trusted, why, where configured, how revoked, what happens
-> when trust is unknown. Companion: THREAT-MODEL.md (attackers),
-> SECURITY.md (guarantees).
+> V1 trust-model authority. Answers: who is trusted, why, where configured,
+> how revoked, what happens when trust is unknown. Companion:
+> THREAT-MODEL.md (attackers), SECURITY.md (guarantees); consolidated view
+> `SECURITY-MODEL.md`. On semantics `PROOF-ENGINE-SPEC.md` §12 wins.
 
 ## Trust roots (all caller-supplied)
 

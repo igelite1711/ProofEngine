@@ -190,7 +190,13 @@ fn run() -> Result<(), String> {
                 tolerance = args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or(25.0);
                 i += 1;
             }
-            other => return Err(format!("unknown flag {other}")),
+            "--help" | "-h" => {
+                println!(
+                    "proof-bench — in-process benchmark harness (no new deps)\n\nUSAGE\n  cargo run --release -p proof-bench -- [--iters N=20] [--scenario NAME]... [--json] [--write-baseline FILE] [--check-baseline FILE] [--tolerance PCT=25]\n\nSCENARIOS\n  create-event, attest-sign, canonical-encode, hash-ids, verify-small,\n  verify-large, verify-deep, graph-wide, policy-eval, serde-roundtrip,\n  evidence-make (--scenario repeats to select; default all)"
+                );
+                std::process::exit(0);
+            }
+            other => return Err(format!("unknown flag {other} (try --help)")),
         }
         i += 1;
     }
@@ -451,10 +457,16 @@ fn run() -> Result<(), String> {
         for s in &out {
             match base.get(s.name) {
                 Some(b) => {
-                    let limit = b * (1.0 + tolerance / 100.0);
+                    // Relative tolerance for slow ops, absolute noise floor
+                    // for sub-millisecond ops: timer/neighbor jitter on tiny
+                    // scenarios (policy-eval ~0.002 ms/op) exceeds any sane
+                    // percentage, so differences under 0.05 ms are noise.
+                    // The gate stays a 2x-class tripwire where it matters.
+                    const NOISE_FLOOR_MS: f64 = 0.05;
+                    let limit = (b * (1.0 + tolerance / 100.0)).max(b + NOISE_FLOOR_MS);
                     if s.ms_per_op > limit {
                         eprintln!(
-                            "REGRESSION: {} {:.3} ms/op > baseline {:.3} + {tolerance}% ({limit:.3})",
+                            "REGRESSION: {} {:.3} ms/op > baseline {:.3} + {tolerance}% (floor +{NOISE_FLOOR_MS} ms → {limit:.3})",
                             s.name, s.ms_per_op, b
                         );
                         failed = true;

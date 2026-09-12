@@ -262,12 +262,15 @@ fn verify_at(
 
 fn policy_json(id: &str, extra: &str) -> serde_json::Value {
     // Fixed template over caller-supplied fragments; parse failure would mean a
-    // programming error in the tour. Fail closed with a minimal valid policy
-    // shape rather than panicking so CLI never aborts on demo paths.
+    // programming error in the tour. Fall back to a minimal *valid* policy
+    // (requirements must be non-empty) so the failure surfaces as a policy
+    // decision, never a panic or confusing empty-requirements POLICY_INVALID.
     serde_json::from_str(&format!(
         r#"{{"policy_version":1,"policy_id":"{id}","requirements":[{extra}]}}"#
     ))
-    .unwrap_or_else(|_| serde_json::json!({"policy_version":1,"policy_id":id,"requirements":[]}))
+    .unwrap_or_else(|_| {
+        serde_json::json!({"policy_version":1,"policy_id":id,"requirements":[{"type":"signature_valid"}]})
+    })
 }
 
 fn evaluate(
@@ -410,7 +413,12 @@ pub fn run(_cli: &Cli) -> Result<i32, String> {
 
     // ---- 4. Policy ----
     screen("4/8", "POLICY — same proof, different decision");
-    let issuer = tour.proof.attestations[0].content.issuer.clone();
+    let issuer = tour
+        .proof
+        .attestations
+        .first()
+        .map(|a| a.content.issuer.clone())
+        .ok_or_else(|| "tour proof has no attestations".to_string())?;
     let base = policy_json(
         "tour-base",
         r#"{"type":"signature_valid"},{"type":"not_expired"}"#,
@@ -460,7 +468,9 @@ pub fn run(_cli: &Cli) -> Result<i32, String> {
     }
     println!("VERDICT: FAIL (one flipped byte)");
     let again = verify_at(&tour.built.canonical, T_FRESH, vec![])?;
-    assert!(again.passed_crypto() && again.evidence_validity == Validity::Valid);
+    if !(again.passed_crypto() && again.evidence_validity == Validity::Valid) {
+        return Err("tour invariant broken: original proof should verify PASS".to_string());
+    }
     println!("Original restored: VERDICT: PASS");
     if !pause() {
         return Ok(crate::EXIT_OK);
@@ -517,11 +527,14 @@ pub fn run(_cli: &Cli) -> Result<i32, String> {
             sign1: sup.sign1.clone(),
         }],
     )?;
+    let moved_status = moved
+        .lifecycle
+        .first()
+        .map(|l| l.status.as_str())
+        .ok_or_else(|| "tour supersession produced no lifecycle records".to_string())?;
     println!(
         "crypto {:?}, evidence {:?}, lifecycle {}",
-        moved.cryptographic_validity,
-        moved.evidence_validity,
-        moved.lifecycle[0].status.as_str()
+        moved.cryptographic_validity, moved.evidence_validity, moved_status
     );
     println!("SUPERSEDED keeps evidence valid: valid history, no longer current.");
     if !pause() {

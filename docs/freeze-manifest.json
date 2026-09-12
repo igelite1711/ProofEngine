@@ -53,6 +53,34 @@
         "crates/proof-verify/src/batch.rs",
         "crates/proof-verify/src/lib.rs"
       ]
+    },
+    {
+      "commit": "176f036",
+      "class": "CORE",
+      "layer": "conformance hardening: implementation brought under frozen fail-closed invariants (see docs/ARCHITECTURE-CHANGE-PROPOSAL-conformance-hardening.md \u00a73, decision PENDING \u00a711)",
+      "files": [
+        "crates/proof-core/src/limits.rs",
+        "crates/proof-crypto/src/claim.rs",
+        "crates/proof-crypto/src/cose.rs",
+        "crates/proof-crypto/src/envelope.rs",
+        "crates/proof-crypto/src/id.rs",
+        "crates/proof-format/src/bundle.rs",
+        "crates/proof-format/src/cbor.rs",
+        "crates/proof-format/src/schema.rs",
+        "crates/proof-format/src/store.rs",
+        "crates/proof-graph/src/lib.rs",
+        "crates/proof-policy/src/combine.rs",
+        "crates/proof-verify/src/pipeline.rs",
+        "crates/proof-verify/src/report.rs"
+      ]
+    },
+    {
+      "commit": "7676d73",
+      "class": "INFRASTRUCTURE",
+      "layer": "test-only: unit tests for ArtifactEnvelope (kinds, cbor_bytes bounds) appended to crates/proof-format/src/envelope.rs; zero behavior change, no wire/semantic impact",
+      "files": [
+        "crates/proof-format/src/envelope.rs"
+      ]
     }
   ]
 }

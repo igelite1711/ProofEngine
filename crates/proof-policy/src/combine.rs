@@ -45,11 +45,14 @@ pub fn verify_and_evaluate(
             ctx.limits.max_trusted_issuers
         )));
     }
-    if revocations.revoked.len() > ctx.limits.max_trusted_issuers {
+    // Revocation-set size is bounded by max_status_objects (the pipeline's
+    // signed-status bound), not max_trusted_issuers. The previous check
+    // copy-pasted the trust-list limit (32 vs 64) and message.
+    if revocations.revoked.len() > ctx.limits.max_status_objects {
         return Err(proof_core::ErrorCode::LimitExceeded.err(format!(
-            "revocations count {} exceeds max_trusted_issuers {}",
+            "revocations count {} exceeds max_status_objects {}",
             revocations.revoked.len(),
-            ctx.limits.max_trusted_issuers
+            ctx.limits.max_status_objects
         )));
     }
     let vctx = ctx.to_verify_ctx();

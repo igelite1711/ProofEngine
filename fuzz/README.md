@@ -79,3 +79,13 @@ nightly still exercise them continuously:
   invariants (never panics, closed 16-requirement set, deterministic
   re-parse) plus hostile-seed rejection — so the smoke target's contract is
   enforced on stable too.
+- `cbor_decoder` seed corpus: `crates/proof-format/tests/fuzz_seeds.rs`
+  replays every file in `fuzz/seeds/cbor_decoder/` through the exact
+  target invariant (reject or byte-identical re-encode) plus hostile inputs.
+- `graph_ingest` seed corpus: `crates/proof-graph/tests/fuzz_seeds.rs`
+  replays every file in `fuzz/seeds/graph_ingest/` through the target
+  harness (counts within limits, cycles rejected) plus hostile graphs.
+- `proof_verify` seed corpus: `crates/proof-verify/tests/fuzz_seeds.rs`
+  replays every file in `fuzz/seeds/proof_verify/` through the target
+  invariants (coherence + determinism); tamper-resistance stays pinned by
+  the 2000-mutant soak alongside it.

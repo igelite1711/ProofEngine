@@ -88,3 +88,58 @@ impl ArtifactEnvelope {
         Ok(raw)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kind_round_trips_and_rejects_unknown() {
+        for kind in [
+            ArtifactKind::Event,
+            ArtifactKind::Attestation,
+            ArtifactKind::Evidence,
+            ArtifactKind::Relationship,
+            ArtifactKind::Proof,
+            ArtifactKind::Status,
+        ] {
+            assert_eq!(ArtifactKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(ArtifactKind::parse("quux"), None);
+        assert_eq!(ArtifactKind::parse(""), None);
+    }
+
+    #[test]
+    fn cbor_bytes_accepts_only_bounded_nonempty_hex() {
+        let lim = Limits::default();
+        let env = ArtifactEnvelope::new(ArtifactKind::Event, "evt:v1:x", &[0xa1, 0xb2], None);
+        assert_eq!(env.cbor_bytes(&lim).unwrap(), vec![0xa1, 0xb2]);
+        // Surrounding whitespace tolerated (trim); uppercase hex accepted.
+        let padded = ArtifactEnvelope {
+            cbor_hex: "  A1B2  ".into(),
+            ..env.clone()
+        };
+        assert_eq!(padded.cbor_bytes(&lim).unwrap(), vec![0xa1, 0xb2]);
+        let bad = ArtifactEnvelope {
+            cbor_hex: "zz".into(),
+            ..env.clone()
+        };
+        assert_eq!(bad.cbor_bytes(&lim).unwrap_err().code, ErrorCode::Malformed);
+        let empty = ArtifactEnvelope {
+            cbor_hex: "".into(),
+            ..env.clone()
+        };
+        assert_eq!(
+            empty.cbor_bytes(&lim).unwrap_err().code,
+            ErrorCode::Malformed
+        );
+        let tight = Limits {
+            max_proof_size: 1,
+            ..Limits::default()
+        };
+        assert_eq!(
+            env.cbor_bytes(&tight).unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+    }
+}

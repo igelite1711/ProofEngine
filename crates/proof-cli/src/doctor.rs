@@ -11,7 +11,9 @@ struct Check {
 }
 
 /// Run environment diagnostics.
-pub fn doctor(_cli: &Cli) -> Result<String, String> {
+/// Returns EXIT_OK when all checks pass, EXIT_FAIL when any check fails
+/// (exit 1 = verdict-style failure, not usage error). Prints the report.
+pub fn doctor(_cli: &Cli) -> Result<i32, String> {
     let mut checks = vec![
         Check {
             name: "CLI version".to_string(),
@@ -144,7 +146,11 @@ Some checks failed. See above for details.",
     }
 
     println!("{}", out);
-    Ok(out)
+    if passed == total {
+        Ok(crate::EXIT_OK)
+    } else {
+        Ok(crate::EXIT_FAIL)
+    }
 }
 
 fn count_json_files(dir: &std::path::Path) -> usize {

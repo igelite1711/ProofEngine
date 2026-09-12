@@ -100,6 +100,69 @@ pub fn common(cli: &Cli) -> Result<CommonInputs, String> {
     })
 }
 
+/// Verifier-policy flags shared by verify/evaluate/batch-verify/resolve.
+/// Previously the CLI hardcoded `..Default::default()` here, pinning every
+/// run to Ed25519-only + fail-fast + no vocab notes. Now the full
+/// `VerifyCtx` surface is reachable:
+/// `--esp256`, `--historical`, `--report-all`,
+/// `--accepted-vocab ns:max,...` (repeatable),
+/// `--extra-grounded TYPE,...` (repeatable).
+pub struct VerifierPolicy {
+    pub allowed_algs: proof_crypto::AllowedAlgs,
+    pub report_all_failures: bool,
+    pub accepted_vocabularies: Vec<proof_core::model::VocabularyAccept>,
+    pub extra_grounded: Vec<String>,
+}
+
+pub fn verifier_policy(cli: &Cli) -> Result<VerifierPolicy, String> {
+    let mut allowed = proof_crypto::AllowedAlgs::strict();
+    if cli.has("esp256") {
+        allowed = allowed.with_esp256();
+    }
+    if cli.has("historical") || cli.has("allow-deprecated") {
+        allowed = allowed.with_deprecated();
+    }
+    let mut accepted_vocabularies = vec![];
+    for item in cli.many("accepted-vocab") {
+        for entry in item.split(',') {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            let (ns, max) = entry.split_once(':').ok_or_else(|| {
+                "--accepted-vocab must be ns:max_version (e.g. `acme:2`), got `{entry}`".to_string()
+            })?;
+            let ns = ns.trim();
+            if ns.is_empty() {
+                return Err("--accepted-vocab namespace must not be empty".to_string());
+            }
+            let max_version: u64 = max
+                .trim()
+                .parse()
+                .map_err(|_| format!("--accepted-vocab max_version must be u64, got `{max}`"))?;
+            accepted_vocabularies.push(proof_core::model::VocabularyAccept {
+                ns: ns.to_string(),
+                max_version,
+            });
+        }
+    }
+    let mut extra_grounded = vec![];
+    for item in cli.many("extra-grounded") {
+        extra_grounded.extend(
+            item.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+        );
+    }
+    Ok(VerifierPolicy {
+        allowed_algs: allowed,
+        report_all_failures: cli.has("report-all"),
+        accepted_vocabularies,
+        extra_grounded,
+    })
+}
+
 /// All trust inputs are explicit flags; nothing is guessed from the proof.
 pub fn eval_inputs(cli: &Cli, c: &CommonInputs) -> proof_policy::EvalInputs {
     let mut revoked: Vec<String> = vec![];
@@ -120,6 +183,7 @@ pub fn eval_inputs(cli: &Cli, c: &CommonInputs) -> proof_policy::EvalInputs {
 pub fn verify(cli: &Cli) -> Result<i32, String> {
     let proof = crate::check::load_proof(&cli.proof_path()?, cli.quiet())?;
     let c = common(cli)?;
+    let vp = verifier_policy(cli)?;
     let statuses: Vec<proof_crypto::SignedStatus> = cli
         .many("status")
         .iter()
@@ -131,9 +195,14 @@ pub fn verify(cli: &Cli) -> Result<i32, String> {
         &proof_verify::VerifyCtx {
             verified_at: c.verified_at,
             clock_skew_leeway: c.skew,
+            trusted_issuers: cli.many("trusted"),
             status_objects: statuses,
             revocation_authorities: authorities,
             revocations_known_at: c.revocations_known_at,
+            allowed_algs: vp.allowed_algs,
+            report_all_failures: vp.report_all_failures,
+            accepted_vocabularies: vp.accepted_vocabularies,
+            extra_grounded: vp.extra_grounded,
             ..Default::default()
         },
     )
@@ -190,14 +259,20 @@ pub fn batch_verify(cli: &Cli) -> Result<i32, String> {
         let proof = crate::check::load_proof(path, cli.quiet())?;
         canonicals.push(proof.canonical);
     }
+    let vp = verifier_policy(cli)?;
     let rep = proof_verify::verify_batch(
         &canonicals,
         &proof_verify::VerifyCtx {
             verified_at: c.verified_at,
             clock_skew_leeway: c.skew,
+            trusted_issuers: cli.many("trusted"),
             status_objects: statuses,
             revocation_authorities: authorities,
             revocations_known_at: c.revocations_known_at,
+            allowed_algs: vp.allowed_algs,
+            report_all_failures: vp.report_all_failures,
+            accepted_vocabularies: vp.accepted_vocabularies,
+            extra_grounded: vp.extra_grounded,
             ..Default::default()
         },
         max_batch,
@@ -265,6 +340,7 @@ pub fn evaluate(cli: &Cli, explain: bool) -> Result<i32, String> {
         .iter()
         .map(|p| load_status(p, &crate::limits(), cli.quiet()))
         .collect::<Result<_, _>>()?;
+    let vp = verifier_policy(cli)?;
     let report = proof_verify::verify_proof(
         &proof.canonical,
         &proof_verify::VerifyCtx {
@@ -274,6 +350,10 @@ pub fn evaluate(cli: &Cli, explain: bool) -> Result<i32, String> {
             status_objects: statuses,
             revocation_authorities: cli.many("authority"),
             revocations_known_at: c.revocations_known_at,
+            allowed_algs: vp.allowed_algs,
+            report_all_failures: vp.report_all_failures,
+            accepted_vocabularies: vp.accepted_vocabularies,
+            extra_grounded: vp.extra_grounded,
             ..Default::default()
         },
     )

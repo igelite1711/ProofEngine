@@ -1,5 +1,8 @@
 # Proof Engine — Versioning and Compatibility (V1 draft — in development)
 
+> V1 versioning authority (carriers, mismatch behavior). Long-term view indexed
+> in `COMPATIBILITY.md`; on semantics `PROOF-ENGINE-SPEC.md` §16 wins.
+
 ## Version carriers (all `v == 1` in V1.0; anything else fails closed)
 
 | Layer | Field | On mismatch |

@@ -1,5 +1,8 @@
 # Proof Engine — Interoperability (V1 draft — in development)
 
+> V1 interop authority (levels I1–I3, conformance). Normative requirements
+> restated in `PROOF-ENGINE-SPEC.md` §17, which wins on semantics.
+
 ## Levels
 
 - **I1 — self verification.** Rust creates and verifies its own artifacts

@@ -517,7 +517,14 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
         let parsed = match parse_sign1(&entry.sign1, &ctx.limits) {
             Ok(p) => p,
             Err(e) => {
-                checks.push(CheckRecord::fail("SIGNATURES", obj, e.code, e.message));
+                let stage = match e.code {
+                    ErrorCode::AlgorithmConfusion
+                    | ErrorCode::UnknownAlgorithm
+                    | ErrorCode::DeprecatedAlgorithm
+                    | ErrorCode::UnexpectedHeaderParam => "KEYS",
+                    _ => "SIGNATURES",
+                };
+                checks.push(CheckRecord::fail(stage, obj, e.code, e.message));
                 continue;
             }
         };
@@ -564,7 +571,16 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                 verified.push((att_id.clone(), entry.content.clone()));
             }
             Err(e) => {
-                checks.push(CheckRecord::fail("SIGNATURES", obj, e.code, e.message));
+                // Key-shape/alg confusion belongs to KEYS per ERROR-MODEL;
+                // crypto failures stay under SIGNATURES.
+                let stage = match e.code {
+                    ErrorCode::AlgorithmConfusion
+                    | ErrorCode::UnknownAlgorithm
+                    | ErrorCode::DeprecatedAlgorithm
+                    | ErrorCode::UnexpectedHeaderParam => "KEYS",
+                    _ => "SIGNATURES",
+                };
+                checks.push(CheckRecord::fail(stage, obj, e.code, e.message));
             }
         }
     }

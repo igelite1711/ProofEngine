@@ -94,13 +94,17 @@ fn claim_text<'a>(claim: &'a Claim, key: &str) -> Option<&'a str> {
 }
 
 /// Extract the target id of a revoke claim. Fails if the claim is not a
-/// revoke or lacks a text `target`.
+/// revoke or lacks a non-empty text `target`.
 pub fn revocation_target(content: &AttestationContent) -> Result<&str, ProofError> {
     if claim_kind(content) != ClaimKind::Revoke {
         return Err(ErrorCode::SchemaViolation.err("revoke claim expected (claim.type=\"revoke\")"));
     }
-    claim_text(&content.claim, "target")
-        .ok_or_else(|| ErrorCode::SchemaViolation.err("revoke claim missing text field target"))
+    let t = claim_text(&content.claim, "target")
+        .ok_or_else(|| ErrorCode::SchemaViolation.err("revoke claim missing text field target"))?;
+    if t.is_empty() {
+        return Err(ErrorCode::SchemaViolation.err("revoke claim target must not be empty"));
+    }
+    Ok(t)
 }
 
 /// Extract the target id of a withdraw claim (any artifact id: evidence,
@@ -111,8 +115,13 @@ pub fn withdrawal_target(content: &AttestationContent) -> Result<&str, ProofErro
             ErrorCode::SchemaViolation.err("withdraw claim expected (claim.type=\"withdraw\")")
         );
     }
-    claim_text(&content.claim, "target")
-        .ok_or_else(|| ErrorCode::SchemaViolation.err("withdraw claim missing text field target"))
+    let t = claim_text(&content.claim, "target").ok_or_else(|| {
+        ErrorCode::SchemaViolation.err("withdraw claim missing text field target")
+    })?;
+    if t.is_empty() {
+        return Err(ErrorCode::SchemaViolation.err("withdraw claim target must not be empty"));
+    }
+    Ok(t)
 }
 
 /// Extract a compromise marking: (target identity, compromise instant).
@@ -128,6 +137,9 @@ pub fn compromise_mark(content: &AttestationContent) -> Result<(&str, u64), Proo
     let target = claim_text(&content.claim, "target").ok_or_else(|| {
         ErrorCode::SchemaViolation.err("compromise claim missing text field target")
     })?;
+    if target.is_empty() {
+        return Err(ErrorCode::SchemaViolation.err("compromise claim target must not be empty"));
+    }
     let at_time = content
         .claim
         .fields
@@ -164,6 +176,9 @@ pub fn supersession_pair(content: &AttestationContent) -> Result<(&str, &str), P
         .ok_or_else(|| ErrorCode::SchemaViolation.err("supersede claim missing text field old"))?;
     let new = claim_text(&content.claim, "new")
         .ok_or_else(|| ErrorCode::SchemaViolation.err("supersede claim missing text field new"))?;
+    if old.is_empty() || new.is_empty() {
+        return Err(ErrorCode::SchemaViolation.err("supersede old/new must not be empty"));
+    }
     if old == new {
         return Err(ErrorCode::SchemaViolation.err("supersede old == new"));
     }
@@ -217,6 +232,33 @@ mod tests {
         not_revoke.claim.claim_type = "statement".into();
         let e = revocation_target(&not_revoke).unwrap_err();
         assert_eq!(e.code, ErrorCode::SchemaViolation);
+    }
+
+    #[test]
+    fn empty_lifecycle_targets_rejected() {
+        let mut empty = revoke_content();
+        empty.claim.fields = vec![("target".into(), MetaValue::Text("".into()))];
+        assert_eq!(
+            revocation_target(&empty).unwrap_err().code,
+            ErrorCode::SchemaViolation
+        );
+        let mut w = revoke_content();
+        w.claim.claim_type = "withdraw".into();
+        w.claim.fields = vec![("target".into(), MetaValue::Text("".into()))];
+        assert_eq!(
+            withdrawal_target(&w).unwrap_err().code,
+            ErrorCode::SchemaViolation
+        );
+        let mut s = revoke_content();
+        s.claim.claim_type = "supersede".into();
+        s.claim.fields = vec![
+            ("old".into(), MetaValue::Text("".into())),
+            ("new".into(), MetaValue::Text("att:v1:B".into())),
+        ];
+        assert_eq!(
+            supersession_pair(&s).unwrap_err().code,
+            ErrorCode::SchemaViolation
+        );
     }
 
     #[test]

@@ -1011,3 +1011,53 @@ fn created_at_restamp_moves_freshness_without_breaking_binding() {
     // ...but freshness now passes on holder-rewritten bytes. Advisory only.
     assert_eq!(fresh_out.decision, PolicyDecision::Pass);
 }
+
+#[test]
+fn proof_fresh_fails_closed_on_zero_clock() {
+    // Zero clock = no trustworthy time: ProofFresh must FAIL, not PASS via
+    // saturating_sub(0 - created_at = 0). Regression for replay-guard bypass.
+    let (built, issuer, _) = setup();
+    let lim = limits();
+    let fresh_policy = parse_policy(
+        &serde_json::json!({
+            "policy_version": 1,
+            "policy_id": "fresh_v1",
+            "requirements": [{"type": "proof_fresh", "max_age_seconds": 300}]
+        }),
+        &lim,
+    )
+    .unwrap();
+    let report = verify_proof(&built.canonical, &ctx()).unwrap();
+    let state = state_from_report_and_proof(&report, &built.proof).unwrap();
+    let mut inp = inputs(&issuer);
+    inp.verified_at = 0;
+    let out = evaluate_policy(&state, &fresh_policy, &inp);
+    assert_eq!(out.decision, PolicyDecision::Fail);
+}
+
+#[test]
+fn verify_and_evaluate_bounds_revocations_by_status_objects() {
+    // Revocation-set bound is max_status_objects (64), not max_trusted_issuers
+    // (32). 40 entries must pass the one-shot gate under default limits.
+    use proof_policy::{verify_and_evaluate, RevocationSet as RS};
+    use proof_verify::VerificationContext;
+    let (built, issuer, _) = setup();
+    let policy = merchant_policy(&issuer);
+    let ctx = VerificationContext {
+        verified_at: CLOCK_OK,
+        revocations_known_at: Some(CLOCK_OK),
+        trusted_issuers: vec![issuer],
+        ..VerificationContext::default()
+    };
+    let revocations = RS::new((0..40).map(|i| format!("att:dummy:{i}")));
+    let d = verify_and_evaluate(&built.canonical, &ctx, &policy, revocations);
+    assert!(
+        d.is_ok(),
+        "40 revocations should fit max_status_objects=64: {:?}",
+        d.err()
+    );
+    // And over the status bound it must fail closed with LIMIT_EXCEEDED.
+    let too_many = RS::new((0..100).map(|i| format!("att:dummy:{i}")));
+    let err = verify_and_evaluate(&built.canonical, &ctx, &policy, too_many).unwrap_err();
+    assert_eq!(err.code, ErrorCode::LimitExceeded);
+}

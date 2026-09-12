@@ -158,12 +158,15 @@ pub fn run(out_dir: &str) -> Result<i32, String> {
         },
     )
     .map_err(|e| e.to_string())?;
-    assert_eq!(fresh.cryptographic_validity, Validity::Valid);
-    assert_eq!(fresh.evidence_validity, Validity::Valid);
-    assert!(fresh
-        .lifecycle
-        .iter()
-        .all(|l| l.status == LifecycleStatus::Active));
+    if fresh.cryptographic_validity != Validity::Valid
+        || fresh.evidence_validity != Validity::Valid
+        || !fresh
+            .lifecycle
+            .iter()
+            .all(|l| l.status == LifecycleStatus::Active)
+    {
+        return Err("demo invariant broken: fresh proof should verify PASS/ACTIVE".to_string());
+    }
     println!("    verdict: PASS (exit 0) — crypto valid, evidence valid, attestation ACTIVE");
     write_json(
         &format!("{out_dir}/report-fresh.json"),
@@ -197,14 +200,15 @@ pub fn run(out_dir: &str) -> Result<i32, String> {
         },
     )
     .map_err(|e| e.to_string())?;
-    assert_eq!(
-        bad.cryptographic_validity,
-        Validity::Invalid,
-        "tamper must break crypto"
-    );
-    assert!(bad
-        .failure_codes()
-        .contains(&proof_core::ErrorCode::IdMismatch));
+    if bad.cryptographic_validity != Validity::Invalid
+        || !bad
+            .failure_codes()
+            .contains(&proof_core::ErrorCode::IdMismatch)
+    {
+        return Err(
+            "demo invariant broken: tampered proof should fail with IdMismatch".to_string(),
+        );
+    }
     println!(
         "    verdict: FAIL (exit 1) — proof id no longer binds the bytes: {:?}",
         bad.failure_codes()
@@ -248,19 +252,17 @@ pub fn run(out_dir: &str) -> Result<i32, String> {
         },
     )
     .map_err(|e| e.to_string())?;
-    assert_eq!(
-        dead.cryptographic_validity,
-        Validity::Valid,
-        "crypto must stay valid"
-    );
-    assert_eq!(
-        dead.evidence_validity,
-        Validity::Invalid,
-        "revocation kills the proof"
-    );
-    assert!(dead
-        .failure_codes()
-        .contains(&proof_core::ErrorCode::Revoked));
+    if dead.cryptographic_validity != Validity::Valid
+        || dead.evidence_validity != Validity::Invalid
+        || !dead
+            .failure_codes()
+            .contains(&proof_core::ErrorCode::Revoked)
+    {
+        return Err(
+            "demo invariant broken: revoked proof should stay crypto-valid but evidence-invalid/Revoked"
+                .to_string(),
+        );
+    }
     println!(
         "    verdict: FAIL (exit 1) — same bytes, crypto still valid, attestation REVOKED: {:?}",
         dead.failure_codes()

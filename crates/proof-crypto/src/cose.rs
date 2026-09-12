@@ -238,6 +238,11 @@ pub fn verify_sign1_with_aad(
     limits: &Limits,
     external_aad: &[u8],
 ) -> Result<ParsedSign1, ProofError> {
+    // Caller-supplied AAD is hashed into Sig_structure: bound it so a
+    // misconfigured verifier cannot burn CPU hashing megabytes here.
+    if external_aad.len() > 1024 {
+        return Err(ErrorCode::LimitExceeded.err("external_aad exceeds 1KiB"));
+    }
     let p = parse_sign1(bytes, limits)?;
 
     // Deprecated ids: rejected by default; verifiable only under explicit

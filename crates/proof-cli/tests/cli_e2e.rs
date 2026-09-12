@@ -40,7 +40,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "evaluate" => proof_cli::make::evaluate(&parsed, false),
         "inspect" => proof_cli::inspect::inspect(&parsed).map(|_| proof_cli::EXIT_OK),
         "graph" => proof_cli::graph::graph(&parsed).map(|_| proof_cli::EXIT_OK),
-        "doctor" => proof_cli::doctor::doctor(&parsed).map(|_| proof_cli::EXIT_OK),
+        "doctor" => proof_cli::doctor::doctor(&parsed),
         "completion" => {
             let shell = parsed
                 .opt("shell")
@@ -904,8 +904,14 @@ fn graph_shows_relationships() {
 /// Test the doctor command: environment diagnostics.
 #[test]
 fn doctor_checks_environment() {
+    // Exit 0 all healthy, 1 any check fails (cwd-dependent: demo/examples
+    // relative paths miss when tests run from crates/proof-cli). Either is a
+    // successful run; usage errors (exit 2 / Err) are the failure mode.
     let result = run(args("doctor", &[]));
-    assert_eq!(result, Ok(0));
+    assert!(
+        matches!(result, Ok(0) | Ok(1)),
+        "doctor must exit 0/1, got {result:?}"
+    );
 }
 
 /// Test the version command.
@@ -1013,6 +1019,26 @@ fn help_topics_and_completion_cover_all_commands() {
     assert!(proof_cli::completion_script("tcsh").is_err());
     // completion via the harness (positional shell arg).
     assert_eq!(run(args("completion", &["bash"])), Ok(0));
+}
+
+#[test]
+fn gnu_help_and_version_aliases() {
+    // `proof-cli --help` / `-h` behave like `help`; `--version` like `version`.
+    // Regression: `--help` used to be consumed as an unknown command (exit 2).
+    assert_eq!(
+        proof_cli::Cli::parse(&["--help".into()]).unwrap().command,
+        "help"
+    );
+    assert_eq!(
+        proof_cli::Cli::parse(&["-h".into()]).unwrap().command,
+        "help"
+    );
+    assert_eq!(
+        proof_cli::Cli::parse(&["--version".into()])
+            .unwrap()
+            .command,
+        "version"
+    );
 }
 
 /// The interactive tour refuses cleanly without a terminal (never hangs
@@ -1671,6 +1697,7 @@ fn ingest_jsonl_records_fail_closed_with_line_numbers() {
     )
     .unwrap();
     let m2 = format!("{w}/m2.json");
+    // Partial batch (--skip-bad with 1 skip) is exit 1, not 0.
     assert_eq!(
         run(args(
             "ingest",
@@ -1684,7 +1711,7 @@ fn ingest_jsonl_records_fail_closed_with_line_numbers() {
                 "--skip-bad"
             ]
         )),
-        Ok(0)
+        Ok(1)
     );
     let m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&m2).unwrap()).unwrap();
@@ -1700,4 +1727,227 @@ fn ingest_jsonl_records_fail_closed_with_line_numbers() {
         Ok(0)
     );
     assert!(!std::path::Path::new(&dry).exists());
+}
+
+/// Full VerifyCtx surface is reachable from the CLI (previously hardcoded
+/// strict-only): --esp256, --historical, --report-all, --accepted-vocab,
+/// --extra-grounded thread into verify without changing strict defaults.
+#[test]
+fn verifier_policy_flags_parse_and_thread() {
+    // Parsing: all flags on.
+    let c = proof_cli::Cli::parse(
+        [
+            "verify".into(),
+            "--proof".into(),
+            "p.json".into(),
+            "--clock".into(),
+            "1700000300".into(),
+            "--esp256".into(),
+            "--historical".into(),
+            "--report-all".into(),
+            "--accepted-vocab".into(),
+            "acme:2,other:3".into(),
+            "--extra-grounded".into(),
+            "MYEDGE,OTHER".into(),
+        ]
+        .as_ref(),
+    )
+    .unwrap();
+    let vp = proof_cli::make::verifier_policy(&c).unwrap();
+    assert!(vp.allowed_algs.esp256);
+    assert!(vp.allowed_algs.allow_deprecated);
+    assert!(vp.report_all_failures);
+    assert_eq!(vp.accepted_vocabularies.len(), 2);
+    assert_eq!(vp.accepted_vocabularies[0].ns, "acme");
+    assert_eq!(vp.accepted_vocabularies[0].max_version, 2);
+    assert_eq!(vp.extra_grounded, vec!["MYEDGE", "OTHER"]);
+    // Defaults unchanged when flags absent (strict Ed25519-only, fail-fast).
+    let strict = proof_cli::Cli::parse(
+        [
+            "verify".into(),
+            "--proof".into(),
+            "p.json".into(),
+            "--clock".into(),
+            "1".into(),
+        ]
+        .as_ref(),
+    )
+    .unwrap();
+    let vp = proof_cli::make::verifier_policy(&strict).unwrap();
+    assert!(!vp.allowed_algs.esp256);
+    assert!(!vp.allowed_algs.allow_deprecated);
+    assert!(!vp.report_all_failures);
+    assert!(vp.accepted_vocabularies.is_empty());
+    assert!(vp.extra_grounded.is_empty());
+    // Malformed vocab fails closed as usage error, never a silent default.
+    let bad = proof_cli::Cli::parse(
+        [
+            "verify".into(),
+            "--proof".into(),
+            "p.json".into(),
+            "--clock".into(),
+            "1".into(),
+            "--accepted-vocab".into(),
+            "no-colon-here".into(),
+        ]
+        .as_ref(),
+    )
+    .unwrap();
+    assert!(proof_cli::make::verifier_policy(&bad).is_err());
+}
+
+/// New flags are additive: an Ed25519 proof that verifies strict still
+/// verifies with every flag on, and bad flag values are usage errors.
+#[test]
+fn verifier_flags_are_additive_on_real_proof() {
+    let w = tmpdir("vflags");
+    let (ev1, ev2) = (format!("{w}/ev1.json"), format!("{w}/ev2.json"));
+    for (path, typ, subj, payload) in [
+        (&ev1, "payment.created", "payment:p-vf", D1),
+        (&ev2, "invoice.issued", "invoice:i-vf", D2),
+    ] {
+        run(args(
+            "create-event",
+            &[
+                "--type",
+                typ,
+                "--subject",
+                subj,
+                "--effective-at",
+                "1700000000",
+                "--payload-hex",
+                payload,
+                "--out",
+                path,
+            ],
+        ))
+        .unwrap();
+    }
+    let (att, evd, rel) = (
+        format!("{w}/att.json"),
+        format!("{w}/evd.json"),
+        format!("{w}/rel.json"),
+    );
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:p-vf",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=1",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    let att_id = id_of(&att);
+    // Evidence digests are id-bound references (like the existing e2e
+    // proofs above, which pass D2 straight through as digest-hex).
+    run(args(
+        "add-evidence",
+        &[
+            "--kind",
+            "transaction_record",
+            "--digest-hex",
+            D1,
+            "--attestation-ref",
+            &att_id,
+            "--out",
+            &evd,
+        ],
+    ))
+    .unwrap();
+    let (ev1_id, ev2_id, evd_id) = (id_of(&ev1), id_of(&ev2), id_of(&evd));
+    run(args(
+        "relate",
+        &[
+            "--from",
+            &ev1_id,
+            "--type",
+            "SETTLES",
+            "--to",
+            &ev2_id,
+            "--evidence-ref",
+            &evd_id,
+            "--attestation-ref",
+            &att_id,
+            "--out",
+            &rel,
+        ],
+    ))
+    .unwrap();
+    let proof = format!("{w}/proof.json");
+    run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.settles-invoice",
+            "--subject",
+            &ev1_id,
+            "--predicate",
+            "settles",
+            "--object",
+            &ev2_id,
+            "--at-time",
+            "1700000150",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &format!("{ev1},{ev2}"),
+            "--attestations",
+            &att,
+            "--evidence",
+            &evd,
+            "--relationships",
+            &rel,
+            "--out",
+            &proof,
+        ],
+    ))
+    .unwrap();
+    let base = [
+        "--proof".to_string(),
+        proof.clone(),
+        "--clock".to_string(),
+        "1700000300".to_string(),
+        "--revocations-known-at".to_string(),
+        "1700000300".to_string(),
+    ];
+    let mut strict_args = vec!["verify".to_string()];
+    strict_args.extend(base.clone());
+    assert_eq!(run(strict_args), Ok(0));
+    // Every new flag on: same proof, same PASS (additive, never a bypass).
+    let mut full = vec!["verify".to_string()];
+    full.extend(base.clone());
+    full.extend(
+        [
+            "--esp256",
+            "--historical",
+            "--report-all",
+            "--accepted-vocab",
+            "acme:2",
+            "--extra-grounded",
+            "MYEDGE",
+            "--trusted",
+            "key:ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    assert_eq!(run(full), Ok(0));
+    // Malformed vocab is a usage error (exit 2 via Err), not a silent PASS.
+    let mut bad = vec!["verify".to_string()];
+    bad.extend(base);
+    bad.extend(
+        ["--accepted-vocab", "no-colon"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
+    assert!(run(bad).is_err());
 }

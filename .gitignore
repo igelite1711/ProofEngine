@@ -26,3 +26,7 @@ __pycache__/
 /policy.json
 /proof.json
 /rel.json
+
+# Generated supply-chain artifacts (reproduce with `make sbom` / `make release-meta`)
+sbom.cdx.json
+dist/

@@ -1,6 +1,9 @@
 # Proof Engine V1.0 — Protocol Specification
 
-> **Status:** Draft — V1 in development.
+> **Status:** Draft — V1 in development. **Superseded where it differs:**
+> `PROOF-ENGINE-SPEC.md` is the normative single entry (protocol semantics win);
+> `docs/format.cddl` wins on wire bytes. This file remains as historical
+> full-text draft — do not add new normative language here.
 > **Companion docs:** `ARCHITECTURE.md`, `FORMAT.md`, `POLICY.md`, `LONGEVITY.md`
 > **CDDL schema:** `docs/format.cddl`
 

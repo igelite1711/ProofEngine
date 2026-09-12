@@ -1,5 +1,7 @@
 # Proof Engine — Data Model (V1 draft — in development)
 
+> V1 data-model authority (primitives, value objects, references). On protocol
+> semantics `PROOF-ENGINE-SPEC.md` §3 wins.
 > Five persisted primitives. Everything else is a value object, an
 > evaluation input, or an attestation subtype (Phase 0 ambiguity #1).
 

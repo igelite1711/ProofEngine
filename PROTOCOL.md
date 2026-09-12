@@ -1,8 +1,10 @@
 # Proof Engine — Protocol Overview (V1 draft — in development)
 
-> Normative index for the V1 protocol. Every statement here describes
-> implemented behavior; each section points to the authoritative document,
-> the code, and the tests (`docs/requirements-matrix.md` maps PE-xxx ids).
+> Normative index for the V1 protocol (not the protocol authority itself:
+> `PROOF-ENGINE-SPEC.md` wins on semantics, `docs/format.cddl` on wire bytes).
+> Every statement here describes implemented behavior; each section points to
+> the authoritative document, the code, and the tests
+> (`docs/requirements-matrix.md` maps PE-xxx ids).
 
 ## Core invariant
 

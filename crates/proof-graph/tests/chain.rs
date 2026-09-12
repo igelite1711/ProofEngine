@@ -135,3 +135,105 @@ fn payment_settles_invoice_chain() {
     assert_eq!(g.edge_count, 3);
     assert_eq!(g.node_count, 4);
 }
+
+#[test]
+fn huge_node_set_with_few_edges_fails_closed() {
+    // Total member ids are bounded by max_nodes even when edge endpoints are
+    // few: a 10k NodeSet with 0 edges must not pass.
+    use proof_core::ErrorCode;
+    let lim = Limits::default();
+    let huge: Vec<String> = (0..(lim.max_nodes + 100))
+        .map(|i| format!("evt:v1:node{i:05}"))
+        .collect();
+    let nodes = NodeSet::new(huge);
+    let err = validate_graph(&[], &nodes, &lim).unwrap_err();
+    assert_eq!(err.code, ErrorCode::LimitExceeded);
+}
+
+#[test]
+fn duplicate_edge_ids_rejected() {
+    use proof_core::ErrorCode;
+    let lim = Limits::default();
+    let key = fixtures::test_key();
+    let ev = create_event(event_content(EventType::new("t"), "s", "1"), &lim).unwrap();
+    let evd = make_evidence(
+        EvidenceKind::new(EvidenceKind::TRANSACTION_RECORD),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xEEu8; 32]).unwrap(),
+        None,
+        None,
+        &lim,
+    )
+    .unwrap();
+    let att = attest(
+        fixtures::fixed_attestation_content(&key.key_ref(), &ev.id),
+        &key,
+        &lim,
+    )
+    .unwrap();
+    // REFERENCES is ungrounded: needs no backing, endpoints must resolve.
+    // Use two distinct events (self-edges forbidden).
+    let ev2 = create_event(event_content(EventType::new("t"), "s2", "2"), &lim).unwrap();
+    let nodes = NodeSet::new(
+        [&ev.id, &ev2.id, &att.id, &evd.id]
+            .into_iter()
+            .map(|s| s.to_string()),
+    );
+    let rel = make_relationship(
+        Relationship {
+            v: 1,
+            from: ev.id.clone(),
+            rel_type: RelType::new(RelType::REFERENCES),
+            to: ev2.id.clone(),
+            evidence_ref: None,
+            attestation_ref: None,
+        },
+        &lim,
+    )
+    .unwrap();
+    let (back, id) = verify_relationship(&rel.canonical, Some(&rel.id), &lim).unwrap();
+    assert_eq!(back, rel.content);
+    let edge = EdgeRecord {
+        content: rel.content.clone(),
+        id: id.clone(),
+    };
+    let dup = edge.clone();
+    let err = validate_graph(&[edge, dup], &nodes, &lim).unwrap_err();
+    assert_eq!(err.code, ErrorCode::SchemaViolation);
+}
+
+#[test]
+fn mistyped_backing_ref_rejected() {
+    use proof_core::ErrorCode;
+    let lim = Limits::default();
+    let key = fixtures::test_key();
+    let ev = create_event(event_content(EventType::new("t"), "s", "1"), &lim).unwrap();
+    let ev2 = create_event(event_content(EventType::new("t"), "s2", "2"), &lim).unwrap();
+    let att = attest(
+        fixtures::fixed_attestation_content(&key.key_ref(), &ev.id),
+        &key,
+        &lim,
+    )
+    .unwrap();
+    let nodes = NodeSet::new(
+        [&ev.id, &ev2.id, &att.id]
+            .into_iter()
+            .map(|s| s.to_string()),
+    );
+    // SETTLES is trust-relevant: evidence_ref must be evd:v1:…, not att:.
+    let rel = make_relationship(
+        Relationship {
+            v: 1,
+            from: ev.id.clone(),
+            rel_type: RelType::new(RelType::SETTLES),
+            to: ev2.id.clone(),
+            evidence_ref: Some(att.id.clone()),
+            attestation_ref: None,
+        },
+        &lim,
+    )
+    .unwrap();
+    let (back, id) = verify_relationship(&rel.canonical, Some(&rel.id), &lim).unwrap();
+    let edge = EdgeRecord { content: back, id };
+    let err = validate_graph(&[edge], &nodes, &lim).unwrap_err();
+    assert_eq!(err.code, ErrorCode::SchemaViolation);
+}

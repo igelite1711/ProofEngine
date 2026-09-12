@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test fmt fmt-check clippy demo fuzzcheck trace neutrality no-panic domain-tests cddl-validate freeze-guard sbom release-meta clean install interop-ts
+.PHONY: help build test fmt fmt-check clippy demo quick-proof pilot-legal fuzzcheck trace neutrality no-panic domain-tests cddl-validate freeze-guard sbom release-meta clean install interop-py interop-ts interop bench-smoke bench-check scitt-check coverage
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -28,6 +28,12 @@ clippy: ## Run linter (CI)
 demo: build ## Run the deterministic demo (PASS → tamper → FAIL → revoke → FAIL)
 	cargo run --locked -p proof-cli -- demo
 
+quick-proof: build ## One-shot proof in seconds (hides ID/digest plumbing)
+	bash tools/quick_proof.sh
+
+pilot-legal: build ## Pilot integration: legal execution + supersession lifecycle
+	bash tools/pilot_legal.sh
+
 web-demo: build ## Generate the browser demo (real CLI output embedded in demo/web/index.html)
 	rm -rf /tmp/opencode-webgen
 	python3 tools/gen_web_demo.py --work /tmp/opencode-webgen --template demo/web/template.html --out demo/web/index.html
@@ -38,8 +44,29 @@ web-check: ## Verify the browser demo data matches fresh core output (honesty ga
 web-serve: ## Serve the browser demo locally (no app server; static files only)
 	python3 -m http.server --directory demo/web 8901
 
+interop-py: build demo ## Second independent verifier (Python, stdlib-only): 37-check differential over golden corpus
+	python3 interop/differential.py --repo . --proof-cli $(PROOF_CLI) --work /tmp/proof-interop
+
 interop-ts: ## Third independent verifier (TypeScript): typecheck + differential over golden corpus
-	cd interop/ts && npm run --silent differential
+	cd interop/ts && (test -d node_modules || npm install --no-audit --no-fund) && npm run --silent differential
+
+interop: interop-py interop-ts ## All independent verifiers (Python + TypeScript)
+
+bench-smoke: ## Quick benchmark smoke (2 iters, all scenarios, JSON)
+	cargo run --locked -p proof-bench -- --iters 2 --json
+
+bench-check: ## Perf regression gate (release, 20 iters vs committed baseline, 100% + noise floor)
+	cargo run --release --locked -p proof-bench -- --iters 20 --check-baseline crates/proof-bench/baseline.json --tolerance 100
+
+coverage: ## Line coverage summary (needs cargo-llvm-cov; ~80% lines at last cut)
+	cargo llvm-cov --locked --workspace --summary-only
+
+scitt-check: ## SCITT adapter: Rust tests + independent Python differential
+	cargo test --locked -p proof-adapter-scitt
+	python3 crates/proof-adapter-scitt/differential.py
+
+# proof-cli path honors CARGO_TARGET_DIR, the local .cargo/config cache, and vanilla target/.
+PROOF_CLI ?= $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR)/debug/proof-cli,$(if $(wildcard /root/.cache/proof-target/debug/proof-cli),/root/.cache/proof-target/debug/proof-cli,target/debug/proof-cli))
 
 install: build ## Install proof-cli to ~/.cargo/bin
 	cargo install --locked --path crates/proof-cli
@@ -72,14 +99,17 @@ release-meta: ## Assemble dist/ with SBOM + provenance + hashes (RELEASE.md)
 	(cd $(OUT) && sha256sum * > sha256sums.txt)
 	@echo "release metadata in $(OUT)/ (sign per RELEASE.md)"
 
-# Override when CARGO_TARGET_DIR is set (see .cargo/config.toml).
-TARGET_DIR ?= $(CURDIR)/target/release
+# Resolve the real cargo target dir via metadata (honors CARGO_TARGET_DIR
+# env and local .cargo/config.toml target-dir overrides); fall back to
+# ./target/release when cargo/metadata is unavailable.
+CARGO_TARGET = $(shell cargo metadata --format-version=1 --no-deps 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('target_directory',''))" 2>/dev/null)
+TARGET_DIR ?= $(if $(CARGO_TARGET),$(CARGO_TARGET)/release,$(CURDIR)/target/release)
 
 domain-tests: ## Run domain proof-suite tests
 	cd domains/proof-domains && cargo test --locked
 
-fuzzcheck: ## Verify fuzz targets are present
-	@test -f fuzz/fuzz_targets/cbor_decoder.rs && test -f fuzz/fuzz_targets/proof_verify.rs && test -f fuzz/fuzz_targets/policy_parser.rs && test -f fuzz/fuzz_targets/graph_ingest.rs && test -f .github/workflows/fuzz.yml && echo "fuzz targets + workflow present (see VERIFICATION.md for the latest green run)"
+fuzzcheck: ## Verify fuzz targets + seeds are present
+	@test -f fuzz/fuzz_targets/cbor_decoder.rs && test -f fuzz/fuzz_targets/proof_verify.rs && test -f fuzz/fuzz_targets/policy_parser.rs && test -f fuzz/fuzz_targets/graph_ingest.rs && test -f .github/workflows/fuzz.yml && test -n "$$(ls fuzz/seeds/cbor_decoder/)" && test -n "$$(ls fuzz/seeds/proof_verify/)" && test -n "$$(ls fuzz/seeds/policy_parser/)" && test -n "$$(ls fuzz/seeds/graph_ingest/)" && echo "fuzz targets + seeds + workflow present (see VERIFICATION.md for the latest green run)"
 
 clean: ## Remove build artifacts
 	cargo clean
