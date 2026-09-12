@@ -65,7 +65,14 @@ Everything you need to understand, use, and contribute to Proof Engine.
 | [Credential](domains/credential.md) | Credential proofs |
 | [Media](domains/media.md) | Media/content proofs |
 | [AI](domains/ai.md) | AI action proofs |
-| Sensor / Logistics / Legal / Supply-chain / Health / Gov | Test-only journeys in `domains/proof-domains/tests/` (same core, same verdict shape; guides land with P12) |
+| [Sensor](domains/sensor.md) | Sensor calibration proofs |
+| [Logistics](domains/logistics.md) | Chain-of-custody proofs |
+| [Legal](domains/legal.md) | Document execution proofs |
+| [Supply-chain](domains/supplychain.md) | Batch production proofs |
+| [Health](domains/health.md) | Consent-gated record proofs |
+| [Gov](domains/gov.md) | Permit workflow proofs |
+| [Science](domains/science.md) | Replication proofs |
+| [Cyber](domains/cyber.md) | Incident response proofs |
 
 ## Technical details
 
