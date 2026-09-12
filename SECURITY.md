@@ -1,5 +1,9 @@
 # SECURITY.md
 
+> V1 guarantee statements within the `THREAT-MODEL.md` scope. The consolidated
+> view (threats, mitigations, residuals) is `SECURITY-MODEL.md`; on semantics
+> `PROOF-ENGINE-SPEC.md` §18 wins.
+
 ## What this software guarantees (V1.0)
 
 Within the trust model of `THREAT-MODEL.md`, and given an honest verifier

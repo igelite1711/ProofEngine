@@ -66,12 +66,17 @@ fn encode_value(v: &CborValue, out: &mut Vec<u8>) {
     match v {
         CborValue::Uint(n) => encode_head(0, *n, out),
         CborValue::Nint(n) => {
-            // Invariant: CBOR nint is always <= -1. Callers must uphold it
-            // (schema layer never constructs non-negative Nint).
-            debug_assert!(*n < 0, "CborValue::Nint must be negative");
-            // value = -1 - n  =>  n_arg = (-1 - value) as u64
-            let arg = (-1i128 - (*n as i128)) as u64;
-            encode_head(1, arg, out);
+            // Invariant: CBOR nint is always <= -1. Schema/decoder never
+            // construct non-negative Nint, but CborValue is public so a
+            // direct caller could. Fail safe without panic: normalize to
+            // Uint so release never silently wraps via `as u64`.
+            if *n >= 0 {
+                encode_head(0, *n as u64, out);
+            } else {
+                // value = -1 - n  =>  n_arg = (-1 - value) as u64
+                let arg = (-1i128 - (*n as i128)) as u64;
+                encode_head(1, arg, out);
+            }
         }
         CborValue::Bytes(b) => {
             encode_head(2, b.len() as u64, out);
@@ -127,6 +132,13 @@ struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
+    /// Convert a CBOR length argument to usize without silent truncation on
+    /// 32-bit targets: values exceeding address space fail closed.
+    fn arg_to_usize(n: u64) -> Result<usize, ProofError> {
+        usize::try_from(n)
+            .map_err(|_| ErrorCode::LimitExceeded.err("CBOR length exceeds address space"))
+    }
+
     fn eof(&self) -> bool {
         self.pos >= self.buf.len()
     }
@@ -212,14 +224,14 @@ impl<'a> Decoder<'a> {
                 Ok(CborValue::Nint(v as i64))
             }
             2 => {
-                let len = self.read_arg(ai)? as usize;
+                let len = Self::arg_to_usize(self.read_arg(ai)?)?;
                 if len > self.limits.max_field_size {
                     return Err(ErrorCode::LimitExceeded.err("bytes field too large"));
                 }
                 Ok(CborValue::Bytes(self.read(len)?.to_vec()))
             }
             3 => {
-                let len = self.read_arg(ai)? as usize;
+                let len = Self::arg_to_usize(self.read_arg(ai)?)?;
                 if len > self.limits.max_field_size {
                     return Err(ErrorCode::LimitExceeded.err("text field too large"));
                 }
@@ -229,7 +241,7 @@ impl<'a> Decoder<'a> {
                 Ok(CborValue::Text(s.to_owned()))
             }
             4 => {
-                let len = self.read_arg(ai)? as usize;
+                let len = Self::arg_to_usize(self.read_arg(ai)?)?;
                 if len > self.limits.max_array_items {
                     return Err(ErrorCode::LimitExceeded.err("array too large"));
                 }
@@ -242,7 +254,7 @@ impl<'a> Decoder<'a> {
                 Ok(CborValue::Array(items))
             }
             5 => {
-                let len = self.read_arg(ai)? as usize;
+                let len = Self::arg_to_usize(self.read_arg(ai)?)?;
                 if len > self.limits.max_map_entries {
                     return Err(ErrorCode::LimitExceeded.err("map too large"));
                 }

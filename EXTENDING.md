@@ -4,8 +4,9 @@ The core answers *how* claims are represented, bound, and verified. Your
 domain answers *what they mean*. If you find yourself editing `crates/` to
 express domain meaning, stop — this page describes the intended path. The
 machinery below is exercised by real tests (`PE-NEUT-001..005` in
-`docs/requirements-matrix.md`) and by four example domains in `docs/domains/`
-(payment, credential, media, AI) plus the differential suite in
+`docs/requirements-matrix.md`) and by twelve example domains in `docs/domains/`
+(payment, credential, media, AI, sensor, logistics, legal, supply-chain,
+health, gov, science, cyber) plus the differential suite in
 `domains/proof-domains/tests/differential.rs`.
 
 ## The four extension points

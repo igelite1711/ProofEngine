@@ -49,6 +49,12 @@ impl ArtifactStore for MemoryStore {
         if id.is_empty() || cbor.is_empty() {
             return Err("store put requires non-empty id and bytes".into());
         }
+        // Transport-level DoS guard (default 1MiB). Stores are infrastructure
+        // so the error stays `String` by trait contract; verification bounds
+        // live in `Limits` and the pipeline.
+        if cbor.len() > 1024 * 1024 {
+            return Err(format!("store put: {} bytes exceeds 1MiB", cbor.len()));
+        }
         match self.inner.get(id) {
             Some(prev) if *prev != cbor => Err(format!(
                 "store conflict: {id} already held with different bytes"

@@ -59,6 +59,33 @@ impl Bundle {
             }
         })
     }
+
+    /// Bound a bundle before ingest: proof/blob counts and per-blob size.
+    /// Bundles are transport, not verification verdicts, so over-bound input
+    /// fails with `LIMIT_EXCEEDED` for the caller to handle.
+    pub fn validate(&self, limits: &proof_core::Limits) -> Result<(), ProofError> {
+        use proof_core::ErrorCode;
+        if self.proofs.len() > limits.max_array_items {
+            return Err(ErrorCode::LimitExceeded.err(format!(
+                "bundle proofs {} > max_array_items {}",
+                self.proofs.len(),
+                limits.max_array_items
+            )));
+        }
+        if self.blobs.len() > limits.max_evidence_items {
+            return Err(ErrorCode::LimitExceeded.err(format!(
+                "bundle blobs {} > max_evidence_items {}",
+                self.blobs.len(),
+                limits.max_evidence_items
+            )));
+        }
+        for b in &self.blobs {
+            if b.bytes.len() > limits.max_field_size {
+                return Err(ErrorCode::LimitExceeded.err("bundle blob exceeds max_field_size"));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Authenticate raw `bytes` against an expected content digest.
@@ -68,9 +95,8 @@ impl Bundle {
 pub fn check_blob_against_digest(bytes: &[u8], want: &HashRef) -> Result<(), ProofError> {
     use proof_core::HashAlgorithm;
     use sha2::Digest as _;
-    if bytes.is_empty() {
-        return Err(ErrorCode::Malformed.err("bundle blob is empty"));
-    }
+    // No empty guard: empty content is valid iff its digest matches
+    // (sha256("") = e3b0...). Authentication is digest equality only.
     let computed: Vec<u8> = match want.alg {
         HashAlgorithm::Sha256 => sha2::Sha256::digest(bytes).to_vec(),
         HashAlgorithm::Sha384 => sha2::Sha384::digest(bytes).to_vec(),
@@ -104,6 +130,29 @@ mod tests {
         // Unknown digest is absence (callers report UNAVAILABLE).
         let other = sha256_ref(b"something-else");
         assert_eq!(b.find_blob(&other), None);
+        // Empty bytes fail against a non-empty digest (mismatch), but empty
+        // content with its own digest verifies (sha256("") is well-defined).
         assert!(check_blob_against_digest(b"", &digest).is_err());
+        let empty_digest = sha256_ref(b"");
+        assert!(check_blob_against_digest(b"", &empty_digest).is_ok());
+    }
+
+    #[test]
+    fn bundle_validate_bounds_counts_and_blob_size() {
+        use proof_core::Limits;
+        let lim = Limits::default();
+        let digest = sha256_ref(b"x");
+        let b = Bundle::new().with_blob(digest, b"x".to_vec());
+        assert!(b.validate(&lim).is_ok());
+        let big = Bundle {
+            container_version: 1,
+            proofs: vec![],
+            blobs: vec![BundleBlob {
+                digest: sha256_ref(b"x"),
+                bytes: vec![0u8; lim.max_field_size + 1],
+            }],
+        };
+        let err = big.validate(&lim).unwrap_err();
+        assert_eq!(err.code, ErrorCode::LimitExceeded);
     }
 }

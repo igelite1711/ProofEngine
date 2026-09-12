@@ -49,3 +49,96 @@ impl Default for Limits {
         }
     }
 }
+
+impl Limits {
+    /// Validate a custom limit set: all bounds must be non-zero and not
+    /// exceed the compiled default (downward-only, DoS prevention). Returns
+    /// the same limits on success so callers can write
+    /// `Limits { max_nodes: 16, ..Default::default() }.checked()?`.
+    pub fn checked(self) -> Result<Self, crate::ProofError> {
+        let d = Self::default();
+        let pairs = [
+            ("max_proof_size", self.max_proof_size, d.max_proof_size),
+            ("max_field_size", self.max_field_size, d.max_field_size),
+            ("max_depth", self.max_depth, d.max_depth),
+            ("max_array_items", self.max_array_items, d.max_array_items),
+            ("max_map_entries", self.max_map_entries, d.max_map_entries),
+            (
+                "max_evidence_items",
+                self.max_evidence_items,
+                d.max_evidence_items,
+            ),
+            ("max_nodes", self.max_nodes, d.max_nodes),
+            ("max_edges", self.max_edges, d.max_edges),
+            ("max_sig_size", self.max_sig_size, d.max_sig_size),
+            (
+                "max_policy_requirements",
+                self.max_policy_requirements,
+                d.max_policy_requirements,
+            ),
+            (
+                "max_status_objects",
+                self.max_status_objects,
+                d.max_status_objects,
+            ),
+            (
+                "max_trusted_issuers",
+                self.max_trusted_issuers,
+                d.max_trusted_issuers,
+            ),
+            (
+                "max_revocation_authorities",
+                self.max_revocation_authorities,
+                d.max_revocation_authorities,
+            ),
+            (
+                "max_referenced_proofs",
+                self.max_referenced_proofs,
+                d.max_referenced_proofs,
+            ),
+            (
+                "max_vocabularies",
+                self.max_vocabularies,
+                d.max_vocabularies,
+            ),
+        ];
+        for (name, got, max) in pairs {
+            if got == 0 || got > max {
+                return Err(crate::ErrorCode::LimitExceeded
+                    .err(format!("Limits::{name}={got} out of bounds (1..={max})")));
+            }
+        }
+        Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checked_accepts_default_and_downward() {
+        assert!(Limits::default().checked().is_ok());
+        let tight = Limits {
+            max_nodes: 16,
+            ..Limits::default()
+        };
+        assert!(tight.checked().is_ok());
+    }
+
+    #[test]
+    fn checked_rejects_zero_and_upward() {
+        let zero = Limits {
+            max_nodes: 0,
+            ..Limits::default()
+        };
+        let err = zero.checked().unwrap_err();
+        assert_eq!(err.code, crate::ErrorCode::LimitExceeded);
+        let huge = Limits {
+            max_nodes: 10_000,
+            ..Limits::default()
+        };
+        let err = huge.checked().unwrap_err();
+        assert_eq!(err.code, crate::ErrorCode::LimitExceeded);
+    }
+}

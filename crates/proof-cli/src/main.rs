@@ -81,7 +81,7 @@ fn run(args: &[String]) -> i32 {
         "resolve" => proof_cli::port::resolve(&cli),
         "batch-verify" => proof_cli::make::batch_verify(&cli),
         "ingest" => proof_cli::ingest::ingest(&cli),
-        "doctor" => proof_cli::doctor::doctor(&cli).map(|_| EXIT_OK),
+        "doctor" => proof_cli::doctor::doctor(&cli),
         "completion" => match cli.opt("shell").or_else(|| cli.positional.first().cloned()) {
             Some(shell) => match proof_cli::completion_script(&shell) {
                 Ok(script) => {

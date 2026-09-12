@@ -1,5 +1,8 @@
 # Proof Engine — Cryptography (V1 draft — in development)
 
+> V1 wire authority for algorithms and the COSE profile. Suite agility and
+> lifecycle live in `CRYPTOGRAPHY.md` (sub-reference of `PROOF-ENGINE-SPEC.md`
+> §§5–6); on protocol semantics `PROOF-ENGINE-SPEC.md` wins.
 > No custom cryptography. Primitives: SHA-256/384 (FIPS 180-4) via `sha2`,
 > Ed25519 (RFC 8032) via `ed25519-dalek`, P-256/ECDSA via `p256`.
 > Standards anchors: `docs/standards-refs.md`.

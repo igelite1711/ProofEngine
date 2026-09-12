@@ -190,7 +190,13 @@ fn run() -> Result<(), String> {
                 tolerance = args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or(25.0);
                 i += 1;
             }
-            other => return Err(format!("unknown flag {other}")),
+            "--help" | "-h" => {
+                println!(
+                    "proof-bench — in-process benchmark harness (no new deps)\n\nUSAGE\n  cargo run --release -p proof-bench -- [--iters N=20] [--scenario NAME]... [--json] [--write-baseline FILE] [--check-baseline FILE] [--tolerance PCT=25]\n\nSCENARIOS\n  create-event, attest-sign, canonical-encode, hash-ids, verify-small,\n  verify-large, verify-deep, graph-wide, policy-eval, serde-roundtrip,\n  evidence-make (--scenario repeats to select; default all)"
+                );
+                std::process::exit(0);
+            }
+            other => return Err(format!("unknown flag {other} (try --help)")),
         }
         i += 1;
     }

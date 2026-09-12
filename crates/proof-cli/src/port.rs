@@ -232,7 +232,7 @@ pub fn compose(cli: &Cli) -> Result<String, String> {
             let (content, vid) = proof_crypto::build::verify_attestation(
                 &a.sign1,
                 &a.content.issuer,
-                &proof_crypto::AllowedAlgs::default(),
+                &proof_crypto::AllowedAlgs::strict(),
                 &limits,
             )
             .map_err(|e| format!("compose: attestation in {path} rejected: {e}"))?;
@@ -335,12 +335,18 @@ pub fn resolve(cli: &Cli) -> Result<i32, String> {
         .map(|v| v.parse().map_err(|_| "--depth must be a u64".to_string()))
         .transpose()?
         .unwrap_or(8);
+    let vp = crate::make::verifier_policy(cli)?;
     let ctx = proof_verify::VerifyCtx {
         verified_at: c.verified_at,
         clock_skew_leeway: c.skew,
+        trusted_issuers: cli.many("trusted"),
         status_objects: statuses,
         revocation_authorities: cli.many("authority"),
         revocations_known_at: c.revocations_known_at,
+        allowed_algs: vp.allowed_algs,
+        report_all_failures: vp.report_all_failures,
+        accepted_vocabularies: vp.accepted_vocabularies,
+        extra_grounded: vp.extra_grounded,
         ..Default::default()
     };
     let rep = resolve_proof_chain(&proof.canonical, &store, &ctx, max_depth)

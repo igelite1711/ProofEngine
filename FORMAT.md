@@ -1,6 +1,7 @@
 # Proof Engine — Format Specification (V1.0 Draft)
 
-> Authoritative-format candidate. All "MUST" below are enforced by `proof-format` + `proof-crypto`.
+> Wire-format authority with `docs/format.cddl` (the CDDL wins on bytes;
+> `PROOF-ENGINE-SPEC.md` §4 wins on semantics). All "MUST" below are enforced by `proof-format` + `proof-crypto`.
 > Verified Phase 0 (2026-09-06): see `docs/standards-refs.md`. Normative: RFC 8949 §4.1+§4.2.1, RFC 9052 §3/§4.2/§4.4/§9, IANA COSE registry (2026-08-25), RFC 9864, FIPS 180-4, RFC 4648 §5.
 
 ## 1. Canonical serialization (CBOR deterministic)

@@ -29,6 +29,15 @@ safe conversion utility. Never silently reinterpret old proofs.
 `created_at` excluded from `proof_id` by design (informational); policies
 must not treat it as authenticated (`proof_fresh` documents this).
 
+## 2b. Crate version tiers
+
+Core protocol crates (`proof-core/format/crypto/graph/verify/policy` at
+`1.0.x`, `proof-cli` at `1.1.x`) carry the V1 stability promise above.
+Perimeter surrounds (`proof-api`, `proof-bench`, `proof-adapter-scitt` at
+`0.1.x`, `domains/proof-domains` unpublished) are explicitly experimental:
+their APIs may change without a protocol major, while the bytes they emit
+or verify stay bound by the V1 wire contract.
+
 ## 3. Interop (I2/I3)
 
 Conformant impl MUST: reject the forbidden subset; derive ids exactly;

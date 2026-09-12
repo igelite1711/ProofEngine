@@ -139,10 +139,14 @@ pub fn proof_id_full(
             ));
         }
         if !vocabularies.is_empty() {
+            // Sort by ns so direct callers with unsorted input still bind
+            // deterministically (member id sets sort the same way above).
+            let mut vocabs: Vec<(String, u64)> = vocabularies.to_vec();
+            vocabs.sort_by(|a, b| a.0.cmp(&b.0));
             pairs.push((
                 CborValue::Text("vocabularies".into()),
                 CborValue::Array(
-                    vocabularies
+                    vocabs
                         .iter()
                         .map(|(ns, version)| {
                             CborValue::Map(vec![

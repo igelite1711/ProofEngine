@@ -44,6 +44,13 @@ interop/ts/             third implementation: independent TypeScript/Node
 ## Run
 
 ```console
+make interop-py   # Python differential (builds CLI + demo, 37 checks)
+make interop-ts   # TypeScript differential (typecheck + golden corpus)
+make interop      # both independent verifiers
+```
+
+Direct invocation (custom paths):
+```console
 python3 interop/differential.py --repo . \
     --proof-cli ./target/debug/proof-cli --work /tmp/proof-interop
 ```

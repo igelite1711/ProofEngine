@@ -1,6 +1,7 @@
 # Architecture Freeze Candidate — Convergence Review
 
-> **Status:** Freeze candidate (this pass). Records the six elevations, the
+> **Status:** Historical — promoted to `ARCHITECTURE-FREEZE.md` after the §53 gate.
+> Freeze candidate (this pass). Records the six elevations, the
 > minimal core deltas that implement them, and the break attempts used to
 > prove the boundaries. The standard applied is not "works" but: *the design
 > explicitly anticipates the major classes of change that would otherwise

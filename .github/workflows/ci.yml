@@ -29,6 +29,9 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      - name: Benchmark smoke (bench builds and runs, 2 iters)
+        run: make bench-smoke
+
       - name: Formatting
         run: cargo fmt --check
 
@@ -88,7 +91,7 @@ jobs:
             .
             domains/proof-domains
 
-      - name: Domain journeys (10 industries, same core)
+      - name: Domain journeys (12 industries, same core)
         run: make domain-tests
 
       - name: Neutrality gate (no domain vocabulary in mechanism sources)

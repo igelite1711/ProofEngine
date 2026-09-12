@@ -1,5 +1,8 @@
 # Proof Engine — Error Model (V1 draft — in development)
 
+> V1 error-code authority (24 stable wire strings). Restated normatively in
+> `PROOF-ENGINE-SPEC.md` §13, which wins on semantics.
+
 > 24 stable wire strings (22 V1 + `WITHDRAWN`, `COMPROMISED`, appended —
 > codes are append-only). Codes are part of the protocol: renaming or
 > renumbering is a breaking change (see VERSIONING.md). Every failure is
@@ -28,8 +31,8 @@
 | `SIGNATURE_INVALID` | SIGNATURES | COSE verify failed or issuer ≠ envelope key |
 | `UNKNOWN_ALGORITHM` | SIGNATURES | COSE alg unknown to this verifier |
 | `DEPRECATED_ALGORITHM` | SIGNATURES | known but deprecated (-8/-7/-35/-36) |
-| `UNSUPPORTED_VERSION` | SCHEMA | object/proof/policy version ≠ 1 |
-| `LIMIT_EXCEEDED` | PARSE/SCHEMA/GRAPH | size/depth/entries/items bound hit |
+| `UNSUPPORTED_VERSION` | SCHEMA | object/proof version ≠ 1; policy version ∉ {1, 2} |
+| `LIMIT_EXCEEDED` | PARSE/SCHEMA/GRAPH/POLICY | size/depth/entries/items bound hit, incl. pipeline input-vector bounds, builder/batch/combine/policy-requirement bounds |
 | `MALFORMED` | PARSE | truncated input, trailing bytes, bad UTF-8 |
 | `INVALID_BASE64URL` | PARSE | id component not valid base64url |
 | `UNEXPECTED_HEADER_PARAM` | KEYS | COSE header label/value outside {1,4} |

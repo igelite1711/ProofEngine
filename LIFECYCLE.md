@@ -1,7 +1,8 @@
 # Proof Engine — Lifecycle and Time (V1 draft — in development)
 
-> Formalizes states, validity/currentness/freshness, clocks, authority, and
-> precedence. Pipeline stages TIME + REVOCATION implement this document.
+> V1 lifecycle authority (states, validity/currentness/freshness, clocks,
+> authority, precedence). On semantics `PROOF-ENGINE-SPEC.md` §§10–11 win.
+> Pipeline stages TIME + REVOCATION implement this document.
 
 ## Three distinct dimensions
 

@@ -332,7 +332,10 @@ pub fn attestation_to_cbor(a: &AttestationContent) -> CborValue {
             CborValue::Text("subject".into()),
             CborValue::Text(a.subject.clone()),
         ),
-        (CborValue::Text("v".into()), CborValue::Uint(1)),
+        // Emit the actual version so v=2 never silently downgrades to v=1
+        // bytes: the decoder's check_version then fails closed with
+        // UNSUPPORTED_VERSION.
+        (CborValue::Text("v".into()), CborValue::Uint(a.v as u64)),
     ])
 }
 
@@ -435,7 +438,7 @@ pub fn evidence_to_cbor(e: &Evidence) -> CborValue {
             CborValue::Text("kind".into()),
             CborValue::Text(e.kind.as_str().into()),
         ),
-        (CborValue::Text("v".into()), CborValue::Uint(1)),
+        (CborValue::Text("v".into()), CborValue::Uint(e.v as u64)),
     ])
 }
 
@@ -506,7 +509,7 @@ pub fn relationship_to_cbor(r: &Relationship) -> CborValue {
             CborValue::Text("type".into()),
             CborValue::Text(r.rel_type.as_str().into()),
         ),
-        (CborValue::Text("v".into()), CborValue::Uint(1)),
+        (CborValue::Text("v".into()), CborValue::Uint(r.v as u64)),
     ])
 }
 
@@ -587,7 +590,7 @@ pub fn proposition_to_cbor(p: &Proposition) -> CborValue {
             CborValue::Text("subject".into()),
             CborValue::Text(p.subject.clone()),
         ),
-        (CborValue::Text("v".into()), CborValue::Uint(1)),
+        (CborValue::Text("v".into()), CborValue::Uint(p.v as u64)),
     ])
 }
 
@@ -692,6 +695,10 @@ fn cbor_to_attestation_entry(
         .ok_or_else(|| ErrorCode::SchemaViolation.err("missing field sign1"))?;
     let sign1 = match sign1 {
         CborValue::Bytes(b) => {
+            // sign1 here is the full COSE_Sign1 envelope (protected + payload
+            // + 64B sig), not the raw signature: max_proof_size is correct.
+            // The crypto layer separately enforces max_sig_size on the raw
+            // signature bytes at verify time.
             if b.is_empty() || b.len() > limits.max_proof_size {
                 return Err(ErrorCode::LimitExceeded.err("sign1 size out of bounds"));
             }
@@ -994,6 +1001,75 @@ mod tests {
         let mut e = event_fixture();
         e.v = 2;
         let err = event_to_cbor(&e).unwrap_err();
+        assert_eq!(err.code, ErrorCode::UnsupportedVersion);
+    }
+
+    /// Non-event primitives must never silently downgrade v=2 to v=1 bytes:
+    /// they preserve the version on encode so decode fails closed with
+    /// UNSUPPORTED_VERSION.
+    #[test]
+    fn non_event_v2_preserved_then_rejected() {
+        use proof_core::model::{AttestationContent, Claim, Evidence, Proposition, Relationship};
+        let lim = Limits::default();
+        let digest = HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap();
+
+        let mut att = AttestationContent {
+            v: 2,
+            issuer: "key:ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+            subject: "s".into(),
+            claim: Claim {
+                claim_type: "t".into(),
+                fields: vec![],
+            },
+            issued_at: 1,
+            expires_at: None,
+            evidence_ref: None,
+        };
+        // Empty claim fields rejected by claim-size check before version?
+        // No: check_version runs first, so version wins.
+        let v = attestation_to_cbor(&att);
+        let err = cbor_to_attestation(&v, &lim).unwrap_err();
+        assert_eq!(err.code, ErrorCode::UnsupportedVersion);
+        att.v = 1;
+        // v=1 still needs a non-empty claim map (type + no fields is empty);
+        // use a field so round-trip is valid.
+        att.claim
+            .fields
+            .push(("k".into(), MetaValue::Text("v".into())));
+        let v1 = attestation_to_cbor(&att);
+        assert!(cbor_to_attestation(&v1, &lim).is_ok());
+
+        let evd = Evidence {
+            v: 2,
+            kind: EvidenceKind::new("k"),
+            digest: digest.clone(),
+            attestation_ref: None,
+            hint: None,
+        };
+        let err = cbor_to_evidence(&evidence_to_cbor(&evd), &lim).unwrap_err();
+        assert_eq!(err.code, ErrorCode::UnsupportedVersion);
+
+        let rel = Relationship {
+            v: 2,
+            from: "a".into(),
+            rel_type: RelType::new("REFERENCES"),
+            to: "b".into(),
+            evidence_ref: None,
+            attestation_ref: None,
+        };
+        let err = cbor_to_relationship(&relationship_to_cbor(&rel), &lim).unwrap_err();
+        assert_eq!(err.code, ErrorCode::UnsupportedVersion);
+
+        let prop = Proposition {
+            v: 2,
+            kind: "k".into(),
+            subject: "s".into(),
+            predicate: "p".into(),
+            object: None,
+            at_time: None,
+            context: vec![],
+        };
+        let err = cbor_to_proposition(&proposition_to_cbor(&prop), &lim).unwrap_err();
         assert_eq!(err.code, ErrorCode::UnsupportedVersion);
     }
 

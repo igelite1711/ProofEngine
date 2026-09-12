@@ -278,17 +278,24 @@ impl VerifyReport {
             }
         };
         let provenance = {
-            let rel: Vec<&CheckRecord> = self
-                .checks
-                .iter()
-                .filter(|c| c.stage == "RELATIONSHIPS" || c.stage == "GRAPH")
-                .collect();
-            if rel.is_empty() {
-                Verdict::NotApplicable
-            } else if rel.iter().any(|c| !c.ok) {
-                Verdict::Invalid
+            // Early exit (no lifecycle) means relationship/graph state is
+            // unknown, not vacuously absent: report INDETERMINATE like the
+            // evidence dimension above, never NOT_APPLICABLE.
+            if !self.lifecycle_checked {
+                Verdict::Indeterminate
             } else {
-                Verdict::Valid
+                let rel: Vec<&CheckRecord> = self
+                    .checks
+                    .iter()
+                    .filter(|c| c.stage == "RELATIONSHIPS" || c.stage == "GRAPH")
+                    .collect();
+                if rel.is_empty() {
+                    Verdict::NotApplicable
+                } else if rel.iter().any(|c| !c.ok) {
+                    Verdict::Invalid
+                } else {
+                    Verdict::Valid
+                }
             }
         };
         let temporal = verdict_for(&["TIME"], false, Verdict::Indeterminate);

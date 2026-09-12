@@ -11,7 +11,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 
-**V1 in development · 4 fuzz targets · 12 industries · 2 implementations (Rust reference + stdlib-only Python; Ed25519 + P-256) · 31 golden vectors**
+**V1 in development · 4 fuzz targets · 12 industries · 3 implementations (Rust reference + stdlib-only Python + TypeScript; Ed25519 + P-256) · 31 golden vectors**
 
 ---
 
@@ -35,7 +35,7 @@ It is a **protocol-level foundation** that applications and industries can build
 | [Neutral by Design](#neutral-by-design) | 12 industries, zero core changes |
 | [Quick Start](#quick-start) | Get running in 30 seconds |
 | [For Developers](#for-developers) | Cargo dependency + code example |
-| [Repository](#repository) | 7 focused crates |
+| [Repository](#repository) | 7 core + 3 perimeter crates |
 | [Specification](#specification) | Authoritative protocol docs |
 
 ---
@@ -521,7 +521,9 @@ rather than modifying the core.
 
 ## Repository
 
-The repository is organized into focused crates:
+The repository is organized into focused crates — 7 core (V1 stability
+promise) plus 3 experimental perimeter crates (`0.1.x`, see
+[COMPATIBILITY.md](COMPATIBILITY.md) §2b):
 
 ```
 proof-core       Domain types, error codes, limits, hash/id value objects
@@ -531,6 +533,9 @@ proof-graph      Typed DAG validation, cycle/depth checks
 proof-verify     Staged verification pipeline and error codes
 proof-policy     Policy schema, validator, deterministic evaluator
 proof-cli        Command-line interface
+proof-api        Thin reference HTTP API (perimeter, 0.1.x)
+proof-bench      In-process benchmark harness (perimeter, 0.1.x)
+proof-adapter-scitt  SCITT transparency adapter (perimeter, 0.1.x)
 ```
 
 Each layer has a defined responsibility, allowing the protocol to remain understandable, testable, and independently verifiable.
@@ -622,6 +627,10 @@ cd ProofEngine
 make demo
 ```
 
+Fastest proof in seconds (no manual ID plumbing): `make quick-proof`
+(`bash tools/quick_proof.sh --keep --work /tmp/proof-quick` to keep files).
+Production keys: prefer `--seed-file` over `--seed` (argv is visible).
+
 Run `make help` to see all available commands.
 
 ### Command Reference
@@ -629,12 +638,13 @@ Run `make help` to see all available commands.
 | Command | What it does |
 |---------|-------------|
 | `make demo` | Run the full demo (create → verify → tamper → fail → revoke → fail) |
+| `make quick-proof` | One-shot proof: verify + evaluate + explain, no manual plumbing |
 | `make test` | Run all workspace tests |
 | `make install` | Install `proof-cli` to `~/.cargo/bin` |
 | `make help` | Show all available commands |
 | `make neutrality` | Verify no domain vocabulary in mechanism sources |
 | `make trace` | Verify requirement traceability matrix |
-| `make domain-tests` | Run all 10 industry domain differential tests |
+| `make domain-tests` | Run all 12 industry domain differential tests |
 
 ### CLI Commands (V1.1)
 
@@ -676,7 +686,8 @@ artifact or report to stdout (`proof-cli build … --out - | proof-cli verify
 automatically — `--claim b=1,a=2` and `--claim a=2,b=1` produce identical
 bytes.
 
-**Using proof-cli directly:**
+**Manual flow** (the same steps `tools/quick_proof.sh` automates — read this
+to understand each artifact; run the script to skip the plumbing):
 
 ```bash
 # After make install, or use: cargo run -p proof-cli --
@@ -789,48 +800,16 @@ println!("{}", proof_policy::explain_full(&report, &outcome));
 
 ### Creating a Proof
 
+Newcomers: run `make quick-proof` (verify + evaluate + explain in one
+command; `tools/quick_proof.sh --keep` to keep the artifacts). The manual
+equivalent is the annotated flow under [Quick Start](#quick-start) — start
+there; the commands below assume you already walked it once.
+
 ```bash
-# Create payment + invoice events (--payload-hex: 64 hex chars = 32 bytes)
-PAYLOAD=$(python3 -c "print('ab'*32)")
-proof-cli create-event --type payment.created --subject payment:p1 \
-    --effective-at 1700000000 --payload-hex $PAYLOAD --out ev1.json
-proof-cli create-event --type invoice.issued --subject invoice:i9 \
-    --effective-at 1700000000 --payload-hex $(python3 -c "print('cd'*32)") --out inv1.json
-
-# Sign an attestation (note the issuer key:ed25519:… — needed for the policy)
-proof-cli attest --seed test --subject payment:p1 --claim-type payment.settled \
-    --claim amount=4200 --issued-at 1700000150 --out att.json
-
-# Grounding evidence + edge: --from/--to/--object take artifact ids
-# (evt:v1:…), NOT bare labels like `invoice:i9` (those never resolve —
-# `relate` fails fast with a hint, and `verify` reports DANGLING_REFERENCE).
-DIGEST=$(python3 -c "import hashlib; print(hashlib.sha256(bytes.fromhex('$PAYLOAD')).hexdigest())")
-ATT=$(python3 -c "import json; print(json.load(open('att.json'))['id'])")
-proof-cli add-evidence --kind transaction_record --digest-hex $DIGEST \
-    --attestation-ref $ATT --out evd.json
-EVT=$(python3 -c "import json; print(json.load(open('ev1.json'))['id'])")
-INV=$(python3 -c "import json; print(json.load(open('inv1.json'))['id'])")
-EVD=$(python3 -c "import json; print(json.load(open('evd.json'))['id'])")
-proof-cli relate --from $EVT --type SETTLES --to $INV \
-    --evidence-ref $EVD --attestation-ref $ATT --out rel.json
-
-# Build the proof (--evidence "" if the proof genuinely has no evidence)
-proof-cli build --kind payment.settles-invoice --subject $EVT \
-    --predicate settles --object $INV --at-time 1700000150 \
-    --created-at 1700000200 --events ev1.json,inv1.json --attestations att.json \
-    --evidence evd.json --relationships rel.json --out proof.json
-
-# Verify (--revocations-known-at required for PASS; without it lifecycle is
-# UNKNOWN and verify fails closed with a re-run hint)
+# After the Quick Start flow: inspect, visualize, and stream.
+proof-cli inspect --proof proof.json       # read-only, no trust decisions
+proof-cli graph --proof proof.json         # text diagram of relationships
 proof-cli verify --proof proof.json --clock 1700000300 --revocations-known-at 1700000300
-
-# Policy: replace ONLY the suffix after `key:ed25519:` (prefix exactly once)
-ISSUER=$(python3 -c "import json; print(json.load(open('att.json'))['issuer'])")
-python3 -c "import json; p=json.load(open('examples/policies/settlement.json')); [r.__setitem__('issuer','$ISSUER') for r in p['requirements'] if r.get('type')=='issuer_trusted']; json.dump(p, open('policy.json','w'), indent=2)"
-proof-cli evaluate --proof proof.json --policy policy.json --clock 1700000300 \
-    --revocations-known-at 1700000300 --trusted $ISSUER
-proof-cli explain --proof proof.json --policy policy.json --clock 1700000300 \
-    --revocations-known-at 1700000300 --trusted $ISSUER
 ```
 
 ---

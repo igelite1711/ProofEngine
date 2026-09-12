@@ -1,6 +1,7 @@
 # Proof Engine — Threat Model (V1.0)
 
 > Scope: local library + CLI verifying portable CBOR/COSE proofs. No network service, no chain in V1.0.
+> Consolidated view (with mitigations and residuals) is `SECURITY-MODEL.md`.
 > Final for V1.0: describes implemented behavior (see docs/phase7-report.md and VERIFICATION.md for how to check).
 > Guarantee: tamper-evidence, correct crypto/policy evaluation, fail-closed. Non-guarantee: real-world truth, honest issuers/sensors.
 

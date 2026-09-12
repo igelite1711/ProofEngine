@@ -13,11 +13,13 @@
 
 | Question (docs/NEUTRALITY.md Test 2) | Test |
 |---|---|
-| Can radically different domains share one core? | `differential::four_domains_same_core_same_verdict_shape` |
+| Can radically different domains share one core? | `differential::twelve_domains_same_core_same_verdict_shape` (plus `ten_…` / `science_and_cybersecurity_…` compat wrappers) |
 | Does a domain-relevant edge fail closed without its grounding evidence? | `differential::grounding_rule_is_domain_independent` |
 | Do unknown domain vocabularies survive the pipeline and stay policy-governed? | `differential::unknown_domain_vocabulary_survives_pipeline` |
 | Do unknown vocabularies fail closed under policy by default? | `differential::unknown_domain_vocabulary_policy_fail_closed` |
-| Does the verdict shape stay identical when a domain journey fails? | `differential::cross_domain_failure_verdict_shape_identical` |
+| Does the verdict shape stay identical when a domain journey fails? | `differential::cross_domain_failure_verdict_shape_identical` (all 12 revoked) |
+| Does one flipped byte fail closed identically in every domain? | `differential::tamper_breaks_every_domain_identically` |
+| Does a stranger policy fail in every domain while own policies pass? | `differential::foreign_policy_fails_closed_in_every_domain` |
 
 Run:
 

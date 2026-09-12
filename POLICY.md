@@ -1,5 +1,9 @@
 # POLICY.md — the policy language (V1.0)
 
+> V1 language authority (requirement types, evaluation). Decisions, conflicts,
+> and the v2 path live in `POLICY-MODEL.md` (sub-reference of
+> `PROOF-ENGINE-SPEC.md` §12); on semantics `PROOF-ENGINE-SPEC.md` wins.
+
 A policy is the **only** thing that turns verification facts into a trust
 decision. Same evidence under different policies may yield different
 decisions: Evidence ≠ Policy, Proof ≠ Trust decision.

@@ -43,6 +43,14 @@ impl NodeSet {
     pub fn contains(&self, id: &str) -> bool {
         self.ids.contains(id)
     }
+
+    pub fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
 }
 
 /// Successful validation summary. The validated edge ids are returned so the
@@ -87,9 +95,25 @@ pub fn validate_graph_with_grounding(
             limits.max_edges
         )));
     }
+    // Bound total member ids as well as edge endpoints: direct library
+    // callers can construct an arbitrary NodeSet, and the pipeline's
+    // endpoint-only check would miss a huge set with few edges.
+    if nodes.len() > limits.max_nodes {
+        return Err(ErrorCode::LimitExceeded.err(format!(
+            "nodes {} > max_nodes {}",
+            nodes.len(),
+            limits.max_nodes
+        )));
+    }
 
     let mut endpoints: HashSet<&str> = HashSet::new();
+    let mut seen_edge_ids: HashSet<&str> = HashSet::new();
     for e in edges {
+        // Duplicate member ids (same rel twice) would double-count trust:
+        // union semantics require set membership, so reject repeats.
+        if !seen_edge_ids.insert(e.id.as_str()) {
+            return Err(ErrorCode::SchemaViolation.err(format!("duplicate edge id {}", e.id)));
+        }
         let r = &e.content;
         if r.v != 1 {
             return Err(ErrorCode::UnsupportedVersion.err("only relationship v=1 supported"));
@@ -135,7 +159,10 @@ pub fn validate_graph_with_grounding(
                 r.rel_type.as_str()
             )));
         }
-        for label in ["evidence_ref", "attestation_ref"] {
+        // Backing refs are typed: evidence_ref must name evd:v1:…,
+        // attestation_ref must name att:v1:…. An evt: id in either slot
+        // passes `contains` but is a type error — fail closed here.
+        for (label, prefix) in [("evidence_ref", "evd:v1:"), ("attestation_ref", "att:v1:")] {
             let opt = if label == "evidence_ref" {
                 &r.evidence_ref
             } else {
@@ -144,6 +171,10 @@ pub fn validate_graph_with_grounding(
             if let Some(id) = opt {
                 if id.is_empty() {
                     return Err(ErrorCode::SchemaViolation.err(format!("empty {label}")));
+                }
+                if !id.starts_with(prefix) {
+                    return Err(ErrorCode::SchemaViolation
+                        .err(format!("{label} {id} must start with {prefix}")));
                 }
                 if !nodes.contains(id) {
                     return Err(ErrorCode::DanglingReference.err(format!("unknown {label} {id}")));
@@ -171,14 +202,24 @@ pub fn validate_graph_with_grounding(
     })
 }
 
-/// Shape heuristic: `<prefix>:v1:<suffix>` with a known artifact prefix.
-/// Shaped strings name proof members and must resolve; anything else in an
-/// EQUIVALENT endpoint is an external identity ref, accepted as asserted.
+/// Shape heuristic: `<prefix>:vN:<suffix>` names a proof member (or a
+/// future-version member) and must resolve; anything else in an EQUIVALENT
+/// endpoint is an external identity ref, accepted as asserted. Treating any
+/// `vN` as shaped fails closed on `evt:v2:x` instead of accepting it as a
+/// free string.
 fn looks_like_artifact_id(s: &str) -> bool {
     let mut parts = s.splitn(3, ':');
     match (parts.next(), parts.next(), parts.next()) {
-        (Some(p), Some("v1"), Some(rest)) => {
-            matches!(p, "evt" | "att" | "evd" | "rel" | "prf") && !rest.is_empty()
+        (Some(p), Some(v), Some(rest)) => {
+            let versioned = v.len() > 1
+                && v.as_bytes()[0] == b'v'
+                && v[1..].bytes().all(|b| b.is_ascii_digit())
+                && !rest.is_empty();
+            // Known V1 prefixes always shaped; any other `xxx:vN:...` shape
+            // is also treated as shaped so unknown versions fail closed
+            // (DANGLING/UNSUPPORTED) rather than riding as asserted identity.
+            (matches!(p, "evt" | "att" | "evd" | "rel" | "prf") && !rest.is_empty())
+                || (versioned && !p.is_empty() && !p.contains(' '))
         }
         _ => false,
     }

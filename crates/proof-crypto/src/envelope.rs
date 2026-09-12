@@ -73,14 +73,18 @@ pub fn verify_envelope(
         return Err(ErrorCode::IdMismatch.err("envelope id does not match recomputed id"));
     }
     // Where a signature travels with the envelope, re-verify it when the
-    // caller supplies trust inputs; otherwise only shape-check presence.
+    // caller supplies trust inputs; otherwise still shape-check the COSE
+    // envelope so malformed sign1 never reads as "verified envelope".
     if matches!(env.kind, ArtifactKind::Attestation | ArtifactKind::Status) {
-        if let (Some(issuer), Some(al)) = (expected_issuer, allowed) {
-            if let Some(s) = &env.sign1_b64u {
-                use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-                let sig = URL_SAFE_NO_PAD
-                    .decode(s)
-                    .map_err(|_| ErrorCode::Malformed.err("envelope sign1 is not base64url"))?;
+        if let Some(s) = &env.sign1_b64u {
+            use crate::cose::parse_sign1;
+            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+            let sig = URL_SAFE_NO_PAD
+                .decode(s)
+                .map_err(|_| ErrorCode::Malformed.err("envelope sign1 is not base64url"))?;
+            // Shape-check always; crypto verify only with trust inputs.
+            parse_sign1(&sig, limits)?;
+            if let (Some(issuer), Some(al)) = (expected_issuer, allowed) {
                 verify_sign1(&sig, issuer, al, limits)?;
             }
         }

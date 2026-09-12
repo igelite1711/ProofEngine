@@ -2,11 +2,10 @@
 //! PE-NEUT-004 co-assertion: every domain word below lives in a test file,
 //! never in a mechanism crate source (enforced by tools/check_neutrality.py).
 //!
-//! Ten unrelated industries (payment, credential lifecycle, media licensing,
+//! Twelve unrelated industries (payment, credential lifecycle, media licensing,
 //! AI-action provenance, sensor calibration, logistics, legal, supply-chain,
-//! healthcare, government) traverse the SAME core, with cybersecurity incident
-//! response and scientific replication riding the identical machinery as
-//! journeys eleven and twelve:
+//! healthcare, government, cybersecurity incident response, scientific
+//! replication) traverse the SAME core:
 //! same builder, same 11-stage pipeline, same policy engine. The differential
 //! assertions prove the verdict shape is a pure function of artifact STRUCTURE,
 //! never of the domain vocabulary riding on it. If a future change makes the
@@ -30,7 +29,7 @@ use proof_crypto::build::to_signed_status;
 use proof_policy::{evaluate_policy, parse_policy, state_from_report_and_proof};
 use proof_verify::{verify_proof, PolicyDecision, Validity, VerifyCtx};
 
-/// The exact caller context every domain uses: one shape, ten industries.
+/// The exact caller context every domain uses: one shape, twelve industries.
 fn ctx(clock: u64) -> VerifyCtx {
     VerifyCtx {
         verified_at: clock,
@@ -83,9 +82,42 @@ type DomainJourney = (
     proof_policy::EvalInputs,
 );
 
-#[test]
-fn ten_domains_same_core_same_verdict_shape() {
-    let domains: [DomainJourney; 10] = [
+/// Shared journey check: healthy shape + PASS under own policy + stable stage order.
+fn check_journey(
+    name: &str,
+    built: &proof_verify::BuiltProof,
+    policy_json: &serde_json::Value,
+    inputs: &proof_policy::EvalInputs,
+) {
+    let lim = Limits::default();
+    let report = verify_proof(&built.canonical, &ctx(1_700_000_200)).unwrap();
+    assert_healthy_shape(name, &report);
+
+    // Verdict: PASS under the domain's own caller-supplied policy.
+    let state = state_from_report_and_proof(&report, &built.proof).unwrap();
+    let policy = parse_policy(policy_json, &lim).unwrap();
+    let outcome = evaluate_policy(&state, &policy, inputs);
+    assert_eq!(
+        outcome.decision,
+        PolicyDecision::Pass,
+        "{name}: healthy journey must PASS its own policy (results: {:?})",
+        outcome.results
+    );
+
+    // Stage shape is domain-independent: the pipeline visits the same
+    // stages in the same order regardless of industry.
+    let mut stages: Vec<&str> = report.checks.iter().map(|c| c.stage).collect();
+    stages.dedup();
+    let expected_prefix = ["PARSE", "SCHEMA", "CANONICAL", "IDENTIFIERS"];
+    assert_eq!(
+        &stages[..expected_prefix.len()],
+        &expected_prefix[..],
+        "{name}: pipeline stage order must be domain-independent"
+    );
+}
+
+fn all_twelve_domains() -> [DomainJourney; 12] {
+    [
         (
             "payment",
             payment::journey(),
@@ -126,69 +158,38 @@ fn ten_domains_same_core_same_verdict_shape() {
             health::inputs(),
         ),
         ("gov", gov::journey(), gov::policy(), gov::inputs()),
-    ];
+        (
+            "science",
+            science::journey(),
+            science::policy(),
+            science::inputs(),
+        ),
+        ("cyber", cyber::journey(), cyber::policy(), cyber::inputs()),
+    ]
+}
 
-    for (name, built, policy_json, inputs) in domains {        let lim = Limits::default();
-        let report = verify_proof(&built.canonical, &ctx(1_700_000_200)).unwrap();
-        assert_healthy_shape(name, &report);
+#[test]
+fn twelve_domains_same_core_same_verdict_shape() {
+    for (name, built, policy_json, inputs) in all_twelve_domains() {
+        check_journey(name, &built, &policy_json, &inputs);
+    }
+}
 
-        // Verdict: PASS under the domain's own caller-supplied policy.
-        let state = state_from_report_and_proof(&report, &built.proof).unwrap();
-        let policy = parse_policy(&policy_json, &lim).unwrap();
-        let outcome = evaluate_policy(&state, &policy, &inputs);
-        assert_eq!(
-            outcome.decision,
-            PolicyDecision::Pass,
-            "{name}: healthy journey must PASS its own policy (results: {:?})",
-            outcome.results
-        );
-
-        // Stage shape is domain-independent: the pipeline visits the same
-        // stages in the same order regardless of industry.
-        let mut stages: Vec<&str> = report.checks.iter().map(|c| c.stage).collect();
-        stages.dedup();
-        let expected_prefix = ["PARSE", "SCHEMA", "CANONICAL", "IDENTIFIERS"];
-        assert_eq!(
-            &stages[..expected_prefix.len()],
-            &expected_prefix[..],
-            "{name}: pipeline stage order must be domain-independent"
-        );
+#[test]
+fn ten_domains_same_core_same_verdict_shape() {
+    // Backward-compat wrapper: the first ten of the canonical twelve.
+    // New code should use twelve_domains_same_core_same_verdict_shape.
+    for (name, built, policy_json, inputs) in all_twelve_domains().into_iter().take(10) {
+        check_journey(name, &built, &policy_json, &inputs);
     }
 }
 
 #[test]
 fn science_and_cybersecurity_ride_the_same_core() {
-    // Journeys eleven and twelve (scientific replication, cybersecurity
-    // incident response): same builder, same pipeline, same verdict shape —
-    // the ten-domains gate holds past ten.
-    let domains: [DomainJourney; 2] = [
-        ("science", science::journey(), science::policy(), science::inputs()),
-        ("cyber", cyber::journey(), cyber::policy(), cyber::inputs()),
-    ];
-
-    for (name, built, policy_json, inputs) in domains {
-        let lim = Limits::default();
-        let report = verify_proof(&built.canonical, &ctx(1_700_000_200)).unwrap();
-        assert_healthy_shape(name, &report);
-
-        let state = state_from_report_and_proof(&report, &built.proof).unwrap();
-        let policy = parse_policy(&policy_json, &lim).unwrap();
-        let outcome = evaluate_policy(&state, &policy, &inputs);
-        assert_eq!(
-            outcome.decision,
-            PolicyDecision::Pass,
-            "{name}: healthy journey must PASS its own policy (results: {:?})",
-            outcome.results
-        );
-
-        let mut stages: Vec<&str> = report.checks.iter().map(|c| c.stage).collect();
-        stages.dedup();
-        let expected_prefix = ["PARSE", "SCHEMA", "CANONICAL", "IDENTIFIERS"];
-        assert_eq!(
-            &stages[..expected_prefix.len()],
-            &expected_prefix[..],
-            "{name}: pipeline stage order must be domain-independent"
-        );
+    // Backward-compat wrapper: last two of the canonical twelve.
+    // New code should use twelve_domains_same_core_same_verdict_shape.
+    for (name, built, policy_json, inputs) in all_twelve_domains().into_iter().skip(10) {
+        check_journey(name, &built, &policy_json, &inputs);
     }
 }
 
@@ -323,9 +324,11 @@ type DomainCase = (
 fn cross_domain_failure_verdict_shape_identical() {
     // Revoke each domain's journey with a signed status object; the resulting
     // verdict shape (evidence invalid, REVOKED code, policy INDETERMINATE
-    // with an explanatory note) must be logically identical across all ten
+    // with an explanatory note) must be logically identical across all twelve
     // industries. Failure is structural; none of the domains is special.
-    let cases: [DomainCase; 10] = [
+    // (All journeys share the fixed test key, so the payment issuer key
+    // authorizes every revocation — exactly like the per-domain issuer keys.)
+    let cases: [DomainCase; 12] = [
         (
             "payment",
             payment::journey,
@@ -340,12 +343,7 @@ fn cross_domain_failure_verdict_shape_identical() {
         ),
         ("media", media::journey, media::policy, media::inputs),
         ("ai", ai::journey, ai::policy, ai::inputs),
-        (
-            "sensor",
-            sensor::journey,
-            sensor::policy,
-            sensor::inputs,
-        ),
+        ("sensor", sensor::journey, sensor::policy, sensor::inputs),
         (
             "logistics",
             logistics::journey,
@@ -359,13 +357,10 @@ fn cross_domain_failure_verdict_shape_identical() {
             supplychain::policy,
             supplychain::inputs,
         ),
-        (
-            "health",
-            health::journey,
-            health::policy,
-            health::inputs,
-        ),
+        ("health", health::journey, health::policy, health::inputs),
         ("gov", gov::journey, gov::policy, gov::inputs),
+        ("science", science::journey, science::policy, science::inputs),
+        ("cyber", cyber::journey, cyber::policy, cyber::inputs),
     ];
     for (name, journey_fn, policy_fn, inputs_fn) in cases {
         let built = journey_fn();
@@ -404,6 +399,58 @@ fn cross_domain_failure_verdict_shape_identical() {
         assert!(
             outcome.note.is_some(),
             "{name}: INDETERMINATE must explain why"
+        );
+    }
+}
+
+#[test]
+fn tamper_breaks_every_domain_identically() {
+    // One flipped byte in the middle of each domain's canonical proof must
+    // fail closed with identical shape (crypto Invalid + ≥1 code) in all
+    // twelve industries. Tamper-evidence is structural; no vocabulary is
+    // special. (Middle-of-bytes avoids the informational `created_at` tail;
+    // the pipeline reports structural failure in-band as Ok(report).)
+    for (name, built, _, _) in all_twelve_domains() {
+        let mut mutant = built.canonical.clone();
+        let mid = mutant.len() / 2;
+        mutant[mid] ^= 0x01;
+        let report = verify_proof(&mutant, &ctx(1_700_000_200))
+            .unwrap_or_else(|_| panic!("{name}: tampered bytes must report in-band, never Err"));
+        assert_ne!(
+            report.cryptographic_validity,
+            Validity::Valid,
+            "{name}: tampered proof must never verify as cryptographically valid"
+        );
+        assert!(
+            !report.failure_codes().is_empty(),
+            "{name}: invalid verdict must carry at least one error code"
+        );
+    }
+}
+
+#[test]
+fn foreign_policy_fails_closed_in_every_domain() {
+    // The same stranger policy (demanding transparency no journey carries)
+    // must FAIL in all twelve industries while each journey still PASSes its
+    // own policy (pinned by twelve_domains_...). Policy governs acceptance;
+    // the core never smuggles trust across vocabularies.
+    let lim = Limits::default();
+    let stranger = serde_json::json!({
+        "policy_version": 1,
+        "policy_id": "stranger_transparency_v1",
+        "requirements": [{"type": "transparency_present"}]
+    });
+    let policy = parse_policy(&stranger, &lim).unwrap();
+    for (name, built, _, inputs) in all_twelve_domains() {
+        let report = verify_proof(&built.canonical, &ctx(1_700_000_200)).unwrap();
+        assert_healthy_shape(name, &report);
+        let state = state_from_report_and_proof(&report, &built.proof).unwrap();
+        let outcome = evaluate_policy(&state, &policy, &inputs);
+        assert_eq!(
+            outcome.decision,
+            PolicyDecision::Fail,
+            "{name}: stranger policy must FAIL (results: {:?})",
+            outcome.results
         );
     }
 }
