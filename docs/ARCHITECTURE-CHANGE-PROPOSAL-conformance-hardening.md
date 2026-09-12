@@ -112,7 +112,10 @@ future limits work needs no core edits.
 
 ## 11. Decision
 
-PENDING — maintainer verdict, date, and new freeze pin to be recorded here on
-merge. Mechanical gate (`tools/check_freeze.py`) passes via the manifest
-record naming commit `176f036`; that record is process bookkeeping, not the
-decision itself.
+APPROVED — maintainer (igelite1711) via PR #1 merge (`369cd18`, 2026-09-12).
+Conformance restoration accepted as defined in §3: no §2 foundation change,
+verdict deltas confined to inputs the frozen spec already declares must fail,
+goldens untouched (31/31), differentials green (37+5). Freeze pin unchanged
+(`51ce178`); no re-pin required. Mechanical gate (`tools/check_freeze.py`)
+passes via the manifest record naming commit `176f036`; that record was
+process bookkeeping until this verdict.

@@ -33,7 +33,7 @@ vectors against every `Limits` knob.
 | Independent verifiers | `make interop` (Python 37 + TS differential) | 37 pass, 0 fail |
 | SCITT adapter + differential | `make scitt-check` | 5 pass, 0 fail |
 | Fuzz builds (all 4 targets) | `make fuzzcheck` + CI `fuzz.yml` build job | present + seeded |
-| Fuzz smokes (600 s × 4, nightly-only) | `.github/workflows/fuzz.yml` smoke job | last published green run cited in `docs/certification-report.md`; confirm current log in Actions — no findings log is published yet (gap §3) |
+| Fuzz smokes (600 s × 4, nightly-only) | `.github/workflows/fuzz.yml` smoke job | run 34680751164 (scheduled 2026-09-12, main): SUCCESS — all four 600 s smokes green, no crash artifacts. Prior run 34575106891 (2026-09-11) failed at *build* (`policy_parser` target + shared build job, 29 s in — no fuzzer crash, no artifacts); green again the next day: nightly-toolchain breakage, not a finding. No published findings log exists (gap §3) |
 | Stable fuzz mirrors (all 4 harnesses) | `cargo test --locked -p proof-format --test fuzz_seeds` (+ graph, verify, policy) | green |
 | Mutation soak (2000 flips) | `cargo test --locked -p proof-verify --test soak` | green |
 | Demo determinism | `make demo` twice + `sha256sum -c` | byte-identical |
