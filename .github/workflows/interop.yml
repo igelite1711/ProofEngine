@@ -42,6 +42,18 @@ jobs:
           ./target/debug/proof-cli --work /tmp/proof-interop
           | tee /tmp/proof-interop/differential.log
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run TypeScript differential
+        env:
+          PROOF_CLI: ${{ github.workspace }}/target/debug/proof-cli
+        run: >-
+          cd interop/ts &&
+          npm install --no-audit --no-fund &&
+          npm run --silent differential
+          | tee /tmp/proof-interop/differential-ts.log
+
       - name: SCITT adapter tests + independent differential
         run: >-
           cargo test --locked -p proof-adapter-scitt &&

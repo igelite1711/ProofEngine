@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test fmt fmt-check clippy demo fuzzcheck trace neutrality no-panic domain-tests cddl-validate freeze-guard sbom release-meta clean install
+.PHONY: help build test fmt fmt-check clippy demo fuzzcheck trace neutrality no-panic domain-tests cddl-validate freeze-guard sbom release-meta clean install interop-ts
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -37,6 +37,9 @@ web-check: ## Verify the browser demo data matches fresh core output (honesty ga
 
 web-serve: ## Serve the browser demo locally (no app server; static files only)
 	python3 -m http.server --directory demo/web 8901
+
+interop-ts: ## Third independent verifier (TypeScript): typecheck + differential over golden corpus
+	cd interop/ts && npm run --silent differential
 
 install: build ## Install proof-cli to ~/.cargo/bin
 	cargo install --locked --path crates/proof-cli

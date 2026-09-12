@@ -202,7 +202,8 @@ are the *extension* track (versioned capability rows). Phases P10–P12 are the
   by the independent verifier; unmappable input fails with a stable code.
 
 ### P8 — Language parity (TS/Python/Go SDKs)
-**Scope**
+**Scope (TS verifier landed: `interop/ts/` — independent strict-CBOR +
+Ed25519/P-256 verifier, 33-check differential; Go SDK later)**
 - TypeScript and Python SDKs (Go later) bound to `PROOF-ENGINE-SPEC` +
   golden vectors; they implement the same canonicalization/ids/COSE subset,
   share the vector corpus, and never invent semantics.
