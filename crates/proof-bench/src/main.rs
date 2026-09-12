@@ -457,10 +457,16 @@ fn run() -> Result<(), String> {
         for s in &out {
             match base.get(s.name) {
                 Some(b) => {
-                    let limit = b * (1.0 + tolerance / 100.0);
+                    // Relative tolerance for slow ops, absolute noise floor
+                    // for sub-millisecond ops: timer/neighbor jitter on tiny
+                    // scenarios (policy-eval ~0.002 ms/op) exceeds any sane
+                    // percentage, so differences under 0.05 ms are noise.
+                    // The gate stays a 2x-class tripwire where it matters.
+                    const NOISE_FLOOR_MS: f64 = 0.05;
+                    let limit = (b * (1.0 + tolerance / 100.0)).max(b + NOISE_FLOOR_MS);
                     if s.ms_per_op > limit {
                         eprintln!(
-                            "REGRESSION: {} {:.3} ms/op > baseline {:.3} + {tolerance}% ({limit:.3})",
+                            "REGRESSION: {} {:.3} ms/op > baseline {:.3} + {tolerance}% (floor +{NOISE_FLOOR_MS} ms → {limit:.3})",
                             s.name, s.ms_per_op, b
                         );
                         failed = true;

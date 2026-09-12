@@ -47,6 +47,7 @@ One map for all 35 documents. **Authority rule:** on protocol semantics
 | [Threat Model](../THREAT-MODEL.md) | V1.0 attackers (consolidated view → Security Model) | What attacks are considered |
 | [Security](../SECURITY.md) | V1 guarantees (consolidated view → Security Model) | Guarantees and limitations |
 | [Verification](../VERIFICATION.md) | Checkout/release how-to (stages → Verification Model) | How to verify a release |
+| [Audit Brief](THIRD-PARTY-AUDIT-BRIEF.md) | Commissioning pack (no external review yet) | Scope + evidence for auditors |
 
 ## Contributing
 

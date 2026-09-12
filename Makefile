@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test fmt fmt-check clippy demo quick-proof fuzzcheck trace neutrality no-panic domain-tests cddl-validate freeze-guard sbom release-meta clean install interop-py interop-ts interop bench-smoke scitt-check
+.PHONY: help build test fmt fmt-check clippy demo quick-proof pilot-legal fuzzcheck trace neutrality no-panic domain-tests cddl-validate freeze-guard sbom release-meta clean install interop-py interop-ts interop bench-smoke bench-check scitt-check coverage
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -31,6 +31,9 @@ demo: build ## Run the deterministic demo (PASS → tamper → FAIL → revoke �
 quick-proof: build ## One-shot proof in seconds (hides ID/digest plumbing)
 	bash tools/quick_proof.sh
 
+pilot-legal: build ## Pilot integration: legal execution + supersession lifecycle
+	bash tools/pilot_legal.sh
+
 web-demo: build ## Generate the browser demo (real CLI output embedded in demo/web/index.html)
 	rm -rf /tmp/opencode-webgen
 	python3 tools/gen_web_demo.py --work /tmp/opencode-webgen --template demo/web/template.html --out demo/web/index.html
@@ -51,6 +54,12 @@ interop: interop-py interop-ts ## All independent verifiers (Python + TypeScript
 
 bench-smoke: ## Quick benchmark smoke (2 iters, all scenarios, JSON)
 	cargo run --locked -p proof-bench -- --iters 2 --json
+
+bench-check: ## Perf regression gate (release, 20 iters vs committed baseline, 100% + noise floor)
+	cargo run --release --locked -p proof-bench -- --iters 20 --check-baseline crates/proof-bench/baseline.json --tolerance 100
+
+coverage: ## Line coverage summary (needs cargo-llvm-cov; ~80% lines at last cut)
+	cargo llvm-cov --locked --workspace --summary-only
 
 scitt-check: ## SCITT adapter: Rust tests + independent Python differential
 	cargo test --locked -p proof-adapter-scitt

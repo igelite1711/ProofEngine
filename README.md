@@ -639,6 +639,7 @@ Run `make help` to see all available commands.
 |---------|-------------|
 | `make demo` | Run the full demo (create → verify → tamper → fail → revoke → fail) |
 | `make quick-proof` | One-shot proof: verify + evaluate + explain, no manual plumbing |
+| `make pilot-legal` | Pilot integration: legal execution + supersession lifecycle |
 | `make test` | Run all workspace tests |
 | `make install` | Install `proof-cli` to `~/.cargo/bin` |
 | `make help` | Show all available commands |

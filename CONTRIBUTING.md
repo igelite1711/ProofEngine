@@ -29,6 +29,15 @@ examples, which assert their own output before writing. If a semantic change
 is intentional, update the generator, rerun it, and say so in the PR — the
 golden tests pin exact triples, so they will fail otherwise.
 
+Toolchain: `rust-toolchain.toml` tracks stable (minimal profile); CI and the
+release provenance both record the exact tested version (1.98.1 at last
+cut). MSRV is not established — do not add `rust-version` to any manifest
+until an older toolchain has actually run the full gate. Coverage:
+`cargo llvm-cov --locked --workspace --summary-only` (needs
+`cargo install cargo-llvm-cov`; ~80% lines at last cut, envelope modules at
+~100%). Fuzz seed corpora replay on stable (`*/tests/fuzz_seeds.rs`); the
+libFuzzer smokes stay nightly-only (see `fuzz/README.md`).
+
 ## Adding code
 
 - Keep trust logic in `proof-verify` / `proof-policy`; the CLI adds no trust

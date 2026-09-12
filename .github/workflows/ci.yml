@@ -97,6 +97,23 @@ jobs:
       - name: Neutrality gate (no domain vocabulary in mechanism sources)
         run: make neutrality
 
+# Perf regression tripwire (release profile vs committed baseline).
+# 100% tolerance + 0.05 ms noise floor: catches 2x-class slowdowns without
+# flaking on timer jitter or runner differences (baseline: slow ARM box, so
+# faster runners pass with headroom).
+  perf:
+    name: Benchmark regression gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Perf gate (release, 20 iters, committed baseline)
+        run: make bench-check
+
 # PE-OPS-004: demo determinism enforced (sha256 rerun).
   demo:
     name: Demo is deterministic
