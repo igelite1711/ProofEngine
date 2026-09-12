@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (V1 in development; protocol semantics evolve on `main`)
 
+### Added (independent external review hardening — envelope consistency + freshness honesty)
+
+- **Envelope consistency (fail closed).** A proof wrapper whose `id` disagrees
+  with the canonical bytes it carries is now rejected at load with
+  `envelope id mismatch` (exit 2 for the CLI, 400 for `proof-api`) — never
+  silently verified under a different identity. Raw transports that omit `id`
+  still load by bytes alone; the pipeline report's `proof_id` remains
+  authoritative. Applies to `proof-cli` (`load_proof`, all commands) and
+  `proof-api` (`/v1/verify`, `/v1/evaluate`, `/v1/explain`).
+- **Freshness honesty for `proof_fresh`.** `evaluate` now warns on stderr
+  when a policy uses `proof_fresh` WITHOUT `not_expired`, because
+  `created_at` is holder-rewritable and outside `proof_id` (advisory replay
+  hygiene only). Strong freshness must come from signed attestation windows
+  (`not_expired`) or transparency anchoring. `examples/policies/README.md`
+  documents the rule; verdicts are unchanged (the frozen pipeline and policy
+  semantics stay byte-stable).
+- **Repo-relative demo output.** `proof-cli demo` (no `--out`) now writes
+  `<repo>/demo/out` instead of `./demo/out` relative to the caller's CWD, so
+  `make demo` and `interop/differential.py --repo <repo>` agree from any
+  directory (falls back to CWD-relative when run outside a checkout).
+
+### Known tradeoff (documented, frozen behavior unchanged)
+
+- **Unauthorized status objects** (a valid signature, but the signer has no
+  authority over the target) are reported `UNAUTHORIZED_STATUS`
+  (`crypto valid, evidence invalid`, lifecycle preserved) and never apply.
+  This is the documented fail-closed rule; integrators that treat status
+  inputs as untrusted should filter them (or use a `StatusSource` adapter)
+  before verification, since any party can supply a mis-signed status object
+  that forces `INDETERMINATE` policy evaluation without any trust
+  consequence for the attacker.
+
 ### Added (convergence elevation: identity, delegation, transparency, lifecycle, conflict, versioning)
 
 - **Policy v2** (`policy_version: 2`): boolean `all`/`any`/`not`/`threshold{k,of}`

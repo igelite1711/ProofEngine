@@ -125,6 +125,24 @@ fn verify_rejects_bad_input_with_400() {
 }
 
 #[test]
+fn verify_rejects_envelope_id_mismatch_with_400() {
+    // Envelope consistency (fail closed): a wrapper `id` that disagrees with
+    // the canonical bytes is a 400 — never silently verified under a
+    // different identity. Mirrors the CLI loader (`load_proof`).
+    let hex = hex_of(&tiny_proof_bytes());
+    let body = serde_json::json!({
+        "proof": {"cbor_hex": hex, "id": "prf:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+        "clock": 1_700_000_200u64,
+        "revocations_known_at": 1_700_000_200u64,
+    })
+    .to_string()
+    .into_bytes();
+    let (s, b) = route("POST", "/v1/verify", &body);
+    assert_eq!(s, 400, "{b}");
+    assert!(b.contains("envelope id mismatch"), "{b}");
+}
+
+#[test]
 fn evaluate_and_explain_decide() {
     let hex = hex_of(&tiny_proof_bytes());
     let key = proof_crypto::build::fixtures::test_key().key_ref();

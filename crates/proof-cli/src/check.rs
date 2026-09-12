@@ -19,6 +19,12 @@ pub struct LoadedProof {
 /// If path is "-", read from stdin. `quiet` suppresses the progress note
 /// (`--quiet` must silence all nonessential stderr).
 // PE-CLI-002: schema-decode only; pipeline re-verifies id/canonical/sigs.
+//
+// Envelope consistency (fail closed): when the wrapper carries an `id` it
+// MUST name the same proof the canonical bytes bind. A wrapper whose `id`
+// disagrees with the bytes is rejected here — never silently verified under
+// a different identity. Wrappers without `id` (raw transports) load by bytes
+// alone; the pipeline report's `proof_id` is authoritative either way.
 pub fn load_proof(path: &str, quiet: bool) -> Result<LoadedProof, String> {
     let (text, label) = crate::read_input_text(path)?;
     let v: serde_json::Value =
@@ -33,6 +39,14 @@ pub fn load_proof(path: &str, quiet: bool) -> Result<LoadedProof, String> {
         proof_format::decode_strict(&bytes, &limits).map_err(|e| format!("{label}: {e}"))?;
     let proof = proof_format::schema::cbor_to_proof(&value, &limits)
         .map_err(|e| format!("{label}: {e}"))?;
+    if let Some(claimed) = v.get("id").and_then(|x| x.as_str()) {
+        if claimed != proof.proof_id {
+            return Err(format!(
+                "{label}: envelope id mismatch (wrapper says {claimed}, bytes bind {})",
+                proof.proof_id
+            ));
+        }
+    }
     if !quiet {
         eprintln!("loaded proof {} ({label})", proof.proof_id);
     }

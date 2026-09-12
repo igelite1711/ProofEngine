@@ -17,15 +17,39 @@ fn limits() -> Limits {
 }
 
 /// Decode the `proof` field: `{"cbor_hex":…}` or a CLI artifact object
-/// `{"kind":"proof","id":…,"cbor":…}`. Returns canonical bytes; claimed ids
-/// are ignored here (the recomputed id in the report is authoritative).
+/// `{"kind":"proof","id":…,"cbor":…}`. Returns canonical bytes. When the
+/// caller supplies an `id`/`proof_id` alongside the bytes it MUST agree with
+/// the bytes (envelope consistency, fail closed): a mismatched wrapper id is
+/// a 400 here, mirroring the CLI loader — never silently verified under a
+/// different identity. The recomputed id in the report stays authoritative.
 fn proof_bytes(v: &serde_json::Value) -> Result<Vec<u8>, String> {
-    let hex_str = v
+    let proof = v
+        .get("proof")
+        .ok_or_else(|| "missing `proof`".to_string())?;
+    let hex_str = proof
         .get("cbor_hex")
-        .or_else(|| v.get("cbor"))
+        .or_else(|| proof.get("cbor"))
         .and_then(|x| x.as_str())
         .ok_or_else(|| "proof must carry `cbor_hex` (or artifact `cbor`)".to_string())?;
-    hex_decode(hex_str).ok_or_else(|| "proof cbor hex is malformed".to_string())
+    let bytes = hex_decode(hex_str).ok_or_else(|| "proof cbor hex is malformed".to_string())?;
+    if let Some(claimed) = proof
+        .get("id")
+        .or_else(|| proof.get("proof_id"))
+        .and_then(|x| x.as_str())
+    {
+        let limits = limits();
+        let value = proof_format::decode_strict(&bytes, &limits)
+            .map_err(|e| format!("proof bytes: {e}"))?;
+        let parsed = proof_format::cbor_to_proof(&value, &limits)
+            .map_err(|e| format!("proof bytes: {e}"))?;
+        if claimed != parsed.proof_id {
+            return Err(format!(
+                "envelope id mismatch (wrapper says {claimed}, bytes bind {})",
+                parsed.proof_id
+            ));
+        }
+    }
+    Ok(bytes)
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
@@ -187,9 +211,8 @@ pub fn route(method: &str, path: &str, body: &[u8]) -> (u16, String) {
     let limits = limits();
     match path {
         "/v1/verify" => {
-            let bytes = match v.get("proof").map(proof_bytes).transpose() {
-                Ok(Some(b)) => b,
-                Ok(None) => return (400, err_json("missing `proof`")),
+            let bytes = match proof_bytes(&v) {
+                Ok(b) => b,
                 Err(e) => return (400, err_json(&e)),
             };
             let ctx = match context_from(&v, &limits) {
@@ -321,9 +344,8 @@ fn ingest_record(
 
 fn evaluate_route(path: &str, v: &serde_json::Value, limits: &proof_core::Limits) -> (u16, String) {
     {
-        let bytes = match v.get("proof").map(proof_bytes).transpose() {
-            Ok(Some(b)) => b,
-            Ok(None) => return (400, err_json("missing `proof`")),
+        let bytes = match proof_bytes(v) {
+            Ok(b) => b,
             Err(e) => return (400, err_json(&e)),
         };
         let policy_doc = match v.get("policy") {

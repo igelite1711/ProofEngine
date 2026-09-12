@@ -335,6 +335,20 @@ pub fn evaluate(cli: &Cli, explain: bool) -> Result<i32, String> {
         serde_json::from_str(&policy_text).map_err(|e| format!("parse policy: {e}"))?;
     let policy = proof_policy::parse_policy(&policy_val, &crate::limits())
         .map_err(|e| format!("policy: {e}"))?;
+    // Freshness hardening (advisory-boundary separation): `proof_fresh` reads
+    // the holder-rewritable, unauthenticated `created_at`. A policy that
+    // relies on it WITHOUT a signed attestation window (`not_expired`) mistakes
+    // advisory replay hygiene for a security boundary. Refuse to guess: warn
+    // loudly on stderr (stdout stays machine-readable) so the caller adds
+    // `not_expired` or a transparency requirement before trusting PASS.
+    if proof_policy::policy_uses_proof_fresh(&policy)
+        && !proof_policy::policy_uses_not_expired(&policy)
+    {
+        eprintln!(
+            "warning: policy `{}` uses proof_fresh without not_expired — proof_fresh reads unauthenticated created_at (holder-rewritable) and is advisory replay hygiene only; add not_expired (signed issued_at/expires_at windows) or a transparency requirement before treating PASS as fresh",
+            policy.id
+        );
+    }
     let statuses: Vec<proof_crypto::SignedStatus> = cli
         .many("status")
         .iter()

@@ -28,7 +28,16 @@ These are example verification policies you can adapt for your use case.
 | [basic-payment.json](basic-payment.json) | Simple payment verification |
 | [strict-document.json](strict-document.json) | Document signing with full checks |
 | [settlement.json](settlement.json) | Payment settling an invoice |
-| [fresh-only.json](fresh-only.json) | Proof must be recent (replay protection) |
+| [fresh-only.json](fresh-only.json) | Proof must be recent (replay hygiene — advisory, see below) |
+
+> `proof_fresh` reads the holder-rewritable, unauthenticated `created_at`
+> (outside `proof_id`) and is **advisory replay hygiene between cooperating
+> parties, NOT a security boundary against a proof holder** — a holder can
+> re-stamp it without breaking any signature. Every policy that uses
+> `proof_fresh` MUST also require `not_expired` (signed `issued_at` /
+> `expires_at` windows the holder cannot rewrite) or a transparency
+> requirement for strong freshness. `evaluate` warns on stderr when
+> `proof_fresh` stands alone without `not_expired`.
 
 ## Requirements reference
 

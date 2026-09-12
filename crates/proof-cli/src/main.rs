@@ -108,7 +108,30 @@ fn run(args: &[String]) -> i32 {
                     }
                 };
             }
-            let dir = cli.opt("out").unwrap_or_else(|| "demo/out".to_string());
+            // Default is repo-relative (`<repo>/demo/out`) so `make demo` and
+            // `interop/differential.py --repo <repo>` agree regardless of the
+            // caller's CWD. Resolve at runtime: walk up from the executable
+            // toward a directory containing `Cargo.toml` + `demo/`; fall back
+            // to the historical CWD-relative path when no repo root is found
+            // (e.g. installed binaries run outside a checkout).
+            let dir = cli.opt("out").unwrap_or_else(|| {
+                let mut anchor = std::env::current_exe().ok();
+                if anchor.is_none() {
+                    anchor = std::env::current_dir().ok();
+                }
+                let mut cur = anchor.and_then(|p| {
+                    p.parent()
+                        .map(std::path::Path::to_path_buf)
+                        .or_else(|| std::env::current_dir().ok())
+                });
+                while let Some(dir) = cur.clone() {
+                    if dir.join("Cargo.toml").is_file() && dir.join("demo").is_dir() {
+                        return dir.join("demo").join("out").to_string_lossy().into_owned();
+                    }
+                    cur = dir.parent().map(std::path::Path::to_path_buf);
+                }
+                "demo/out".to_string()
+            });
             proof_cli::demo::run(&dir)
         }
         other => Err(format!("unknown command `{other}` (try `proof-cli help`)")),

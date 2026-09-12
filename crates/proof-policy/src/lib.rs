@@ -22,6 +22,46 @@ pub use expr::PolicyExpr;
 pub use policy::{
     canonical_policy_hash, parse_policy, policy_to_canonical_cbor, Policy, Requirement,
 };
+
+/// True when the policy evaluates `proof_fresh` anywhere (v1 list or v2 tree).
+/// Used by front ends to warn when advisory freshness stands alone without a
+/// signed window (`not_expired`): `created_at` is holder-rewritable and
+/// outside `proof_id`, so `proof_fresh`-only PASS is advisory, not a boundary.
+pub fn policy_uses_proof_fresh(policy: &Policy) -> bool {
+    if policy.version == 2 {
+        if let Some(expr) = &policy.expression {
+            return expr_uses(expr, "proof_fresh");
+        }
+        return false;
+    }
+    policy
+        .requirements
+        .iter()
+        .any(|r| r.type_str() == "proof_fresh")
+}
+
+/// True when the policy evaluates `not_expired` anywhere (signed windows).
+pub fn policy_uses_not_expired(policy: &Policy) -> bool {
+    if policy.version == 2 {
+        if let Some(expr) = &policy.expression {
+            return expr_uses(expr, "not_expired");
+        }
+        return false;
+    }
+    policy
+        .requirements
+        .iter()
+        .any(|r| r.type_str() == "not_expired")
+}
+
+fn expr_uses(expr: &PolicyExpr, want: &str) -> bool {
+    match expr {
+        PolicyExpr::Leaf(r) => r.type_str() == want,
+        PolicyExpr::All(cs) | PolicyExpr::Any(cs) => cs.iter().any(|c| expr_uses(c, want)),
+        PolicyExpr::Not(c) => expr_uses(c, want),
+        PolicyExpr::Threshold { options, .. } => options.iter().any(|c| expr_uses(c, want)),
+    }
+}
 pub use state::{
     state_from_report_and_proof, ClaimSummary, Delegation, EdgeFact, EvidenceStatusEntry,
     IdentityBinding, VerifiedState,

@@ -573,6 +573,132 @@ fn artifact_workflow_verify_then_revoke() {
     assert_eq!(second, Ok(1), "revoked proof must exit 1, not error");
 }
 
+/// Envelope consistency (fail closed): a proof wrapper whose `id` disagrees
+/// with the canonical bytes it carries is rejected at load — never silently
+/// verified under a different identity. Wrappers without `id` still load by
+/// bytes alone; the pipeline report's `proof_id` stays authoritative.
+#[test]
+fn proof_wrapper_id_mismatch_rejected_at_load() {
+    let w = tmpdir("wrapper-id");
+    let (ev1, att) = (format!("{w}/ev1.json"), format!("{w}/att.json"));
+    let proof = format!("{w}/proof.json");
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:p-wrap",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev1,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:p-wrap",
+            "--claim-type",
+            "payment.settled",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.settles-invoice",
+            "--subject",
+            "payment:p-wrap",
+            "--predicate",
+            "settles",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &ev1,
+            "--attestations",
+            &att,
+            "--evidence",
+            "",
+            "--relationships",
+            "",
+            "--out",
+            &proof,
+        ],
+    ))
+    .unwrap();
+    // Sanity: intact wrapper verifies.
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300"
+            ]
+        )),
+        Ok(0)
+    );
+    // Swap the wrapper id; bytes unchanged. Must be a usage/engine error
+    // (exit 2 via Err), never a verdict under the wrong identity.
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&proof).unwrap()).unwrap();
+    v["id"] =
+        serde_json::Value::String("prf:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into());
+    let bad = format!("{w}/proof-bad-id.json");
+    std::fs::write(&bad, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+    let err = run(args(
+        "verify",
+        &[
+            "--proof",
+            &bad,
+            "--clock",
+            "1700000300",
+            "--revocations-known-at",
+            "1700000300",
+        ],
+    ));
+    assert!(err.is_err(), "wrapper id mismatch must error, got {err:?}");
+    assert!(
+        err.unwrap_err().contains("envelope id mismatch"),
+        "error must name the envelope rule"
+    );
+    // A wrapper with no `id` at all still loads by bytes (raw transport).
+    let mut v2: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&proof).unwrap()).unwrap();
+    v2.as_object_mut().unwrap().remove("id");
+    let noid = format!("{w}/proof-no-id.json");
+    std::fs::write(&noid, serde_json::to_string_pretty(&v2).unwrap()).unwrap();
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &noid,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300"
+            ]
+        )),
+        Ok(0)
+    );
+}
+
 /// PE-CLI-002: a tampered artifact file (bytes no longer matching its stated
 /// id) is rejected at load/build time — files are transport, never authority.
 #[test]
