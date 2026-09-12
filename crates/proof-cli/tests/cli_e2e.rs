@@ -36,6 +36,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "convert" => proof_cli::port::convert(&parsed).map(|_| proof_cli::EXIT_OK),
         "verify" => proof_cli::make::verify(&parsed),
         "batch-verify" => proof_cli::make::batch_verify(&parsed),
+        "ingest" => proof_cli::ingest::ingest(&parsed),
         "evaluate" => proof_cli::make::evaluate(&parsed, false),
         "inspect" => proof_cli::inspect::inspect(&parsed).map(|_| proof_cli::EXIT_OK),
         "graph" => proof_cli::graph::graph(&parsed).map(|_| proof_cli::EXIT_OK),
@@ -1591,4 +1592,112 @@ fn batch_verify_all_valid_and_one_tampered_through_dispatch() {
         ]
     ))
     .is_err());
+}
+
+/// ingest e2e: JSONL records become canonical event artifacts + manifest;
+/// malformed lines fail closed with line numbers unless --skip-bad.
+#[test]
+fn ingest_jsonl_records_fail_closed_with_line_numbers() {
+    let w = tmpdir("ingest");
+    let rec = format!("{w}/records.jsonl");
+    let ab = "ab".repeat(32);
+    let cd = "cd".repeat(32);
+    std::fs::write(
+        &rec,
+        format!(
+            "{{\"type\":\"test.event.occurred\",\"subject\":\"test:a\",\"effective_at\":1700000000,\"payload_hex\":\"{ab}\",\"meta\":\"k=v\"}}\n\
+             {{\"type\":\"test.event.occurred\",\"subject\":\"test:b\",\"effective_at\":1700000001,\"payload_hex\":\"{cd}\"}}\n"
+        ),
+    )
+    .unwrap();
+    let out = format!("{w}/events");
+    let manifest = format!("{w}/manifest.json");
+    assert_eq!(
+        run(args(
+            "ingest",
+            &["--in", &rec, "--out-dir", &out, "--out", &manifest]
+        )),
+        Ok(0),
+        "two valid records must ingest (exit 0)"
+    );
+    let m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
+    assert_eq!(m["ingested"], 2);
+    assert_eq!(m["ids"].as_array().unwrap().len(), 2);
+    assert!(m["skipped"].as_array().unwrap().is_empty());
+    // Artifacts reload as events (re-verify on load, like any file).
+    for id in m["ids"].as_array().unwrap() {
+        let path = format!("{out}/{}.json", id.as_str().unwrap());
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["kind"], "event");
+    }
+    // Malformed second line aborts fail-closed with its line number.
+    let bad = format!("{w}/bad.jsonl");
+    std::fs::write(
+        &bad,
+        "{\"type\":\"t\",\"subject\":\"s\",\"effective_at\":1,\"payload_hex\":\"zz\"}\n",
+    )
+    .unwrap();
+    let err = run(args(
+        "ingest",
+        &["--in", &bad, "--out-dir", &format!("{w}/e2")],
+    ));
+    assert!(err.is_err());
+    assert!(err.unwrap_err().contains("line 1"), "must name the line");
+    // Unknown fields are rejected, never silently swallowed.
+    let unk = format!("{w}/unk.jsonl");
+    std::fs::write(
+        &unk,
+        format!(
+            "{{\"type\":\"t\",\"subject\":\"s\",\"effective_at\":1,\"payload_hex\":\"{}\",\"typo\":1}}\n",
+            "ab".repeat(32)
+        ),
+    )
+    .unwrap();
+    assert!(run(args(
+        "ingest",
+        &["--in", &unk, "--out-dir", &format!("{w}/e3")]
+    ))
+    .is_err());
+    // --skip-bad continues and lists the skip in the manifest.
+    let mixed = format!("{w}/mixed.jsonl");
+    std::fs::write(
+        &mixed,
+        format!(
+            "{{\"type\":\"t\",\"subject\":\"s\",\"effective_at\":1,\"payload_hex\":\"{0}\"}}\nNOT-JSON\n",
+            "ab".repeat(32)
+        ),
+    )
+    .unwrap();
+    let m2 = format!("{w}/m2.json");
+    assert_eq!(
+        run(args(
+            "ingest",
+            &[
+                "--in",
+                &mixed,
+                "--out-dir",
+                &format!("{w}/e4"),
+                "--out",
+                &m2,
+                "--skip-bad"
+            ]
+        )),
+        Ok(0)
+    );
+    let m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&m2).unwrap()).unwrap();
+    assert_eq!(m["ingested"], 1);
+    assert_eq!(m["skipped"].as_array().unwrap().len(), 1);
+    // --dry-run validates without writing anything.
+    let dry = format!("{w}/dry");
+    assert_eq!(
+        run(args(
+            "ingest",
+            &["--in", &rec, "--out-dir", &dry, "--dry-run"]
+        )),
+        Ok(0)
+    );
+    assert!(!std::path::Path::new(&dry).exists());
 }

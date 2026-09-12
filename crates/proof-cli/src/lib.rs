@@ -9,6 +9,7 @@ pub mod check;
 pub mod demo;
 pub mod doctor;
 pub mod graph;
+pub mod ingest;
 pub mod inspect;
 pub mod journey;
 pub mod make;
@@ -365,6 +366,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("compose", "Compose proofs by union of members"),
     ("resolve", "Resolve transitive composition linkage"),
     ("batch-verify", "Verify many proofs under one context"),
+    ("ingest", "Ingest JSONL event records into event artifacts"),
     ("demo", "Run the end-to-end demonstration"),
     ("doctor", "Diagnose the local environment"),
     ("version", "Show version information"),
@@ -534,6 +536,13 @@ no short-circuit); exit 0 iff every member is crypto- and evidence-Valid.
 
 USAGE
   proof-cli batch-verify --proofs <a.json,b.json> --clock <u64> [--max-batch <n>=256] [--status <f>] [--authority <k>] [--revocations-known-at <u64>] [--out <file>]",
+        "ingest" => "\
+ingest — read newline-delimited external event records (file or stdin) and
+write canonical event artifacts plus a manifest. Fail-closed: the first
+malformed line aborts unless --skip-bad lists skips in the manifest instead.
+
+USAGE
+  proof-cli ingest --in <records.jsonl> --out-dir <dir> [--out <manifest.json>] [--skip-bad] [--dry-run]",
         "demo" => "\
 demo — deterministic end-to-end story: build → verify PASS → tamper → FAIL →
 revoke → FAIL. Uses the core only; no simulated results.
@@ -731,6 +740,7 @@ PORTABILITY
   compose      Compose proofs with linkage
   resolve      Resolve transitive linkage
   batch-verify Verify many proofs at once
+  ingest       Ingest JSONL event records
 
 DEVELOPMENT
   demo         Run the end-to-end demonstration (--interactive for the tour)

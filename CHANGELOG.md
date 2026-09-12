@@ -94,6 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   semantics (no sampling, no short-circuit, over-cap `LIMIT_EXCEEDED`);
   `tools/bench.sh` gains a batch dimension (invocation overhead amortized,
   verification work identical per member).
+- **Ingestion adapter** (`ingest` CLI, P9): JSONL external event records
+  (file or stdin) normalized into canonical event artifacts + manifest
+  through the same builder as `create-event`; fail-closed with line numbers
+  by default, `--skip-bad` lists skips in the manifest, `--dry-run`
+  validates only; unknown fields rejected, never swallowed.
 - **Traversal APIs**: `ResolutionReport::ancestors()` (transitive closure
   with shallowest depths, unavailable refs named as unresolved) and
   `descendants_of()` over an explicit candidate set with union-store
@@ -113,6 +118,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bindings, P-256 both directions, Python-composed proofs verified
   by Rust, and closed-schema parity (unknown member fields rejected by
   both implementations).
+- **Third independent implementation (TypeScript)**: `interop/ts/` re-verifies
+  the cryptographic interop core from the spec + golden corpus — strict CBOR
+  subset, Ed25519/P-256 COSE_Sign1 (`@noble/curves`), proof binding stages 1-6
+  incl. composition refs and vocabularies. Its differential runner re-checks
+  every in-scope golden vector generically, rejects 9 crafted mutants
+  (closed-schema parity across all member slots), and verifies the Rust demo
+  proof (I3b). Documented single-dependency exception to the Python
+  stdlib-only rule; lives outside the stdlib CI grep.
 - **Storage seam + bundles**: `ArtifactStore` trait with memory/filesystem
   backends (conflict = corruption, never silent update); `Bundle` blobs
   authenticate against evidence digests through the pipeline's own rule.
