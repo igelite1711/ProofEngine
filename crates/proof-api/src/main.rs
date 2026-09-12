@@ -17,9 +17,17 @@ fn main() {
         std::process::exit(2);
     });
     eprintln!("proof-api listening on {bind} (loopback only)");
+    let metrics = std::sync::Arc::new(proof_api::server::Metrics::default());
     for stream in listener.incoming() {
         match stream {
-            Ok(s) => proof_api::server::handle(s),
+            Ok(s) => {
+                // Access log carries method-agnostic shape only (status +
+                // sizes): never paths with ids, never headers, never bodies.
+                let status = proof_api::server::handle(s, &metrics);
+                if status != 0 {
+                    eprintln!("serve status={status}");
+                }
+            }
             Err(e) => eprintln!("accept: {e}"),
         }
     }

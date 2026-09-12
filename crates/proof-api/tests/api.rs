@@ -175,7 +175,7 @@ fn live_loopback_round_trip_matches_route() {
     let addr = listener.local_addr().unwrap();
     let server = std::thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
-        proof_api::server::handle(stream);
+        proof_api::server::handle(stream, &proof_api::server::Metrics::default());
     });
     let hex = hex_of(&tiny_proof_bytes());
     let body = verify_body(&hex);
@@ -195,4 +195,140 @@ fn live_loopback_round_trip_matches_route() {
     let (s, expected) = route("POST", "/v1/verify", &body);
     assert_eq!(s, 200);
     assert_eq!(json_part, expected);
+}
+
+/// Raw-socket helper: serve exactly one connection, return (status, body).
+fn serve_once(raw_request: &[u8]) -> (u16, String) {
+    use proof_api::server::{handle, Metrics};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let metrics = std::sync::Arc::new(Metrics::default());
+    let m2 = metrics.clone();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        handle(stream, &m2)
+    });
+    let mut stream = TcpStream::connect(addr).unwrap();
+    stream.write_all(raw_request).unwrap();
+    let mut raw = vec![];
+    stream.read_to_end(&mut raw).unwrap();
+    let status = server.join().unwrap();
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let body = text.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+    (status, body)
+}
+
+#[test]
+fn hostile_http_never_crashes_and_never_leaks() {
+    // Garbage request line.
+    let (s, _) = serve_once(b"\x00\xff garbage\r\n\r\n");
+    assert_eq!(s, 400);
+    // Wrong HTTP version (HTTP/2 preface style).
+    let (s, _) = serve_once(b"POST /v1/verify HTTP/2.0\r\nContent-Length: 2\r\n\r\n{}");
+    assert_eq!(s, 400);
+    // Missing version entirely.
+    let (s, _) = serve_once(b"GET /v1/health\r\n\r\n");
+    assert_eq!(s, 400);
+    // Oversized headers.
+    let big = format!(
+        "GET /v1/health HTTP/1.1\r\nX-Pad: {}\r\n\r\n",
+        "a".repeat(20000)
+    );
+    let (s, _) = serve_once(big.as_bytes());
+    assert_eq!(s, 413);
+    // POST without Content-Length.
+    let (s, _) = serve_once(b"POST /v1/verify HTTP/1.1\r\n\r\n{}");
+    assert_eq!(s, 413);
+    // Content-Length over the cap (no 9 MiB allocation happens).
+    let (s, _) = serve_once(b"POST /v1/verify HTTP/1.1\r\nContent-Length: 9000000\r\n\r\n");
+    assert_eq!(s, 413);
+}
+
+#[test]
+fn metrics_counts_without_payloads() {
+    use proof_api::server::Metrics;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let metrics = std::sync::Arc::new(Metrics::default());
+    let m2 = metrics.clone();
+    let server = std::thread::spawn(move || {
+        for _ in 0..3 {
+            let (stream, _) = listener.accept().unwrap();
+            proof_api::server::handle(stream, &m2);
+        }
+    });
+    let get = |path: &str| {
+        let mut stream = TcpStream::connect(addr).unwrap();
+        let req = format!("GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut raw = vec![];
+        stream.read_to_end(&mut raw).unwrap();
+        String::from_utf8_lossy(&raw).into_owned()
+    };
+    let h = get("/v1/health");
+    assert!(h.starts_with("HTTP/1.1 200 OK"));
+    let n = get("/nope");
+    assert!(n.starts_with("HTTP/1.1 404"));
+    // Metrics sees exactly the two prior requests (not itself yet).
+    let m = get("/v1/metrics");
+    assert!(m.starts_with("HTTP/1.1 200 OK"));
+    let body = m.split("\r\n\r\n").nth(1).unwrap();
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(v["requests_total"], 2);
+    assert_eq!(v["responses_2xx"], 1);
+    assert_eq!(v["responses_4xx"], 1);
+    // No request bytes, paths, or ids leak into counters (shape only).
+    assert!(body.contains("requests_total"));
+    assert!(!body.contains("health"));
+    server.join().unwrap();
+}
+
+#[test]
+fn ingest_validates_records_with_line_numbers() {
+    let ab = "ab".repeat(32);
+    let body = serde_json::json!({
+        "records": format!(
+            "{{\"type\":\"test.event.occurred\",\"subject\":\"test:a\",\"effective_at\":1700000000,\"payload_hex\":\"{ab}\",\"meta\":\"k=v\"}}\n\
+             {{\"type\":\"test.event.occurred\",\"subject\":\"test:b\",\"effective_at\":1700000001,\"payload_hex\":\"{ab}\"}}\n"
+        ),
+    })
+    .to_string()
+    .into_bytes();
+    let (s, b) = route("POST", "/v1/ingest", &body);
+    assert_eq!(s, 200, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["ingested"], 2);
+    assert_eq!(v["ids"].as_array().unwrap().len(), 2);
+    assert!(v["ids"][0].as_str().unwrap().starts_with("evt:v1:"));
+    assert!(v["skipped"].as_array().unwrap().is_empty());
+    // Malformed line fails closed naming the line.
+    let body = serde_json::json!({"records": "{\"type\":1}\n"})
+        .to_string()
+        .into_bytes();
+    let (s, b) = route("POST", "/v1/ingest", &body);
+    assert_eq!(s, 400, "{b}");
+    assert!(b.contains("line 1"));
+    // Unknown fields rejected, never swallowed.
+    let body = serde_json::json!({"records": format!(
+        "{{\"type\":\"t\",\"subject\":\"s\",\"effective_at\":1,\"payload_hex\":\"{ab}\",\"typo\":1}}\n"
+    )})
+    .to_string()
+    .into_bytes();
+    let (s, _) = route("POST", "/v1/ingest", &body);
+    assert_eq!(s, 400);
+    // skip_bad continues and lists the skip.
+    let body = serde_json::json!({
+        "records": "NOT-JSON\n",
+        "skip_bad": true,
+    })
+    .to_string()
+    .into_bytes();
+    let (s, b) = route("POST", "/v1/ingest", &body);
+    assert_eq!(s, 200, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["ingested"], 0);
+    assert_eq!(v["skipped"].as_array().unwrap().len(), 1);
+    // Missing records is a 400.
+    let (s, _) = route("POST", "/v1/ingest", br#"{"dry_run": true}"#);
+    assert_eq!(s, 400);
 }

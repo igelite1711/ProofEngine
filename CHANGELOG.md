@@ -100,10 +100,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by default, `--skip-bad` lists skips in the manifest, `--dry-run`
   validates only; unknown fields rejected, never swallowed.
 - **Reference API** (`crates/proof-api`, P9): thin loopback-only HTTP
-  interface (no new dependencies — std sockets, `GET /v1/health|version`,
-  `POST /v1/verify|evaluate|explain`); every response re-derived from
-  request bytes + explicit context, never stored/cached/guessed; 8 MiB
-  body cap, structured errors; async/auth/rate-limit/TLS explicitly out
+  interface (no new dependencies — std sockets, `GET /v1/health|version|metrics`,
+  `POST /v1/verify|evaluate|explain|ingest`); every response re-derived from
+  request bytes + explicit context, never stored/cached/guessed; strict
+  request-line validation, 8 MiB body cap, structured errors, shape-only
+  access log + counters; async/auth/rate-limit/TLS explicitly out
   of scope per ECOSYSTEM §7.
 - **Traversal APIs**: `ResolutionReport::ancestors()` (transitive closure
   with shallowest depths, unavailable refs named as unresolved) and

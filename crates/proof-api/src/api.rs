@@ -184,9 +184,9 @@ pub fn route(method: &str, path: &str, body: &[u8]) -> (u16, String) {
         Ok(v) => v,
         Err(e) => return (400, err_json(&format!("bad JSON: {e}"))),
     };
+    let limits = limits();
     match path {
         "/v1/verify" => {
-            let limits = limits();
             let bytes = match v.get("proof").map(proof_bytes).transpose() {
                 Ok(Some(b)) => b,
                 Ok(None) => return (400, err_json("missing `proof`")),
@@ -201,69 +201,185 @@ pub fn route(method: &str, path: &str, body: &[u8]) -> (u16, String) {
                 Err(e) => (422, err_json(&e.to_string())),
             }
         }
-        "/v1/evaluate" | "/v1/explain" => {
-            let limits = limits();
-            let bytes = match v.get("proof").map(proof_bytes).transpose() {
-                Ok(Some(b)) => b,
-                Ok(None) => return (400, err_json("missing `proof`")),
-                Err(e) => return (400, err_json(&e)),
-            };
-            let policy_doc = match v.get("policy") {
-                Some(p) => p,
-                None => return (400, err_json("missing `policy`")),
-            };
-            let policy = match proof_policy::parse_policy(policy_doc, &limits) {
-                Ok(p) => p,
-                Err(e) => return (400, err_json(&format!("policy: {e}"))),
-            };
-            let ctx = match context_from(&v, &limits) {
-                Ok(c) => c,
-                Err(e) => return (400, err_json(&e)),
-            };
-            let report = match proof_verify::verify_proof(&bytes, &ctx) {
-                Ok(r) => r,
-                Err(e) => return (422, err_json(&e.to_string())),
-            };
-            let state = match proof_of(&bytes, &limits)
-                .map_err(|e| e.to_string())
-                .and_then(|proof| {
-                    proof_policy::state_from_report_and_proof(&report, &proof)
-                        .map_err(|e| e.to_string())
-                }) {
-                Ok(s) => s,
-                Err(e) => return (422, err_json(&e)),
-            };
-            // Trust inputs for policy come from the same explicit fields
-            // (single context in, paired evaluation out — like
-            // `verify_and_evaluate`, never divergent).
-            let revoked: Vec<String> = str_list(&v, "revoked").unwrap_or_default();
-            let inputs = proof_policy::EvalInputs {
-                trusted_issuers: str_list(&v, "trusted").unwrap_or_default(),
-                revocations: proof_policy::RevocationSet::new(revoked),
-                verified_at: ctx.verified_at,
-                skew_leeway: ctx.clock_skew_leeway,
-            };
-            let outcome = proof_policy::evaluate_policy(&state, &policy, &inputs);
-            let mut out = serde_json::json!({
-                "report": report_json(&report),
-                "outcome": {
-                    "policy_id": outcome.policy_id,
-                    "decision": format!("{:?}", outcome.decision),
-                    "note": outcome.note,
-                    "results": outcome.results.iter().map(|r| serde_json::json!({
-                        "requirement": r.requirement,
-                        "passed": r.passed,
-                        "message": r.message,
-                    })).collect::<Vec<_>>(),
-                },
-            });
-            if path == "/v1/explain" {
-                out["explanation"] =
-                    serde_json::Value::String(proof_policy::explain_full(&report, &outcome));
-            }
-            (200, out.to_string())
-        }
+        "/v1/evaluate" | "/v1/explain" => evaluate_route(path, &v, &limits),
+        "/v1/ingest" => ingest_route(&v, &limits),
         _ => (404, err_json("unknown path")),
+    }
+}
+
+/// `POST /v1/ingest`: JSONL external event records → validated event ids +
+/// manifest. Same fail-closed rules as the CLI `ingest` command (line
+/// numbers, unknown-field rejection, optional `skip_bad` + `dry_run`);
+/// queue pollers and webhook forwarders POST here. Returns 200 with the
+/// manifest; malformed input is 400. Like the CLI, this is a normalization
+/// boundary, not a trust boundary — every record still passes through
+/// `create_event`, and output ids re-verify on load anywhere.
+fn ingest_route(v: &serde_json::Value, limits: &proof_core::Limits) -> (u16, String) {
+    let text = match v.get("records").and_then(|x| x.as_str()) {
+        Some(t) => t,
+        None => return (400, err_json("missing `records` (JSONL text)")),
+    };
+    if text.len() > 8 << 20 {
+        return (400, err_json("`records` exceeds 8 MiB"));
+    }
+    let skip_bad = v.get("skip_bad").and_then(|x| x.as_bool()).unwrap_or(false);
+    let dry_run = v.get("dry_run").and_then(|x| x.as_bool()).unwrap_or(false);
+    let mut ids = vec![];
+    let mut skipped = vec![];
+    let mut line_no = 0;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        line_no += 1;
+        let outcome = serde_json::from_str(line)
+            .map_err(|e| format!("line {line_no}: bad JSON: {e}"))
+            .and_then(|value| ingest_record(&value, line_no, limits));
+        match outcome {
+            Ok(id) => ids.push(id),
+            Err(e) if skip_bad => skipped.push(e),
+            Err(e) => return (400, err_json(&format!("ingest: {e}"))),
+        }
+    }
+    (
+        200,
+        serde_json::json!({
+            "ingested": ids.len(), "ids": ids,
+            "skipped": skipped, "dry_run": dry_run,
+        })
+        .to_string(),
+    )
+}
+
+/// Validate one record object into an event id (dry-run always: the API
+/// returns ids + manifest, never files — callers persist via envelopes).
+fn ingest_record(
+    value: &serde_json::Value,
+    line_no: usize,
+    limits: &proof_core::Limits,
+) -> Result<String, String> {
+    let label = format!("line {line_no}");
+    let obj = value
+        .as_object()
+        .ok_or_else(|| format!("{label}: must be a JSON object"))?;
+    let str_field = |name: &str| {
+        obj.get(name)
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| format!("{label}: missing non-empty string field `{name}`"))
+    };
+    for key in obj.keys() {
+        if !["type", "subject", "payload_hex", "effective_at", "meta"].contains(&key.as_str()) {
+            return Err(format!("{label}: unknown field `{key}`"));
+        }
+    }
+    let digest = obj
+        .get("payload_hex")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| format!("{label}: missing `payload_hex`"))
+        .and_then(|s| hex_decode(s).ok_or_else(|| format!("{label}: bad payload hex")))?;
+    let alg = match digest.len() {
+        32 => proof_core::HashAlgorithm::Sha256,
+        48 => proof_core::HashAlgorithm::Sha384,
+        _ => return Err(format!("{label}: digest must be 32 or 48 bytes")),
+    };
+    let mut metadata = vec![];
+    if let Some(meta) = obj.get("meta") {
+        let s = meta
+            .as_str()
+            .ok_or_else(|| format!("{label}: `meta` must be a string"))?;
+        for pair in s.split(',') {
+            let (k, val) = pair
+                .split_once('=')
+                .ok_or_else(|| format!("{label}: bad field `{pair}` (expected k=v)"))?;
+            if k.is_empty() || val.is_empty() {
+                return Err(format!("{label}: bad field `{pair}` (empty key or value)"));
+            }
+            metadata.push((
+                k.to_string(),
+                proof_core::model::MetaValue::Text(val.to_string()),
+            ));
+        }
+    }
+    let content = proof_core::model::EventContent {
+        v: 1,
+        event_type: proof_core::model::EventType::new(str_field("type")?),
+        subject: str_field("subject")?,
+        effective_at: obj
+            .get("effective_at")
+            .and_then(|x| x.as_u64())
+            .ok_or_else(|| format!("{label}: missing u64 field `effective_at`"))?,
+        payload_ref: proof_core::HashRef::new(alg, digest).map_err(|e| format!("{label}: {e}"))?,
+        metadata,
+    };
+    proof_crypto::build::create_event(content, limits)
+        .map(|c| c.id)
+        .map_err(|e| format!("{label}: {e}"))
+}
+
+fn evaluate_route(path: &str, v: &serde_json::Value, limits: &proof_core::Limits) -> (u16, String) {
+    {
+        let bytes = match v.get("proof").map(proof_bytes).transpose() {
+            Ok(Some(b)) => b,
+            Ok(None) => return (400, err_json("missing `proof`")),
+            Err(e) => return (400, err_json(&e)),
+        };
+        let policy_doc = match v.get("policy") {
+            Some(p) => p,
+            None => return (400, err_json("missing `policy`")),
+        };
+        let policy = match proof_policy::parse_policy(policy_doc, limits) {
+            Ok(p) => p,
+            Err(e) => return (400, err_json(&format!("policy: {e}"))),
+        };
+        let ctx = match context_from(v, limits) {
+            Ok(c) => c,
+            Err(e) => return (400, err_json(&e)),
+        };
+        let report = match proof_verify::verify_proof(&bytes, &ctx) {
+            Ok(r) => r,
+            Err(e) => return (422, err_json(&e.to_string())),
+        };
+        let state = match proof_of(&bytes, limits)
+            .map_err(|e| e.to_string())
+            .and_then(|proof| {
+                proof_policy::state_from_report_and_proof(&report, &proof)
+                    .map_err(|e| e.to_string())
+            }) {
+            Ok(s) => s,
+            Err(e) => return (422, err_json(&e)),
+        };
+        // Trust inputs for policy come from the same explicit fields
+        // (single context in, paired evaluation out — like
+        // `verify_and_evaluate`, never divergent).
+        let revoked: Vec<String> = str_list(v, "revoked").unwrap_or_default();
+        let inputs = proof_policy::EvalInputs {
+            trusted_issuers: str_list(v, "trusted").unwrap_or_default(),
+            revocations: proof_policy::RevocationSet::new(revoked),
+            verified_at: ctx.verified_at,
+            skew_leeway: ctx.clock_skew_leeway,
+        };
+        let outcome = proof_policy::evaluate_policy(&state, &policy, &inputs);
+        let mut out = serde_json::json!({
+            "report": report_json(&report),
+            "outcome": {
+                "policy_id": outcome.policy_id,
+                "decision": format!("{:?}", outcome.decision),
+                "note": outcome.note,
+                "results": outcome.results.iter().map(|r| serde_json::json!({
+                    "requirement": r.requirement,
+                    "passed": r.passed,
+                    "message": r.message,
+                })).collect::<Vec<_>>(),
+            },
+        });
+        if path == "/v1/explain" {
+            out["explanation"] =
+                serde_json::Value::String(proof_policy::explain_full(&report, &outcome));
+        }
+        (200, out.to_string())
     }
 }
 
