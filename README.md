@@ -1,3 +1,4 @@
+<img width="1254" height="1254" alt="file_00000000a9548211a34607705ea8a597" src="https://github.com/user-attachments/assets/accfdecd-db0e-4d8e-9a77-adbbeb26331d" />
 
 
 // Copyright 2026 Proof Engine Contributors
