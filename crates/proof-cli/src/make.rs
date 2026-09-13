@@ -180,13 +180,100 @@ pub fn eval_inputs(cli: &Cli, c: &CommonInputs) -> proof_policy::EvalInputs {
     }
 }
 
+/// Parse "envelope id mismatch (wrapper says X, bytes bind Y)" → (X, Y).
+fn parse_envelope_mismatch(msg: &str) -> Option<(String, String)> {
+    let start = msg.find("wrapper says ")? + "wrapper says ".len();
+    let mid = msg[start..].find(", bytes bind ")?;
+    let claimed = msg[start..start + mid].trim().to_string();
+    let rest = &msg[start + mid + ", bytes bind ".len()..];
+    // Actual id ends at ')' or whitespace.
+    let actual = rest
+        .trim_end_matches([')', '\n', ' '])
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(')')
+        .to_string();
+    Some((claimed, actual))
+}
+
 /// `verify`: run the 10-stage pipeline. Authority keyrefs must be supplied
 /// explicitly via --authority; revocation status objects via --status.
 /// stdout = JSON report (machine contract); stderr = human summary.
+/// M1 contract: malformed proofs emit a JSON FAIL report (exit 1), not a
+/// prose-only engine error (exit 2). Only transport failures (missing file,
+/// bad JSON, missing `cbor`, bad hex) remain exit 2.
 pub fn verify(cli: &Cli) -> Result<i32, String> {
-    let proof = crate::check::load_proof(&cli.proof_path()?, cli.quiet())?;
     let c = common(cli)?;
     let vp = verifier_policy(cli)?;
+    let build_ctx = || proof_verify::VerifyCtx {
+        verified_at: c.verified_at,
+        clock_skew_leeway: c.skew,
+        trusted_issuers: cli.many("trusted"),
+        status_objects: vec![],
+        revocation_authorities: cli.many("authority"),
+        revocations_known_at: c.revocations_known_at,
+        allowed_algs: vp.allowed_algs,
+        report_all_failures: vp.report_all_failures,
+        accepted_vocabularies: vp.accepted_vocabularies.clone(),
+        extra_grounded: vp.extra_grounded.clone(),
+        require_acyclic_provenance: vp.require_acyclic_provenance,
+        ..Default::default()
+    };
+    // Fallback for malformed proofs: produce a JSON FAIL report (exit 1).
+    // `load_proof` validates CBOR/schema/envelope before the pipeline runs;
+    // on content failures we re-run the pipeline on raw bytes so callers get
+    // the same PARSE/SCHEMA report the library produces, instead of prose.
+    let proof_path = cli.proof_path()?;
+    let proof = match crate::check::load_proof(&proof_path, cli.quiet()) {
+        Ok(p) => p,
+        Err(e) => {
+            // Envelope mismatch is tamper: synthetic IDENTIFIERS report.
+            if e.contains("envelope id mismatch") {
+                // Extract claimed vs actual from the message:
+                // "envelope id mismatch (wrapper says X, bytes bind Y)"
+                let (claimed, actual) = parse_envelope_mismatch(&e)
+                    .unwrap_or_else(|| ("?".to_string(), "?".to_string()));
+                let report = crate::check::envelope_mismatch_report(&claimed, &actual);
+                crate::check::emit_report(&report, cli.opt("out"), cli.quiet())?;
+                if !cli.quiet() {
+                    crate::check::emit_human_summary(&report);
+                }
+                return Ok(crate::EXIT_FAIL);
+            }
+            // Try raw bytes → pipeline report for CBOR/schema failures.
+            if let Ok(raw) = crate::check::load_proof_bytes_raw(&proof_path) {
+                // Load status objects for pipeline context (ignore errors here;
+                // status load failures are reported via STATUS stage, not here).
+                let statuses: Vec<proof_crypto::SignedStatus> = cli
+                    .many("status")
+                    .iter()
+                    .filter_map(|p| load_status(p, &crate::limits(), true).ok())
+                    .collect();
+                let mut ctx = build_ctx();
+                ctx.status_objects = statuses;
+                if let Ok(report) = proof_verify::verify_proof(&raw, &ctx) {
+                    crate::check::emit_report(&report, cli.opt("out"), cli.quiet())?;
+                    if !cli.quiet() {
+                        crate::check::emit_human_summary(&report);
+                    }
+                    return Ok(crate::check::verdict_exit(&report));
+                }
+                // Pipeline itself errored (e.g. allow_remote): synthetic PARSE.
+                let report = crate::check::malformed_report(
+                    "PARSE",
+                    proof_core::ErrorCode::Malformed,
+                    e.clone(),
+                );
+                crate::check::emit_report(&report, cli.opt("out"), cli.quiet())?;
+                if !cli.quiet() {
+                    crate::check::emit_human_summary(&report);
+                }
+                return Ok(crate::EXIT_FAIL);
+            }
+            // Transport failure: no bytes to verify → usage/engine error.
+            return Err(e);
+        }
+    };
     let statuses: Vec<proof_crypto::SignedStatus> = cli
         .many("status")
         .iter()
@@ -228,6 +315,31 @@ pub fn verify(cli: &Cli) -> Result<i32, String> {
     crate::check::emit_report(&report, cli.opt("out"), cli.quiet())?;
     if !cli.quiet() {
         crate::check::emit_human_summary(&report);
+        // M3: provenance guidance. Derivation edges (PRODUCED/CREATED) with
+        // default linkage semantics allow REFERENCES cycles. If this proof
+        // carries derivation intent, the caller SHOULD re-verify with
+        // --require-acyclic to enforce DAG. Warn once per verify.
+        let has_derivation = proof.proof.relationships.iter().any(|r| {
+            matches!(
+                r.rel_type.as_str(),
+                "PRODUCED" | "CREATED" | "EXECUTED" | "OWNS" | "SETTLES"
+            )
+        });
+        if has_derivation && !vp.require_acyclic_provenance {
+            eprintln!(
+                "  note: derivation edges present (PRODUCED/CREATED/EXECUTED/OWNS/SETTLES) with default linkage semantics (REFERENCES cycles allowed). For derivation chains, re-verify with `--require-acyclic` to enforce DAG (CYCLE_DETECTED on any cycle)."
+            );
+        }
+    }
+    // M2: --strict-current fails closed on VALID-but-not-current proofs.
+    // Bare `verify` reports history (SUPERSEDED VALID); strict mode answers
+    // currency for operators who want verify==acceptable without writing policy.
+    if cli.has("strict-current") && !crate::check::is_currently_acceptable(&report) {
+        if !cli.quiet() {
+            eprintln!("  note: --strict-current: SUPERSEDED or unverified-provenance present → FAIL (historically valid, not currently acceptable)");
+            eprintln!("RESULT INVALID (strict-current currency denied) (exit 1)");
+        }
+        return Ok(crate::EXIT_FAIL);
     }
     Ok(crate::check::verdict_exit(&report))
 }
@@ -451,4 +563,108 @@ pub fn evaluate(cli: &Cli, explain: bool) -> Result<i32, String> {
             crate::EXIT_FAIL
         }
     })
+}
+
+/// `init-policy`: generate a policy JSON from a template + issuer.
+/// Replaces the manual python one-liner (issuer substitution footgun:
+/// `key:ed25519:key:ed25519:…` from sed-replacing the whole placeholder).
+/// `--issuer` is a full keyref; `--attestation <file>` reads it from the
+/// attestation artifact. Template selects the requirement set; relationship
+/// and evidence-kind flags specialize it. Output never contains REPLACE_WITH.
+pub fn init_policy(cli: &Cli) -> Result<String, String> {
+    let issuer = if let Some(att_path) = cli.opt("attestation") {
+        let v: serde_json::Value = serde_json::from_str(
+            &crate::read_input_file(&att_path).map_err(|e| format!("read attestation: {e}"))?,
+        )
+        .map_err(|e| format!("parse {att_path}: {e}"))?;
+        v.get("issuer")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| format!("{att_path}: missing `issuer`"))?
+            .to_string()
+    } else {
+        cli.req("issuer")?
+    };
+    if !issuer.starts_with("key:ed25519:") && !issuer.starts_with("key:p256:") {
+        return Err(format!(
+            "--issuer must be a full keyref (key:ed25519:… or key:p256:…), got `{issuer}`"
+        ));
+    }
+    if issuer.contains("REPLACE_WITH") {
+        return Err("--issuer still contains REPLACE_WITH placeholder".to_string());
+    }
+    let template = cli
+        .opt("template")
+        .unwrap_or_else(|| "settlement".to_string());
+    let rel = cli
+        .opt("relationship")
+        .unwrap_or_else(|| "SETTLES".to_string());
+    let evkind = cli
+        .opt("evidence-kind")
+        .unwrap_or_else(|| "transaction_record".to_string());
+    let (policy_id, requirements) = match template.as_str() {
+        "settlement" => (
+            "settlement_v1",
+            vec![
+                serde_json::json!({"type": "signature_valid"}),
+                serde_json::json!({"type": "issuer_trusted", "issuer": issuer}),
+                serde_json::json!({"type": "not_expired"}),
+                serde_json::json!({"type": "not_revoked"}),
+                serde_json::json!({"type": "relationship_exists", "relationship": rel}),
+                serde_json::json!({"type": "evidence_present", "kind": evkind}),
+            ],
+        ),
+        "strict-document" => (
+            "strict_document_v1",
+            vec![
+                serde_json::json!({"type": "signature_valid"}),
+                serde_json::json!({"type": "issuer_trusted", "issuer": issuer}),
+                serde_json::json!({"type": "not_expired"}),
+                serde_json::json!({"type": "not_revoked"}),
+                serde_json::json!({"type": "not_superseded"}),
+                serde_json::json!({"type": "relationship_exists", "relationship": rel}),
+                serde_json::json!({"type": "evidence_present", "kind": evkind}),
+            ],
+        ),
+        "fresh-only" => (
+            "fresh_only_v1",
+            vec![
+                serde_json::json!({"type": "signature_valid"}),
+                serde_json::json!({"type": "issuer_trusted", "issuer": issuer}),
+                serde_json::json!({"type": "proof_fresh", "max_age_seconds": 3600}),
+            ],
+        ),
+        "basic-payment" => (
+            "basic_payment_v1",
+            vec![
+                serde_json::json!({"type": "signature_valid"}),
+                serde_json::json!({"type": "issuer_trusted", "issuer": issuer}),
+                serde_json::json!({"type": "relationship_exists", "relationship": rel}),
+            ],
+        ),
+        _ => {
+            return Err(format!(
+                "--template must be settlement|strict-document|fresh-only|basic-payment, got `{template}`"
+            ))
+        }
+    };
+    // Validate through the real policy parser before writing (fail fast).
+    let policy_val = serde_json::json!({
+        "policy_version": 1,
+        "policy_id": policy_id,
+        "requirements": requirements,
+    });
+    proof_policy::parse_policy(&policy_val, &crate::limits())
+        .map_err(|e| format!("init-policy: generated policy invalid: {e}"))?;
+    let out = cli.req("out")?;
+    crate::artifact::write_json(&out, policy_val)?;
+    crate::progress(
+        cli.quiet(),
+        &format!("policy  {policy_id} (issuer {issuer}) -> {out}"),
+    );
+    if !cli.quiet() {
+        eprintln!(
+            "  next: proof-cli evaluate --proof proof.json --policy {out} --clock <u64> --revocations-known-at <u64> --trusted {issuer}"
+        );
+    }
+    Ok(out)
 }

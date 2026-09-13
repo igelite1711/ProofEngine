@@ -17,7 +17,7 @@ pub const DEPRECATED: &[i64] = &[-8, -7, -35, -36];
 /// Verifier algorithm policy.
 #[derive(Debug, Clone, Copy)]
 pub struct AllowedAlgs {
-    /// Always true in V0.1 (Ed25519 required).
+    /// Always true in V1 (Ed25519 required).
     pub ed25519: bool,
     /// Default false. Enable explicitly per deployment.
     pub esp256: bool,
@@ -41,7 +41,7 @@ impl Default for AllowedAlgs {
 }
 
 impl AllowedAlgs {
-    /// Ed25519-only (V0.1 default).
+    /// Ed25519-only (V1 default).
     pub fn strict() -> Self {
         Self::default()
     }

@@ -1,7 +1,7 @@
 // Copyright 2026 Proof Engine Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Deterministic object ids: `<prefix>:v1:<b64uNoPad(sha256(canonical))>`.
-//! Uses SHA-256 for ids in V0.1 (hash agility via `v` for future algs).
+//! Uses SHA-256 for ids in V1 (hash agility via `v` for future algs).
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use proof_format::{encode_canonical, CborValue};
 

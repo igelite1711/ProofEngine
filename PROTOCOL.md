@@ -69,7 +69,7 @@ engine cannot detect the violation.
    transaction id, challenge) in claim fields or metadata. Re-presenting a
    valid proof is *expected* to verify; treating it as a *new* event without
    caller bookkeeping is caller misuse, not an engine PASS (Gate H).
-4. **Storage.** No adapters exist in V0.1. Persistence, transport encryption,
+4. **Storage.** No storage adapters exist in the V1 core. Persistence, transport encryption,
    and access control belong to the caller (artifacts are digest-only for
    external content; payloads stay outside the proof).
 5. **Trust lists.** Policy trust (`trusted_issuers`, `revocation_authorities`)

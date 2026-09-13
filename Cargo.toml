@@ -19,6 +19,9 @@ members = [
 # application would.
 exclude = ["fuzz", "domains/proof-domains"]
 default-members = [
+  # Stable V1 core (7 crates, V1 promise). Perimeter (adapter-scitt/bench/api
+  # at 0.1.x experimental) builds with `cargo build --workspace`, not by default —
+  # keeps `cargo build/test` on the frozen surface (I1 surface shrink).
   "crates/proof-core",
   "crates/proof-format",
   "crates/proof-crypto",
@@ -26,9 +29,6 @@ default-members = [
   "crates/proof-verify",
   "crates/proof-policy",
   "crates/proof-cli",
-  "crates/proof-adapter-scitt",
-  "crates/proof-bench",
-  "crates/proof-api",
 ]
 
 # PE-OPS-001: locked reproducible build (--locked enforced by Makefile/CI).

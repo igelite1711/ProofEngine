@@ -1,6 +1,6 @@
 // Copyright 2026 Proof Engine Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Strict CBOR codec for the ProofEngine V0.1 subset (third implementation).
+// Strict CBOR codec for the ProofEngine V1 subset (third implementation).
 // Scope: uint/nint/text/bytes/array/map/bool/null. Rejects floats, tags,
 // indefinite lengths, bignums, simple values, non-shortest ints, duplicate
 // map keys, unordered maps, trailing bytes, bad UTF-8. Depth capped at 16

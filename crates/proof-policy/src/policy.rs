@@ -8,7 +8,7 @@ use proof_core::{
     ErrorCode, Limits, ProofError,
 };
 
-/// Closed requirement set (V0.1). Unknown `type` values are rejected.
+/// Closed requirement set (V1). Unknown `type` values are rejected.
 /// PE-POLICY-008.
 ///
 /// V1 (`policy_version: 1`) accepts exactly the first ten variants, combined

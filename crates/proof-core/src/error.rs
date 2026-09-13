@@ -3,7 +3,7 @@
 //! Stable machine-readable error codes. Human messages may change; codes must not.
 use thiserror::Error;
 
-/// Stable error codes (V0.1). Codes are append-only once V0.1 ships; the three
+/// Stable error codes (V1). Codes are append-only once V1 ships; the three
 /// graph codes below were added in Phase 3, before any release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorCode {

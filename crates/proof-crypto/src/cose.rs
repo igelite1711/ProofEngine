@@ -139,13 +139,13 @@ pub fn parse_sign1(bytes: &[u8], limits: &Limits) -> Result<ParsedSign1, ProofEr
         CborValue::Map(m) if m.is_empty() => {}
         _ => {
             return Err(
-                ErrorCode::UnexpectedHeaderParam.err("unprotected header must be empty in V0.1")
+                ErrorCode::UnexpectedHeaderParam.err("unprotected header must be empty in V1")
             )
         }
     }
     let payload = match &items[2] {
         CborValue::Bytes(b) => b.clone(),
-        _ => return Err(ErrorCode::Malformed.err("detached payload (nil) not supported in V0.1")),
+        _ => return Err(ErrorCode::Malformed.err("detached payload (nil) not supported in V1")),
     };
     if payload.len() > limits.max_proof_size {
         return Err(ErrorCode::LimitExceeded.err("payload too large"));

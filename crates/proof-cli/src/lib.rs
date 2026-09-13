@@ -32,7 +32,7 @@ pub const VERSION_INFO: &str = concat!(
 );
 
 /// Parsed command line: subcommand + positional args + `--flag value` flags.
-/// Deliberately hand-rolled (no new dependencies in V0.1).
+/// Deliberately hand-rolled (no new dependencies in V1).
 #[derive(Debug, Default)]
 pub struct Cli {
     pub command: String,
@@ -348,6 +348,39 @@ pub fn read_input_file(path: &str) -> Result<String, String> {
     String::from_utf8(buf).map_err(|_| format!("{path}: invalid UTF-8"))
 }
 
+/// Read raw bytes for `--payload-file` (binary-safe, 8 MiB cap).
+/// `-` reads stdin bytes. Used to hash file content without hex plumbing.
+pub fn read_input_bytes(path: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    if path == "-" {
+        let mut buf = Vec::new();
+        std::io::stdin()
+            .lock()
+            .by_ref()
+            .take(MAX_INPUT_FILE_BYTES + 1)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read stdin: {e}"))?;
+        if buf.len() as u64 > MAX_INPUT_FILE_BYTES {
+            return Err(format!(
+                "stdin: input too large (>{MAX_INPUT_FILE_BYTES} bytes)"
+            ));
+        }
+        return Ok(buf);
+    }
+    let mut f = std::fs::File::open(path).map_err(|e| format!("read {path}: {e}"))?;
+    let mut buf = Vec::new();
+    f.by_ref()
+        .take(MAX_INPUT_FILE_BYTES + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("read {path}: {e}"))?;
+    if buf.len() as u64 > MAX_INPUT_FILE_BYTES {
+        return Err(format!(
+            "{path}: file too large (>{MAX_INPUT_FILE_BYTES} bytes)"
+        ));
+    }
+    Ok(buf)
+}
+
 /// All public commands with one-line summaries. Single source of truth for
 /// help text and shell completion (never duplicate this list by hand).
 pub const COMMANDS: &[(&str, &str)] = &[
@@ -375,6 +408,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("resolve", "Resolve transitive composition linkage"),
     ("batch-verify", "Verify many proofs under one context"),
     ("ingest", "Ingest JSONL event records into event artifacts"),
+    (
+        "init-policy",
+        "Generate a policy from a template + issuer (no manual JSON)",
+    ),
     ("demo", "Run the end-to-end demonstration"),
     ("doctor", "Diagnose the local environment"),
     ("version", "Show version information"),
@@ -406,13 +443,15 @@ OPTIONS
   --accepted-vocab <ns:max>   accepted vocabulary namespace bound, repeatable + comma-separated (informational notes)
   --extra-grounded <TYPE>     extra trust-relevant edge kind(s), repeatable + comma-separated
   --require-acyclic           provenance DAG profile: reject any relationship cycle (opt-in; default allows REFERENCES cycles as linkage)
+  --strict-current            fail closed on VALID-but-not-current: SUPERSEDED history or unverified provenance hints → exit 1 (history preserved, currency denied)
   --out, -o <file>            write JSON report to file (`-` = stdout); default prints JSON to stdout
   --quiet, -q                 suppress the human summary on stderr
 
 OUTPUT
   stdout = machine-readable JSON report (never prose, never color).
   stderr = human summary (✓/✗ per stage, RESULT, exit meaning).
-  exit 0 = valid, 1 = invalid verdict, 2 = usage/engine error.",
+  exit 0 = valid AND (if --strict-current) currently acceptable, 1 = invalid verdict or not-current, 2 = usage/engine error.
+  note: SUPERSEDED proofs are historically VALID without --strict-current; use `evaluate` with `not_superseded` or --strict-current for currency.",
         "evaluate" => "\
 evaluate — verify a proof and evaluate a declarative policy over the result.
 
@@ -478,8 +517,9 @@ create-event — write an event artifact (JSON wrapper around canonical CBOR).
 
 USAGE
   proof-cli create-event --type <event.type> --subject <id>
-    --effective-at <u64> --payload-hex <64|96 hex> [--meta k=v,…] --out <file>
+    --effective-at <u64> (--payload-hex <64|96 hex> | --payload-file <path|->) [--meta k=v,…] --out <file>
 
+  --payload-file hashes file bytes (SHA-256) — no manual digest plumbing.
   Field order in --meta is free: pairs are canonicalized automatically.",
         "attest" => "\
 attest — bind an issuer (signing key) to a claim and sign it.
@@ -568,8 +608,17 @@ write canonical event artifacts plus a manifest. Fail-closed: the first
 malformed line aborts unless --skip-bad lists skips in the manifest instead.
 
 USAGE
-  proof-cli ingest [--in <records.jsonl>=stdin] --out-dir <dir> [--out <manifest.json>] [--skip-bad] [--dry-run]
+  proof-cli ingest [--in <records.jsonl>=stdin] --out-dir <dir> --out <manifest.json> [--skip-bad] [--dry-run]
   manifest: {ingested, ids, skipped, dry_run}. Exit 0 clean, 1 partial (--skip-bad with skips), 2 usage/engine error.",
+        "init-policy" => "\
+init-policy — generate a policy JSON from a template + issuer (no manual editing).
+
+USAGE
+  proof-cli init-policy --issuer <keyref> [--template settlement|strict-document|fresh-only|basic-payment] [--relationship SETTLES] [--evidence-kind transaction_record] --out <policy.json>
+  proof-cli init-policy --issuer <keyref> --attestation <att.json> [--template settlement] --out <policy.json>  (reads issuer from attestation file)
+
+Templates: settlement (sig+issuer+expiry+revocation+SETTLES+evidence), strict-document (settlement + not_superseded), fresh-only (sig+issuer+proof_fresh 3600), basic-payment (sig+issuer+relationship).
+The `key:ed25519:` prefix is kept exactly once; REPLACE_WITH placeholders never appear in output.",
         "demo" => "\
 demo — deterministic end-to-end story: build → verify PASS → tamper → FAIL →
 revoke → FAIL. Uses the core only; no simulated results.

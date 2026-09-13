@@ -526,7 +526,7 @@ pub fn cbor_to_relationship(v: &CborValue, limits: &Limits) -> Result<Relationsh
     let from = text_field(map, "from")?;
     let to = text_field(map, "to")?;
     if from == to {
-        return Err(ErrorCode::SchemaViolation.err("self-edge forbidden in V0.1"));
+        return Err(ErrorCode::SchemaViolation.err("self-edge forbidden in V1"));
     }
     let t = text_field(map, "type")?;
     // V1.0 NEUTRAL: accept any string, policy decides which types are valid

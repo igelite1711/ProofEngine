@@ -130,6 +130,23 @@
         "crates/proof-policy/src/eval.rs",
         "crates/proof-policy/src/policy.rs"
       ]
+    },
+    {
+      "commit": "uncommitted",
+      "class": "DOCUMENTATION",
+      "layer": "V1 terminology conformance (proposal docs/ARCHITECTURE-CHANGE-PROPOSAL-v1-terminology.md): human messages/comments V0.1->V1 only; wire codes, ids, bindings, stages, verdicts unchanged",
+      "files": [
+        "crates/proof-core/src/error.rs",
+        "crates/proof-core/src/hash.rs",
+        "crates/proof-crypto/src/alg.rs",
+        "crates/proof-crypto/src/cose.rs",
+        "crates/proof-crypto/src/id.rs",
+        "crates/proof-format/src/cbor.rs",
+        "crates/proof-format/src/schema.rs",
+        "crates/proof-policy/src/eval.rs",
+        "crates/proof-policy/src/policy.rs",
+        "crates/proof-verify/src/pipeline.rs"
+      ]
     }
   ]
 }

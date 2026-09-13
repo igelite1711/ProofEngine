@@ -120,11 +120,17 @@ requirement). Landed in `FORMAT.md` §1 (AUDIT F8 closed).
 - **Form:** `<prefix>:v1:<b64uNoPad(sha256(canonical))+>` where canonical is
   the deterministic CBOR of the object content (all fields except the id and,
   for attestations, the signature). Prefixes: `evt` `att` `evd` `rel` `prf`.
-- **`proof_id`** binds the proposition plus the **exact sorted** member id
+- **`proof_id`** binds the proposition, `created_at`, plus the **exact sorted** member id
   sets, constructed as the canonical CBOR map
-  `{"v":1,"proposition":<prop>,"events":[sorted],"attestations":[sorted],
-  "evidence":[sorted],"relationships":[sorted]}`. `created_at` is deliberately
-  **not** covered (informational; mutation does not affect any verdict).
+  `{"v":1,"proposition":<prop>,"created_at":<uint>,"events":[sorted],"attestations":[sorted],
+  "evidence":[sorted],"relationships":[sorted]}`. `created_at` IS covered by the binding
+  (V1 CORE freeze deviation, pre-V1.0 wire fix — ARCHITECTURE-FREEZE.md §2 F2, FORMAT.md §3):
+  a holder re-stamping `created_at` recomputes to a different id and fails `ID_MISMATCH`
+  at IDENTIFIERS, so `proof_fresh` cannot be forged by rewrites. Composition linkage:
+  when `referenced_proofs` is non-empty the binding gains one more sorted key
+  `"referenced_proofs":[sorted prf ids]`; empty linkage encodes the identical map as V1
+  (byte-identical ids). Optional bound `vocabularies` declarations behave the same
+  (absent → byte-identical).
 - **Verification** MUST recompute ids from bytes and reject mismatch with
   `ID_MISMATCH` (tamper evidence).
 - **Base64url canonical spelling:** only the no-pad canonical re-encoding of

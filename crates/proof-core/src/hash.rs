@@ -1,9 +1,9 @@
 // Copyright 2026 Proof Engine Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Hash abstraction: versioned, agile. V0.1 allows SHA-256 and SHA-384 only.
+//! Hash abstraction: versioned, agile. V1 allows SHA-256 and SHA-384 only.
 use crate::error::ErrorCode;
 
-/// Closed set of hash algorithms (V0.1).
+/// Closed set of hash algorithms (V1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HashAlgorithm {
     Sha256,

@@ -90,13 +90,31 @@ fn opt_str(v: &serde_json::Value, file: &str, key: &str) -> Result<Option<String
 // ---------------------------------------------------------------- writers
 
 /// `create-event`: validate, canonicalize, id, write event artifact.
+/// DX: `--payload-hex <64|96 hex>` OR `--payload-file <path>` (file bytes are
+/// hashed with SHA-256; digest plumbing hidden). `--payload-file -` reads stdin.
 pub fn write_event(cli: &Cli) -> Result<String, String> {
+    let payload_ref = if let Some(path) = cli.opt("payload-file") {
+        let bytes = crate::read_input_bytes(&path)
+            .map_err(|e| format!("create-event payload-file: {e}"))?;
+        // SHA-256 over file bytes; SHA-384 via --payload-hex for the 48B case.
+        let digest = {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(&bytes).to_vec()
+        };
+        proof_core::HashRef::new(proof_core::HashAlgorithm::Sha256, digest)
+            .map_err(|e| e.to_string())?
+    } else {
+        hash_ref_from_hex(&cli.req("payload-hex").map_err(|_| {
+            "missing required flag --payload-hex (or --payload-file <path> to hash a file)"
+                .to_string()
+        })?)?
+    };
     let content = EventContent {
         v: 1,
         event_type: proof_core::model::EventType::new(cli.req("type")?),
         subject: cli.req("subject")?,
         effective_at: cli.req_u64("effective-at")?,
-        payload_ref: hash_ref_from_hex(&cli.req("payload-hex")?)?,
+        payload_ref,
         metadata: crate::parse_fields(cli.opt("meta"))?,
     };
     let created = proof_crypto::build::create_event(content, &crate::limits())
@@ -111,6 +129,12 @@ pub fn write_event(cli: &Cli) -> Result<String, String> {
         }),
     )?;
     crate::progress(cli.quiet(), &format!("event   {} -> {out}", created.id));
+    if !cli.quiet() {
+        eprintln!(
+            "  next: proof-cli attest --seed <test|hex|file> --subject <id> --claim-type <type> --claim k=v --issued-at <u64> --out att.json  (use id {} as subject or edge endpoint)",
+            created.id
+        );
+    }
     Ok(created.id)
 }
 
@@ -149,6 +173,15 @@ pub fn write_attestation(cli: &Cli) -> Result<String, String> {
             created.id, created.content.issuer
         ),
     );
+    if !cli.quiet() {
+        eprintln!(
+            "  next: proof-cli add-evidence --kind <kind> --digest-hex <hex> --attestation-ref {} --out evd.json",
+            created.id
+        );
+        eprintln!(
+            "  next: proof-cli init-policy --attestation {out} --out policy.json  (no manual issuer plumbing)"
+        );
+    }
     Ok(created.id)
 }
 
@@ -173,6 +206,12 @@ pub fn write_evidence(cli: &Cli) -> Result<String, String> {
         }),
     )?;
     crate::progress(cli.quiet(), &format!("evidence {} -> {out}", created.id));
+    if !cli.quiet() {
+        eprintln!(
+            "  next: proof-cli relate --from <evt:id> --type <TYPE> --to <evt:id> --evidence-ref {} --attestation-ref <att:id> --out rel.json",
+            created.id
+        );
+    }
     Ok(created.id)
 }
 
@@ -241,6 +280,11 @@ pub fn write_relationship(cli: &Cli) -> Result<String, String> {
         }),
     )?;
     crate::progress(cli.quiet(), &format!("relate  {} -> {out}", created.id));
+    if !cli.quiet() {
+        eprintln!(
+            "  next: proof-cli build --kind <k> --subject <evt:id> --predicate <p> --created-at <u64> --events a.json,b.json --attestations c.json --evidence d.json --relationships {out} --out proof.json"
+        );
+    }
     Ok(created.id)
 }
 

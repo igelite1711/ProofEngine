@@ -200,28 +200,24 @@ A Proof can therefore travel independently of the system that originally produce
 
 Proof Engine is designed around deterministic verification.
 
-A verifier should be able to take a Proof and determine, according to the applicable rules:
+A verifier should be able to take a Proof and determine, according to the applicable rules
+(canonical stage table — PROOF-ENGINE-SPEC §9.1 normative, ARCHITECTURE §4 as-built):
 
 ```
-Can it be parsed?
-        ↓
-Is its structure valid?
-        ↓
-Is its serialization canonical?
-        ↓
-Are its identifiers correct?
-        ↓
-Are signatures valid?
-        ↓
-Are issuers authoritative?
-        ↓
-Is the evidence valid?
-        ↓
-Are relationships consistent?
-        ↓
-Are lifecycle rules satisfied?
-        ↓
-Does the supplied policy accept it?
+1  PARSE         — Can it be parsed? (strict CBOR, limits pre-allocation)
+2  SCHEMA        — Is its structure valid? (v checks, closed fields)
+3  CANONICAL     — Is its serialization canonical? (re-encode-and-compare)
+4  IDENTIFIERS   — Are its identifiers correct? (recompute every id, proof_id binds proposition + created_at + sorted member sets)
+5  SIGNATURES    — Are signatures valid? (COSE_Sign1, alg policy, payload agreement)
+6  KEYS          — Are keys well-formed and bound? (kid shape, alg match, issuer==key)
+7  TIME          — Is it timely? (issued/expires vs verified_at ± skew; 0 clock fails)
+8  REVOCATION    — Are lifecycle rules satisfied? (signed revoke/supersede/withdraw/compromise + authority + freshness; ACTIVE/EXPIRED/REVOKED/SUPERSEDED/COMPROMISED/UNKNOWN)
+9  EVIDENCE      — Is the evidence valid? (digest binding, refs resolve, per-evidence status)
+10 RELATIONSHIPS — Are endpoints grounded? (resolve, trust-relevant need backing)
+11 GRAPH         — Is the graph consistent? (limits, SUPERSEDES linear-acyclic; --require-acyclic for full DAG)
+11b STATUS       — Is the caller feed healthy? (malformed/unauthorized/future-dated status; never flips validity; status_inputs_valid)
+12 POLICY        — Does the supplied policy accept it? (caller-evaluated, pipeline reports INDETERMINATE)
+13 FINAL         — Emit triple {cryptographic_validity, evidence_validity, policy_decision} + lifecycle + conflicts + explanation
 ```
 
 Verification results are explicit.
@@ -522,9 +518,9 @@ rather than modifying the core.
 
 ## Repository
 
-The repository is organized into focused crates — 7 core (V1 stability
-promise) plus 3 experimental perimeter crates (`0.1.x`, see
-[COMPATIBILITY.md](COMPATIBILITY.md) §2b):
+The repository is organized into focused crates — 7 stable core (V1 promise,
+`cargo build` default) plus 3 experimental perimeter crates (`0.1.x`, see
+[COMPATIBILITY.md](COMPATIBILITY.md) §2b, `cargo build --workspace` only):
 
 ```
 proof-core       Domain types, error codes, limits, hash/id value objects
@@ -630,10 +626,15 @@ make demo
 
 Fastest proof in seconds (no manual ID plumbing): `make quick-proof`
 (`bash tools/quick_proof.sh --keep --work /tmp/proof-quick` to keep files).
+No manual digest/issuer plumbing needed anymore:
+- `create-event --payload-file <path>` hashes file bytes (no `--payload-hex` math).
+- `proof-cli init-policy --attestation att.json --out policy.json` (no python issuer substitution).
+- Every create command prints `next:` hints on stderr.
 Production keys: prefer `--seed-file` over `--seed` (argv is visible).
-Minimal build (CLI only, no bench/API): `cargo build --locked -p proof-cli`.
-Operator checklist: `docs/OPERATOR-RUNBOOK.md`. Confidentiality scope:
-`docs/CONFIDENTIALITY.md`.
+Minimal build (stable core only): `cargo build --locked` (7 crates; perimeter needs `--workspace`).
+Operator checklist: `docs/OPERATOR-RUNBOOK.md` (clocks, freshness, feeds, rotation, replay, provenance, exits).
+Confidentiality scope: `docs/CONFIDENTIALITY.md`.
+Rotation/replay/feed helpers: `tools/trust_prune.py`, `tools/seen_set.py`, `tools/status_feed.py` + `examples/trust/registry.example.json`.
 
 Run `make help` to see all available commands.
 
@@ -655,9 +656,10 @@ Run `make help` to see all available commands.
 
 | Command | What it does |
 |---------|-------------|
-| `proof-cli verify` | Verify a proof (positional path or stdin with `-`) |
+| `proof-cli verify` | Verify a proof (positional path or stdin with `-`; `--strict-current` for verify==acceptable; malformed emits JSON FAIL exit 1) |
 | `proof-cli evaluate` | Verify a proof and evaluate a policy |
 | `proof-cli explain` | Explain a verification result (requires `--policy`) |
+| `proof-cli init-policy` | Generate policy from template + issuer (no manual JSON; `--attestation att.json` reads issuer) |
 | `proof-cli inspect` | Inspect a proof or single artifact (read-only, no trust decisions) |
 | `proof-cli graph` | Visualize proof relationships (text/dot/mermaid) |
 | `proof-cli export` | Export an artifact to the standard envelope (validated) |

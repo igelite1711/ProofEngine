@@ -1,6 +1,6 @@
 # Copyright 2026 Proof Engine Contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Minimal strict CBOR codec for the ProofEngine V0.1 subset (independent code).
+"""Minimal strict CBOR codec for the ProofEngine V1 subset (independent code).
 
 Scope: uint/nint/text/bytes/array/map/bool/null. Rejects floats, tags,
 indefinite lengths, bignums, simple values, non-shortest ints, duplicate
@@ -110,7 +110,7 @@ def enc(v):
             n, maj = v, 0
         else:
             if v < -(2**63):
-                raise CErr("nint out of V0.1 range")
+                raise CErr("nint out of V1 range")
             n, maj = -1 - v, 1
         return _head(maj, n)
     if isinstance(v, bytes):

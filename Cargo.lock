@@ -465,6 +465,7 @@ dependencies = [
  "proof-policy",
  "proof-verify",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

@@ -44,7 +44,7 @@ pub struct VerifyCtx {
     /// Trusted issuer keyrefs (used by callers that combine pipeline + policy;
     /// the pipeline itself never decides trust — that is the policy's job).
     pub trusted_issuers: Vec<String>,
-    /// Must be false in V0.1: the verifier performs zero network I/O.
+    /// Must be false in V1: the verifier performs zero network I/O.
     pub allow_remote: bool,
     pub allowed_algs: AllowedAlgs,
     pub limits: Limits,
@@ -295,7 +295,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
     // PE-SEC-003 · PE-EVID-003: no network fetch during verification.
     if ctx.allow_remote {
         return Err(ErrorCode::SchemaViolation
-            .err("allow_remote=true is not supported: V0.1 never fetches during verification"));
+            .err("allow_remote=true is not supported: V1 never fetches during verification"));
     }
     let mut checks: Vec<CheckRecord> = vec![];
 
@@ -1235,7 +1235,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
             "EVIDENCE",
             format!("proof:{stored_id}"),
             format!(
-                "{} evidence digests bound by id; external content is digest-only (no fetch in V0.1)",
+                "{} evidence digests bound by id; external content is digest-only (no fetch in V1)",
                 evd_ids.len()
             ),
         ));

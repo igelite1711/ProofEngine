@@ -4,7 +4,7 @@
 //! Exit code contract: 0 = PASS, 1 = FAIL/INDETERMINATE, 2 = error.
 
 use proof_verify::Validity;
-use proof_verify::VerifyReport;
+use proof_verify::{CheckRecord, VerifyReport};
 
 /// A loaded proof artifact. The pipeline re-verifies every stage over the
 /// canonical bytes (including the envelope id), so loading only needs to
@@ -166,6 +166,114 @@ pub fn emit_report(report: &VerifyReport, out: Option<String>, quiet: bool) -> R
     Ok(())
 }
 
+/// Load raw proof bytes without CBOR validation (for fail-closed reporting).
+/// Returns the canonical bytes from the `cbor` hex field, or the transport
+/// error if the file cannot even be read as JSON/hex. Used by `verify` to
+/// produce a machine-readable FAIL report (exit 1) for malformed proofs
+/// instead of a prose-only engine error (exit 2). Transport failures
+/// (missing file, bad JSON, missing `cbor`, bad hex) remain usage errors.
+pub fn load_proof_bytes_raw(path: &str) -> Result<Vec<u8>, String> {
+    let (text, label) = crate::read_input_text(path)?;
+    let v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("parse {label}: {e}"))?;
+    let hex_str = v
+        .get("cbor")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| format!("{label}: missing `cbor`"))?;
+    hex::decode(hex_str).map_err(|e| format!("{label}: bad hex: {e}"))
+}
+
+/// Build a fail-closed report for proofs that never parsed (M1 fix).
+/// `stage` is PARSE or SCHEMA, `code` the stable wire code, `message` human
+/// detail. crypto Invalid + evidence Invalid (early exit, lifecycle unchecked),
+/// policy INDETERMINATE, status_inputs_valid true (feed not implicated).
+/// stdout stays machine-readable; exit is FAIL (1), never engine error (2).
+pub fn malformed_report(
+    stage: &'static str,
+    code: proof_core::ErrorCode,
+    message: String,
+) -> VerifyReport {
+    VerifyReport {
+        proof_id: None,
+        cryptographic_validity: Validity::Invalid,
+        evidence_validity: Validity::Invalid,
+        policy_decision: proof_verify::PolicyDecision::Indeterminate,
+        lifecycle_checked: false,
+        lifecycle: vec![],
+        status_objects: vec![],
+        withdrawn_ids: vec![],
+        referenced_proofs: vec![],
+        vocabularies: vec![],
+        evidence_status: vec![],
+        conflicts: vec![],
+        checks: vec![
+            CheckRecord::fail(stage, "proof:bytes", code, message),
+            CheckRecord::note(
+                "POLICY",
+                "proof:bytes",
+                "policy decision is made by the caller via proof-policy::evaluate_policy; the pipeline reports INDETERMINATE (never PASS by default)",
+            ),
+        ],
+        status_inputs_valid: true,
+    }
+}
+
+/// Build a fail-closed report for envelope id mismatch (wrapper lies).
+/// Bytes internally bind `actual`, wrapper claims `claimed`. Tamper evidence:
+/// IDENTIFIERS ID_MISMATCH, exit FAIL (1) with JSON, not engine error (2).
+pub fn envelope_mismatch_report(claimed: &str, actual: &str) -> VerifyReport {
+    VerifyReport {
+        proof_id: Some(actual.to_string()),
+        cryptographic_validity: Validity::Invalid,
+        evidence_validity: Validity::Invalid,
+        policy_decision: proof_verify::PolicyDecision::Indeterminate,
+        lifecycle_checked: false,
+        lifecycle: vec![],
+        status_objects: vec![],
+        withdrawn_ids: vec![],
+        referenced_proofs: vec![],
+        vocabularies: vec![],
+        evidence_status: vec![],
+        conflicts: vec![],
+        checks: vec![
+            CheckRecord::fail(
+                "IDENTIFIERS",
+                format!("proof:{claimed}"),
+                proof_core::ErrorCode::IdMismatch,
+                format!("envelope id mismatch (wrapper says {claimed}, bytes bind {actual})"),
+            ),
+            CheckRecord::note(
+                "POLICY",
+                format!("proof:{actual}"),
+                "policy decision is made by the caller via proof-policy::evaluate_policy; the pipeline reports INDETERMINATE (never PASS by default)",
+            ),
+        ],
+        status_inputs_valid: true,
+    }
+}
+
+/// M2: strict-currency check. Returns false (not current) when any
+/// attestation is SUPERSEDED or any evidence is SUPERSEDED / UNKNOWN-hint.
+/// WITHDRAWN/COMPROMISED/REVOKED/EXPIRED already flip evidence INVALID, so
+/// they need no extra gate; this covers the VALID-but-not-current cases.
+pub fn is_currently_acceptable(report: &VerifyReport) -> bool {
+    if report
+        .lifecycle
+        .iter()
+        .any(|l| l.status == proof_core::LifecycleStatus::Superseded)
+    {
+        return false;
+    }
+    if report.evidence_status.iter().any(|e| {
+        e.status == proof_core::model::EvidenceStatus::Superseded
+            || (e.status == proof_core::model::EvidenceStatus::Unknown
+                && e.message.contains("provenance hint unverified"))
+    }) {
+        return false;
+    }
+    true
+}
+
 /// `verify` exit code: PASS only when both crypto AND evidence are valid.
 pub fn verdict_exit(report: &VerifyReport) -> i32 {
     if report.passed_crypto() && report.evidence_validity == Validity::Valid {
@@ -218,6 +326,34 @@ pub fn emit_human_summary(report: &VerifyReport) {
     };
     eprintln!("{pass}/{total} checks passed");
     eprintln!("RESULT {result} (exit {code})");
+    // M2: history-vs-current guidance. SUPERSEDED preserves history (evidence
+    // VALID) but is not currently acceptable without policy adjudication.
+    // Dangling attestation_ref hints (UNKNOWN ok:true) preserve validity but
+    // leave provenance unverified. Warn loudly so bare `verify VALID` is never
+    // misread as "currently acceptable". `evaluate` with `not_superseded` /
+    // `evidence_usable` (v2) adjudicates; `--strict-current` fails closed.
+    let has_superseded = report
+        .lifecycle
+        .iter()
+        .any(|l| l.status == proof_core::LifecycleStatus::Superseded)
+        || report
+            .evidence_status
+            .iter()
+            .any(|e| e.status == proof_core::model::EvidenceStatus::Superseded);
+    if has_superseded {
+        eprintln!(
+            "  note: SUPERSEDED — historically valid, history preserved; NOT currently acceptable without policy `not_superseded` passing. Use `evaluate` or `--strict-current` to fail closed on currency."
+        );
+    }
+    let has_dangling_hint = report.evidence_status.iter().any(|e| {
+        e.status == proof_core::model::EvidenceStatus::Unknown
+            && e.message.contains("provenance hint unverified")
+    });
+    if has_dangling_hint {
+        eprintln!(
+            "  note: provenance hint unverified (attestation_ref dangles or not verified in-proof) — validity preserved, provenance NOT established. Strict callers use policy v2 `evidence_usable` or `--strict-current`."
+        );
+    }
     if !report.status_inputs_valid {
         eprintln!(
             "  note: status feed has errors (STATUS stage) — proof validity unaffected; see `status_inputs_valid:false`"

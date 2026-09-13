@@ -1,12 +1,12 @@
 // Copyright 2026 Proof Engine Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Minimal deterministic CBOR codec for the V0.1 subset.
+//! Minimal deterministic CBOR codec for the V1 subset.
 //! Encoder always emits preferred serialization + lexicographic map order.
 //! Decoder rejects everything outside the subset (fail closed).
 
 use proof_core::{ErrorCode, Limits, ProofError};
 
-/// Closed CBOR value set for V0.1.
+/// Closed CBOR value set for V1.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CborValue {
     Uint(u64),
@@ -214,12 +214,12 @@ impl<'a> Decoder<'a> {
             1 => {
                 let n = self.read_arg(ai)?;
                 // nint range check: arg <= u64::MAX always fits i64 -1-n? -1-2^64 < i64::MIN.
-                // CBOR nint covers -2^64..-1; we restrict to i64 (-2^63..-1) for V0.1? No:
+                // CBOR nint covers -2^64..-1; we restrict to i64 (-2^63..-1) for V1? No:
                 // allow full range but store as i64 only if fits, else reject (no bignum path).
                 let v = -1i128 - (n as i128);
                 if v < i64::MIN as i128 {
                     return Err(ErrorCode::ForbiddenCborConstruct
-                        .err("nint out of i64 range (bignum not supported in V0.1)"));
+                        .err("nint out of i64 range (bignum not supported in V1)"));
                 }
                 Ok(CborValue::Nint(v as i64))
             }
@@ -282,13 +282,13 @@ impl<'a> Decoder<'a> {
                 self.depth -= 1;
                 Ok(CborValue::Map(pairs))
             }
-            6 => Err(ErrorCode::ForbiddenCborConstruct.err("tags forbidden in V0.1")),
+            6 => Err(ErrorCode::ForbiddenCborConstruct.err("tags forbidden in V1")),
             7 => match ai {
                 20 => Ok(CborValue::Bool(false)),
                 21 => Ok(CborValue::Bool(true)),
                 22 => Ok(CborValue::Null),
                 24 => Err(ErrorCode::ForbiddenCborConstruct.err("2-byte simple values forbidden")),
-                25..=27 => Err(ErrorCode::ForbiddenCborConstruct.err("floats forbidden in V0.1")),
+                25..=27 => Err(ErrorCode::ForbiddenCborConstruct.err("floats forbidden in V1")),
                 31 => {
                     Err(ErrorCode::ForbiddenCborConstruct.err("break stop code outside indefinite"))
                 }

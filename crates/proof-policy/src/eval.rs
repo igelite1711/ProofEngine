@@ -14,7 +14,7 @@ use proof_core::model::RelType;
 use proof_verify::PolicyDecision;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-/// Caller-supplied revocation data. V0.1 semantics: an id present here is
+/// Caller-supplied revocation data. V1 semantics: an id present here is
 /// revoked; anything else is "no revocation known" (NOT "fresh"). Freshness
 /// windows and transparency-anchored status land in Phase 6.
 #[derive(Debug, Clone, Default)]

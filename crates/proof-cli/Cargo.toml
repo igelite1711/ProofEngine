@@ -22,6 +22,7 @@ proof-verify = { version = "1.0.0", path = "../proof-verify" }
 proof-policy = { version = "1.0.0", path = "../proof-policy" }
 serde_json = { workspace = true }
 hex = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 proof-core = { version = "1.0.0", path = "../proof-core" }

@@ -1,0 +1,7 @@
+{
+  "_doc": "Trust rotation registry (M4). Bare keyrefs with validity windows. Prune per evaluation time with tools/trust_prune.py. Never commit real keys here — this is shape documentation.",
+  "keys": [
+    {"keyref": "key:ed25519:REPLACE_WITH_2024_KEY", "valid_from": 1699000000, "valid_until": 1701000000, "note": "2024 issuance key, retired Jan 2024"},
+    {"keyref": "key:ed25519:REPLACE_WITH_2025_KEY", "valid_from": 1701000001, "valid_until": null, "note": "current issuance key"}
+  ]
+}

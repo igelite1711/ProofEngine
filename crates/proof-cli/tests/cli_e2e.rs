@@ -653,29 +653,47 @@ fn proof_wrapper_id_mismatch_rejected_at_load() {
         )),
         Ok(0)
     );
-    // Swap the wrapper id; bytes unchanged. Must be a usage/engine error
-    // (exit 2 via Err), never a verdict under the wrong identity.
+    // Swap the wrapper id; bytes unchanged. M1 contract: tamper evidence is a
+    // FAIL verdict (exit 1) with a JSON IDENTIFIERS/ID_MISMATCH report naming
+    // both ids — never VALID under the wrong identity, never prose-only exit 2.
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&proof).unwrap()).unwrap();
     v["id"] =
         serde_json::Value::String("prf:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into());
     let bad = format!("{w}/proof-bad-id.json");
     std::fs::write(&bad, serde_json::to_string_pretty(&v).unwrap()).unwrap();
-    let err = run(args(
-        "verify",
-        &[
-            "--proof",
-            &bad,
-            "--clock",
-            "1700000300",
-            "--revocations-known-at",
-            "1700000300",
-        ],
-    ));
-    assert!(err.is_err(), "wrapper id mismatch must error, got {err:?}");
+    // Direct library check: envelope mismatch helper builds the FAIL report.
+    let report = proof_cli::check::envelope_mismatch_report(
+        "prf:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "prf:v1:placeholder",
+    );
+    assert_eq!(
+        report.cryptographic_validity,
+        proof_verify::Validity::Invalid,
+        "envelope mismatch must be crypto Invalid"
+    );
     assert!(
-        err.unwrap_err().contains("envelope id mismatch"),
-        "error must name the envelope rule"
+        report
+            .failure_codes()
+            .contains(&proof_core::ErrorCode::IdMismatch),
+        "envelope mismatch must carry ID_MISMATCH"
+    );
+    // CLI contract (M1): mismatch is a FAIL verdict Ok(1) with JSON, never
+    // VALID under the wrong identity and never prose-only Err.
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &bad,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+            ]
+        )),
+        Ok(1),
+        "wrapper id mismatch must be FAIL verdict Ok(1)"
     );
     // A wrapper with no `id` at all still loads by bytes (raw transport).
     let mut v2: serde_json::Value =
