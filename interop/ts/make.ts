@@ -180,7 +180,8 @@ export function makeProof(
   attestations: AttestationArtifact[] = [],
   evidence: Artifact[] = [],
   relationships: Artifact[] = [],
-  referencedProofs: string[] = []
+  referencedProofs: string[] = [],
+  vocabularies: [string, number][] = []
 ): Artifact {
   const evRaw = events.map((e) => Buffer.from(e.cbor, "hex"));
   const evdRaw = evidence.map((e) => Buffer.from(e.cbor, "hex"));
@@ -224,6 +225,20 @@ export function makeProof(
     }
     binding.pairs.push(["referenced_proofs", refs]);
   }
+  if (vocabularies.length > 0) {
+    const vocs = [...vocabularies].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    if (
+      JSON.stringify(vocs.map(([n]) => n)) !==
+        JSON.stringify([...vocabularies].map(([n]) => n).sort()) ||
+      new Set(vocs.map(([n]) => n)).size !== vocs.length
+    ) {
+      throw new InteropFail("creator vocabularies must be sorted by ns with no duplicates");
+    }
+    binding.pairs.push([
+      "vocabularies",
+      vocs.map(([ns, ver]) => new Map_([["ns", ns], ["version", ver]])),
+    ]);
+  }
   const proofId = objId("prf", encMap(binding.pairs));
   const rawMap = (b: Uint8Array): Map_ => {
     const [v, pos] = dec(b);
@@ -252,6 +267,14 @@ export function makeProof(
   ]);
   if (referencedProofs.length > 0) {
     outer.pairs.push(["referenced_proofs", [...referencedProofs].sort()]);
+  }
+  if (vocabularies.length > 0) {
+    outer.pairs.push([
+      "vocabularies",
+      [...vocabularies]
+        .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+        .map(([ns, ver]) => new Map_([["ns", ns], ["version", ver]])),
+    ]);
   }
   const proofRaw = encMap(outer.pairs);
   // creator self-check through the independent verifier

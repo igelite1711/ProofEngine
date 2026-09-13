@@ -89,6 +89,47 @@
       "files": [
         "crates/proof-policy/src/lib.rs"
       ]
+    },
+    {
+      "commit": "779a730",
+      "class": "CORE",
+      "layer": "created_at binding wire fix (proposal docs/ARCHITECTURE-CHANGE-PROPOSAL-created_at-binding.md): proof_id gains created_at; envelope/id/builder/tests/vectors/interop updated in lockstep. Pre-V1.0 breaking wire change; goldens regenerated.",
+      "files": [
+        "crates/proof-core/src/model.rs",
+        "crates/proof-crypto/src/envelope.rs",
+        "crates/proof-crypto/src/id.rs",
+        "crates/proof-verify/src/builder.rs",
+        "fixtures/golden-11.json",
+        "fixtures/golden-12.json",
+        "fixtures/golden-13.json",
+        "fixtures/golden-14.json",
+        "fixtures/golden-15.json",
+        "fixtures/golden-16.json",
+        "fixtures/golden-17.json",
+        "fixtures/golden-18.json",
+        "fixtures/golden-19.json",
+        "fixtures/golden-24.json",
+        "fixtures/golden-25.json",
+        "fixtures/golden-26.json",
+        "fixtures/golden-27.json",
+        "fixtures/golden-28.json",
+        "fixtures/golden-29.json",
+        "fixtures/golden-30.json",
+        "fixtures/golden-31.json"
+      ]
+    },
+    {
+      "commit": "779a730",
+      "class": "CORE",
+      "layer": "STATUS feed-hygiene stage (proposal docs/ARCHITECTURE-CHANGE-PROPOSAL-status-hygiene.md): input-hygiene failures leave REVOCATION for STATUS and no longer flip evidence_validity; status_inputs_valid carries feed health. Verdict change by design, pre-V1.0.",
+      "files": [
+        "crates/proof-verify/src/pipeline.rs",
+        "crates/proof-verify/src/report.rs",
+        "crates/proof-verify/src/context.rs",
+        "crates/proof-policy/src/state.rs",
+        "crates/proof-policy/src/eval.rs",
+        "crates/proof-policy/src/policy.rs"
+      ]
     }
   ]
 }
