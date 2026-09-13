@@ -46,6 +46,9 @@ pub struct VerificationContext {
     /// set. Empty (default) = V1 defaults. Future vocabularies declare their
     /// own trust-relevant kinds here without a core change (AUDIT §5).
     pub extra_grounded: Vec<String>,
+    /// Provenance DAG profile (V1.1 F4, default false). When true the full
+    /// member graph must be acyclic, not just SUPERSEDES.
+    pub require_acyclic_provenance: bool,
 }
 
 impl Default for VerificationContext {
@@ -63,6 +66,7 @@ impl Default for VerificationContext {
             report_all_failures: false,
             accepted_vocabularies: vec![],
             extra_grounded: vec![],
+            require_acyclic_provenance: false,
         }
     }
 }
@@ -83,6 +87,7 @@ impl VerificationContext {
             report_all_failures: self.report_all_failures,
             accepted_vocabularies: self.accepted_vocabularies.clone(),
             extra_grounded: self.extra_grounded.clone(),
+            require_acyclic_provenance: self.require_acyclic_provenance,
         }
     }
 

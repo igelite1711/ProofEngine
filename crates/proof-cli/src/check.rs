@@ -75,6 +75,7 @@ pub fn report_json(r: &VerifyReport) -> serde_json::Value {
         "evidence_validity": validity_str(r.evidence_validity),
         "policy_decision": r.policy_decision.as_str(),
         "lifecycle_checked": r.lifecycle_checked,
+        "status_inputs_valid": r.status_inputs_valid,
         "lifecycle": r
             .lifecycle
             .iter()
@@ -217,6 +218,11 @@ pub fn emit_human_summary(report: &VerifyReport) {
     };
     eprintln!("{pass}/{total} checks passed");
     eprintln!("RESULT {result} (exit {code})");
+    if !report.status_inputs_valid {
+        eprintln!(
+            "  note: status feed has errors (STATUS stage) — proof validity unaffected; see `status_inputs_valid:false`"
+        );
+    }
     for f in report.failure_codes() {
         eprintln!("  failure: {}", f.as_str());
     }

@@ -103,9 +103,14 @@ pub struct LifecycleRecord {
 
 /// Per-evidence status outcome (EVIDENCE stage). Derived from availability,
 /// the backing attestation's lifecycle, withdrawals, and compromises.
-/// Informational derivation: validity verdicts follow the same fail records
-/// (WITHDRAWN/COMPROMISED/REVOKED/UNKNOWN flip evidence validity; SUPERSEDED
-/// and EXPIRED preserve the attestation-level convention).
+/// Validity rule (V1.1 clarified): WITHDRAWN/COMPROMISED/REVOKED/UNKNOWN flip
+/// evidence validity; SUPERSEDED and EXPIRED do NOT (they mirror the
+/// attestation-level convention where TIME already failed for expiry and
+/// history is preserved for supersession). An `ok:true` check may still carry
+/// a `code` (EXPIRED/SUPERSEDED) as informational context — `failure_codes()`
+/// only includes `ok:false` records, so info codes never masquerade as
+/// failures. Callers MUST read validity from `evidence_validity`, context
+/// from `code`/`evidence_status`.
 #[derive(Debug, Clone)]
 pub struct EvidenceStatusRecord {
     /// Evidence id (`evd:<id>`) the status concerns.
@@ -153,6 +158,17 @@ impl ConflictKind {
 /// contradictions (same fact encoded under different claim types) remain the
 /// domain/policy's job — the core surfaces structural divergence only,
 /// plus explicit `denies`/`CONTRADICTS` opposition as stated.
+///
+/// CANONICAL POLICY PATTERN (V1.1 F5 guidance): the three opposition shapes —
+/// auto-detected `divergent_claims`, `denies`-field `denial`, and grounded
+/// `CONTRADICTS`-edge `contradiction` — are distinct `ConflictKind`s over the
+/// same adjudication input. The same attestation pair MAY appear in two groups
+/// at once (e.g. different fields + explicit edge): this is correct, not
+/// double-counting. Gate with single `no_conflicting_evidence` (v2) to reject
+/// any opposition, or with thresholds/preferred-issuer logic around it.
+/// IDENTITY CANONICAL PATTERN: `identity.bind` attestations (CLI-friendly) and
+/// grounded `EQUIVALENT` edges (graph-native) are two wire shapes over one
+/// policy input — `identity_bound{a,b}` honors both from trusted asserters.
 #[derive(Debug, Clone)]
 pub struct ConflictRecord {
     pub kind: ConflictKind,
@@ -207,6 +223,13 @@ pub struct VerifyReport {
     /// never changes validity by itself; policy adjudicates.
     pub conflicts: Vec<ConflictRecord>,
     pub checks: Vec<CheckRecord>,
+    /// Feed health for caller-supplied status inputs (V1.1 F2 fix).
+    /// False when any `STATUS`-stage check failed (malformed/unauthorized/
+    /// future-dated/supplied-signature problems). An ineffective effect never
+    /// flips `evidence_validity` — the target lifecycle is untouched — but
+    /// callers operating a status feed SHOULD alert on false here to
+    /// distinguish "proof revoked" from "feed broken".
+    pub status_inputs_valid: bool,
 }
 
 impl VerifyReport {
@@ -299,6 +322,9 @@ impl VerifyReport {
             }
         };
         let temporal = verdict_for(&["TIME"], false, Verdict::Indeterminate);
+        // V1.1: STATUS (feed hygiene) is intentionally excluded here — a bad
+        // feed must not flip the revocation dimension or overall verdict. Feed
+        // health travels in `status_inputs_valid` + STATUS checks.
         let revocation = verdict_for(&["REVOCATION"], false, Verdict::Indeterminate);
         let policy = match self.policy_decision {
             PolicyDecision::Pass => Verdict::Valid,

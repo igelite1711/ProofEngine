@@ -162,8 +162,9 @@ INPUT → PARSE → SCHEMA → CANONICAL → IDENTIFIERS → SIGNATURES → KEYS
  → RELATIONSHIPS → GRAPH → POLICY (caller hand-off) → FINAL
 ```
 
-11 check stages (PARSE…GRAPH) + caller POLICY evaluation + FINAL emission =
-13 fixed positions. Stage names are normative (see PROOF-ENGINE-SPEC §9.1).
+11 check stages (PARSE…GRAPH) + STATUS feed-hygiene stage (V1.1; excluded
+from validity) + caller POLICY evaluation + FINAL emission.
+Stage names are normative (see PROOF-ENGINE-SPEC §9.1).
 
 Stage responsibilities:
 
@@ -177,9 +178,10 @@ Stage responsibilities:
 8. REVOCATION/SUPERSESSION/WITHDRAWAL/COMPROMISE: join against verifier-supplied signed status objects + `revocation_authorities`; states `ACTIVE|EXPIRED|REVOKED|SUPERSEDED|COMPROMISED|UNKNOWN` (`COMPROMISED>REVOKED>SUPERSEDED>EXPIRED>UNKNOWN>ACTIVE`) + 8 evidence states (see LIFECYCLE.md). Missing/stale info → `UNKNOWN` → fail closed.
 9. EVIDENCE: digest recompute where content is embedded; external refs are digest-only — the engine never fetches, and digests are re-validated as ids/binding.
 10. RELATIONSHIPS: endpoints resolve, types known, required backing evidence present.
-11. GRAPH: acyclic where required (SUPERSEDES chain must be linear acyclic), depth/node/edge limits, no dangling refs.
+11. GRAPH: acyclic where required (SUPERSEDES chain must be linear acyclic), depth/node/edge limits, no dangling refs. Opt-in provenance DAG profile (`require_acyclic_provenance` / `--require-acyclic`) rejects any relationship cycle for derivation chains; default allows REFERENCES cycles as linkage.
+11b. STATUS (V1.1): caller-feed hygiene — malformed/unauthorized/future-dated/supplied-signature problems. Never flips validity; exposed via `status_inputs_valid`.
 12. POLICY (caller-evaluated, reported INDETERMINATE by the pipeline).
-13. FINAL: emit triple `{ cryptographic_validity, evidence_validity, policy_decision }` + dimensioned projection (structural/crypto/evidence/provenance/temporal/revocation/policy/overall) + `explanation[]` + stable error codes (24).
+13. FINAL: emit `{ cryptographic_validity, evidence_validity, policy_decision, status_inputs_valid }` + dimensioned projection (structural/crypto/evidence/provenance/temporal/revocation/policy/overall) + `explanation[]` + stable error codes (24).
 
 Fail-closed rule: any `UNKNOWN` in crypto or evidence validity forces `policy_decision ∈ {FAIL, INDETERMINATE}`, never `PASS`. `PASS` requires all required checks `valid`.
 

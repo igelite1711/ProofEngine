@@ -313,6 +313,8 @@ def verify_proof(proof_raw):
         raise InteropFail("proposition must be map")
     _closed(prop, _PROP_FIELDS, "proposition")
     created = d.get("created_at")
+    if not isinstance(created, int) or isinstance(created, bool):
+        raise InteropFail("created_at must be a uint")
 
     def members(key, prefix):
         arr = _req(outer, key)
@@ -379,6 +381,7 @@ def verify_proof(proof_raw):
 
     binding = Map([
         ("attestations", sorted(att_ids)),
+        ("created_at", created),
         ("events", sorted(event_ids)),
         ("evidence", sorted(evd_ids)),
         ("relationships", sorted(rel_ids)),
@@ -558,6 +561,7 @@ def make_proof(kind, subject, predicate, obj=None, at_time=None, context=(),
     r_ids = ids("rel", rel_raw)
     binding = Map([
         ("attestations", a_ids),
+        ("created_at", created_at),
         ("events", e_ids),
         ("evidence", d_ids),
         ("relationships", r_ids),

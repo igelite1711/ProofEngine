@@ -327,7 +327,10 @@ pub struct StoredAttestation {
 
 /// Portable proof package (without canonical bytes). `proof_id` binds the
 /// proposition plus the exact member id sets (see `proof-crypto::id`).
-/// `created_at` is informational only and is NOT covered by the id.
+/// `created_at` IS covered by the id (V1 CORE freeze deviation, pre-V1.0
+/// wire fix): re-stamping it changes the recomputed id and fails
+/// `ID_MISMATCH` at IDENTIFIERS, so `proof_fresh` cannot be forged by
+/// rewrites (see FORMAT §3, SPEC §7).
 /// `referenced_proofs` (additive composition linkage): sorted, deduped ids of
 /// proofs this proof was composed from. Empty (the V1 shape) encodes to
 /// byte-identical bytes as before; when non-empty the binding covers the set.

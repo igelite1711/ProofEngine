@@ -48,17 +48,20 @@ pub fn relationship_id(canonical_rel: &[u8]) -> String {
     id_with(proof_core::model::id_prefix::REL, canonical_rel)
 }
 
-/// Proof id binds the proposition plus the exact sorted member id sets.
-/// Byte-precise construction: canonical CBOR of
-/// `{"v":1, "proposition":<prop>, "events":[ids…], "attestations":[ids…],
-/// "evidence":[ids…], "relationships":[ids…]}` (each id list sorted ascending),
-/// hashed with SHA-256. `created_at` is intentionally NOT covered (informational).
+/// Proof id binds the proposition plus the exact sorted member id sets and the
+/// creation timestamp. Byte-precise construction: canonical CBOR of
+/// `{"v":1, "proposition":<prop>, "created_at":<uint>, "events":[ids…],
+/// "attestations":[ids…], "evidence":[ids…], "relationships":[ids…]}` (each
+/// id list sorted ascending), hashed with SHA-256. `created_at` IS covered by
+/// the binding (PE-LI-…): a holder-rewritable timestamp would make
+/// `proof_fresh` forgeable, so it is authenticated like every other member.
 /// See [`proof_id_with_refs`] for the composition extension: when
 /// `referenced_proofs` is empty the binding — and every id it produces — is
 /// byte-identical to this function.
-// PE-CRYPTO-007 (member-set binding; created_at excluded).
+// PE-CRYPTO-007 (member-set binding; created_at bound).
 pub fn proof_id(
     proposition: &CborValue,
+    created_at: u64,
     event_ids: &[String],
     attestation_ids: &[String],
     evidence_ids: &[String],
@@ -66,6 +69,7 @@ pub fn proof_id(
 ) -> String {
     proof_id_with_refs(
         proposition,
+        created_at,
         event_ids,
         attestation_ids,
         evidence_ids,
@@ -82,6 +86,7 @@ pub fn proof_id(
 /// (dropping or swapping a reference changes the id).
 pub fn proof_id_with_refs(
     proposition: &CborValue,
+    created_at: u64,
     event_ids: &[String],
     attestation_ids: &[String],
     evidence_ids: &[String],
@@ -90,6 +95,7 @@ pub fn proof_id_with_refs(
 ) -> String {
     proof_id_full(
         proposition,
+        created_at,
         event_ids,
         attestation_ids,
         evidence_ids,
@@ -103,8 +109,12 @@ pub fn proof_id_with_refs(
 /// `vocabularies` MUST already be sorted by ns and deduped. Empty sets encode
 /// the identical binding map as [`proof_id`]: V1 proofs keep byte-identical
 /// ids. Non-empty sets add sorted keys, so declarations are tamper-evident.
+// Eight explicit parameters are the point here: every binding term is named
+// and mandatory at each call site (the id cannot silently drop a member set).
+#[allow(clippy::too_many_arguments)]
 pub fn proof_id_full(
     proposition: &CborValue,
+    created_at: u64,
     event_ids: &[String],
     attestation_ids: &[String],
     evidence_ids: &[String],
@@ -122,6 +132,10 @@ pub fn proof_id_full(
             (
                 CborValue::Text("attestations".into()),
                 sorted(attestation_ids),
+            ),
+            (
+                CborValue::Text("created_at".into()),
+                CborValue::Uint(created_at),
             ),
             (CborValue::Text("events".into()), sorted(event_ids)),
             (CborValue::Text("evidence".into()), sorted(evidence_ids)),

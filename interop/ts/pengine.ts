@@ -253,7 +253,10 @@ export function verifyProof(proofRaw: Uint8Array): ProofReport {
   }
   const prop = mapGet(outer, "proposition");
   closed(prop, PROP_FIELDS, "proposition");
-  const created = mapOpt(outer, "created_at");
+  const created = mapGet(outer, "created_at");
+  if (typeof created !== "number" || !Number.isInteger(created)) {
+    throw new InteropFail("created_at must be a uint");
+  }
 
   const eventIds: string[] = [];
   for (const m of members(outer, "events")) {
@@ -363,6 +366,7 @@ function bindAndReport(
 ): ProofReport {
   const binding: [string, unknown][] = [
     ["attestations", [...attIds].sort()],
+    ["created_at", created],
     ["events", [...eventIds].sort()],
     ["evidence", [...evdIds].sort()],
     ["relationships", [...relIds].sort()],
@@ -623,6 +627,7 @@ export function makeProof(
     raws.map((r) => objId(prefix, r)).sort();
   const binding: [string, unknown][] = [
     ["attestations", attEntries.map(([c]) => objId("att", c as Uint8Array)).sort()],
+    ["created_at", createdAt],
     ["events", ids("evt", evRaw)],
     ["evidence", ids("evd", evdRaw)],
     ["relationships", ids("rel", relRaw)],

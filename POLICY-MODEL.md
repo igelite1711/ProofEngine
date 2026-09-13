@@ -45,9 +45,11 @@ Conflict adjudication via v2 leaves is shipped (`any`/`threshold` quorums +
 dedicated report-level `CONFLICT` verdict remains V2;
 currency conflicts (`REVOKED>SUPERSEDED`) handled today.
 
-`proof_fresh` is advisory replay hygiene, not a boundary: `created_at` is
-outside `proof_id` and holder-rewritable (pinned by test). Strong freshness
-comes from signed attestation windows (`not_expired`) and transparency.
+`proof_fresh` bounds self-declared age against the verifier clock — advisory
+replay hygiene, not a boundary against a lying clock. `created_at` IS covered
+by `proof_id` (V1 CORE freeze deviation, pre-V1.0 wire fix; re-stamping fails
+`ID_MISMATCH`, pinned by test). Strong freshness comes from signed
+attestation windows (`not_expired`) and transparency.
 
 ## 4. V2 path (boolean layer shipped)
 

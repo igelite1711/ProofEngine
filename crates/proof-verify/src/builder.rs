@@ -141,6 +141,7 @@ impl ProofBuilder {
             .collect();
         let id = proof_id_full(
             &prop_cbor,
+            self.created_at,
             &event_ids,
             &att_ids,
             &evd_ids,

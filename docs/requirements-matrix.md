@@ -37,7 +37,7 @@ INTEROP interoperability · OPS operational controls.
 | PE-CRYPTO-010 | Signature determinism: Ed25519 (RFC 8032) + ECDSA P-256 (RFC 6979) byte-identical for fixed key+message; randomized schemes require a MAJOR re-scope | LONGEVITY §5 | `proof-crypto/src/cose.rs` | `cose::signing_is_deterministic_ed25519_and_esp256` | `cose::esp256_tampered_payload_fails`, `cose::esp256_wrong_key_fails` |
 | PE-CRYPTO-011 | ESP256 (P-256) golden vectors 21/22/23 + independent pure-Python verification | LONGEVITY §4, INTEROPERABILITY | `fixtures/golden-21.json`, `interop/pengine.py` | `golden::golden_21_esp256_valid_sign1` | `golden::golden_22_esp256_tampered_rejected`, `golden::golden_23_esp256_wrong_key_rejected` |
 | PE-CRYPTO-009 | Ids carry one full SHA-256 digest; truncated/oversized digest refs rejected; no normalization (FORMAT §3, §3.1) | FORMAT §3 | `proof-crypto/src/id.rs` verify_id, `proof-cli/src/main.rs` hex validation | `id::id_digest_must_be_full_sha256`, `cli_e2e::artifact_workflow_verify_then_revoke` | `main::truncated_digest_refs_rejected_as_usage_error`, `cbor::golden_20_text_byte_identity` |
-| PE-CRYPTO-007 | proof_id binds proposition + sorted member id sets (created_at excluded) | FORMAT §3 | `proof-crypto/src/id.rs` proof_id | `cli_e2e::demo_is_deterministic_and_green` | `golden_proof::golden_12_mutated_proof` |
+| PE-CRYPTO-007 | proof_id binds proposition + `created_at` + sorted member id sets (created_at covered — V1 CORE freeze deviation, pre-V1.0 wire fix) | FORMAT §3 | `proof-crypto/src/id.rs` proof_id | `policy::created_at_restamp_breaks_binding_and_fails_id_mismatch` | `golden_proof::golden_12_mutated_proof`, `soak::bit_flips_fail_closed` |
 | PE-CRYPTO-008 | Hash agility via HashRef alg enum; digest lengths enforced | FORMAT §2 | `proof-core/src/hash.rs`, `proof-crypto/src/hash.rs` | `build::evidence_create_verify_ok_and_tamper_fails` | `hash::digest_lengths_enforced` (added C3) |
 
 ## EVID — evidence (FORMAT.md §4.3)
@@ -55,7 +55,7 @@ INTEROP interoperability · OPS operational controls.
 |----|-------------|------|----------------|---------------|---------------|
 | PE-GRAPH-001 | Typed edges; OWN/CREATED/SETTLES/EXECUTED require grounding | FORMAT §4.4 | `proof-graph/src/lib.rs` validate_graph | `graph::valid_chain_passes` | `graph::ungrounded_settles_rejected` |
 | PE-GRAPH-002 | Dangling endpoints/references rejected | FORMAT §4.6 | `proof-graph/src/lib.rs` | `graph::valid_chain_passes` | `graph::dangling_endpoint_rejected` |
-| PE-GRAPH-003 | SUPERSEDES acyclic + linear + depth-bounded; other cycles allowed | FORMAT §4.4 | `proof-graph/src/lib.rs` Kahn check | `graph::non_supersedes_cycles_allowed` | `graph::supersedes_cycle_rejected`, golden-10 |
+| PE-GRAPH-003 | SUPERSEDES acyclic + linear + depth-bounded; other cycles allowed by default; opt-in provenance DAG profile (`require_acyclic_provenance`) rejects any cycle | FORMAT §4.4 | `proof-graph/src/lib.rs` Kahn check + `check_acyclic_provenance` | `graph::non_supersedes_cycles_allowed`, `graph::provenance_dag_allows_chains_rejects_cycles` | `graph::supersedes_cycle_rejected`, golden-10 |
 | PE-GRAPH-004 | Node/edge/depth/size limits enforced (bounded traversal) | THREAT-MODEL §5 | `proof-graph/src/lib.rs`, `proof-verify/src/builder.rs` | `graph::depth_limit_enforced` | `graph::edge_limit_enforced`, oversized tests |
 
 ## VERIFY — pipeline (ARCHITECTURE.md §4)
@@ -69,7 +69,7 @@ INTEROP interoperability · OPS operational controls.
 | PE-VERIFY-005 | Stage 5 SIGNATURES: COSE verify + envelope/payload agreement | ARCH §4 | `proof-verify/src/pipeline.rs` | `golden_proof::golden_11_valid_proof` | `proof::mutated_signature_fails_signatures_stage` |
 | PE-VERIFY-006 | Stage 6 KEYS: kid shape, alg agreement, issuer binding | ARCH §4 | `proof-verify/src/pipeline.rs` | `proof::valid_proof_verifies_portable` | `build::attest_refuses_foreign_issuer` |
 | PE-VERIFY-007 | Stage 7 TIME: explicit clock + symmetric skew | ARCH §4 | `proof-verify/src/pipeline.rs` time_validity | `lifecycle::active_proof_reports_active_lifecycle` | `lifecycle::expired_attestation_fails_with_expired` |
-| PE-VERIFY-008 | Stage 8 REVOCATION: signed status only + authority + timeliness | ARCH §4 | `proof-verify/src/pipeline.rs` | `lifecycle::revoked_attestation_fails_with_revoked` | `lifecycle::unauthorized_revocation_fails` |
+| PE-VERIFY-008 | Stage 8 REVOCATION (lifecycle) + STATUS (feed hygiene, V1.1): signed status only + authority + timeliness; hygiene never flips validity (`status_inputs_valid`) | ARCH §4 | `proof-verify/src/pipeline.rs` | `lifecycle::revoked_attestation_fails_with_revoked` | `lifecycle::unauthorized_revocation_fails` |
 | PE-VERIFY-009 | Stages 9–11 EVIDENCE/RELATIONSHIPS/GRAPH | ARCH §4 | `proof-verify/src/pipeline.rs`, `proof-graph` | `proof::valid_proof_verifies_portable` | `proof::ungrounded_proof_separates_crypto_from_evidence` |
 | PE-VERIFY-010 | Failures recorded never repaired; stages never skipped | ARCH §4 | `proof-verify/src/pipeline.rs` finalize/stage_valid | `proof::valid_proof_verifies_portable` | `soak::bit_flips_fail_closed` |
 | PE-VERIFY-011 | Early exit reports evidence Invalid (no vacuous Valid) | ARCH §4 | `proof-verify/src/pipeline.rs` finalize | `golden_proof::golden_11_valid_proof` | `proof::garbage_bytes_fail_parse_closed` |

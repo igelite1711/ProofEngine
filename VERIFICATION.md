@@ -78,12 +78,12 @@ ESP256 (-9) accepted. Recompute ids and signature checks over
 | `SCHEMA_VIOLATION` | unknown enum variant/field, missing field, closed-set violation (SCHEMA) |
 | `RELATIONSHIP_UNGROUNDED` | trust-relevant edge lacks backing evidence (RELATIONSHIPS) |
 | `DANGLING_REFERENCE` | endpoint or reference resolves to nothing (RELATIONSHIPS/EVIDENCE) |
-| `CYCLE_DETECTED` | SUPERSEDES subgraph is cyclic (GRAPH) |
+| `CYCLE_DETECTED` | SUPERSEDES subgraph is cyclic (GRAPH); or any relationship cycle under the opt-in provenance DAG profile (`--require-acyclic`) |
 | `POLICY_INVALID` | policy syntax/version/requirement rejected before evaluation (POLICY) |
-| `EXPIRED` | attestation outside validity window at the verifier clock (TIME) |
+| `EXPIRED` | attestation outside validity window at the verifier clock (TIME); or status effect not valid yet at the verifier clock — future-dated feed object (STATUS, validity unaffected) |
 | `REVOKED` | attestation covered by a valid signed revocation (REVOCATION) |
 | `REVOCATION_UNKNOWN` | no/stale revocation info for a proof-bearing attestation (REVOCATION) |
-| `UNAUTHORIZED_STATUS` | status object signer has no authority over its target (REVOCATION) |
+| `UNAUTHORIZED_STATUS` | status object signer has no authority over its target (STATUS — feed hygiene; validity unaffected, see `status_inputs_valid`) |
 | `WITHDRAWN` | covered by a valid signed withdrawal (REVOCATION/EVIDENCE) |
 | `COMPROMISED` | tainted by a valid signed compromise marking (REVOCATION/EVIDENCE) |
 

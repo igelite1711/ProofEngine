@@ -46,8 +46,9 @@ shape (32 B for -19, 64 B `X\|\|Y` for -9) else `ALGORITHM_CONFUSION`.
 - `HashAlgorithm`: SHA-256 (CBOR enum 0, 32 B) / SHA-384 (enum 1, 48 B);
   `HashRef::new` enforces digest length.
 - Object id: `<prefix>:v1:<b64u-nopad(sha256(canonical CBOR)))>`.
-- `proof_id` binds the proposition plus the *sorted* member id sets
-  (events, attestations, evidence, relationships); `created_at` excluded.
+- `proof_id` binds the proposition, the proof's `created_at` (V1 CORE freeze
+  deviation, pre-V1.0 wire fix — re-stamping fails `ID_MISMATCH`), plus the
+  *sorted* member id sets (events, attestations, evidence, relationships).
 - `verify_id` recomputes from bytes: any bit flip → `ID_MISMATCH`.
 
 ## P-256 note

@@ -207,6 +207,7 @@ export function makeProof(
   const rIds = ids("rel", relRaw);
   const binding = new Map_([
     ["attestations", aIds],
+    ["created_at", createdAt],
     ["events", eIds],
     ["evidence", dIds],
     ["relationships", rIds],

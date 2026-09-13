@@ -347,6 +347,7 @@ pub fn resolve(cli: &Cli) -> Result<i32, String> {
         report_all_failures: vp.report_all_failures,
         accepted_vocabularies: vp.accepted_vocabularies,
         extra_grounded: vp.extra_grounded,
+        require_acyclic_provenance: vp.require_acyclic_provenance,
         ..Default::default()
     };
     let rep = resolve_proof_chain(&proof.canonical, &store, &ctx, max_depth)

@@ -48,7 +48,7 @@ interop-py: build demo ## Second independent verifier (Python, stdlib-only): 37-
 	python3 interop/differential.py --repo . --proof-cli $(PROOF_CLI) --work /tmp/proof-interop
 
 interop-ts: ## Third independent verifier (TypeScript): typecheck + differential over golden corpus
-	cd interop/ts && (test -d node_modules || npm install --no-audit --no-fund) && PROOF_CLI=$(PROOF_CLI) npm run --silent differential
+	cd interop/ts && (test -d node_modules || npm install --no-audit --no-fund) && PROOF_CLI=$(abspath $(PROOF_CLI)) npm run --silent differential
 
 interop: interop-py interop-ts ## All independent verifiers (Python + TypeScript)
 

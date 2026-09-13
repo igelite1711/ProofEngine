@@ -955,39 +955,32 @@ fn verify_and_evaluate_pairs_one_context() {
 }
 
 #[test]
-fn created_at_restamp_moves_freshness_without_breaking_binding() {
+fn created_at_restamp_breaks_binding_and_fails_id_mismatch() {
     // ATTACKER MODEL for `proof_fresh` (see `Requirement::ProofFresh`): the
-    // holder of a stale proof rewrites the unauthenticated `created_at` to
-    // look fresh. The binding and all signatures survive (by design), so the
-    // rewritten proof verifies — and `proof_fresh` flips to PASS. This test
-    // pins that behavior so nobody mistakes the check for a security
-    // boundary: strong freshness must come from signed attestation windows.
-    let (built, issuer, _) = setup();
+    // holder of a stale proof rewrites `created_at` to look fresh. Since the
+    // wire fix (V1 CORE freeze deviation), `created_at` is COVERED by the
+    // proof_id binding: the re-stamped envelope recomputes to a different id
+    // than the embedded `proof_id`, so verification fails closed with
+    // ID_MISMATCH at IDENTIFIERS — the restamped bytes never evaluate.
+    // (Pre-fix behavior — restamp kept the binding and flipped proof_fresh to
+    // PASS — is preserved for V1.0 comparison in the review archive.)
+    let (built, _issuer, _) = setup();
     let lim = limits();
     let stale_clock = CLOCK_OK + 100_000;
-    let fresh_policy = parse_policy(
-        &serde_json::json!({
-            "policy_version": 1,
-            "policy_id": "fresh_v1",
-            "requirements": [{"type": "proof_fresh", "max_age_seconds": 300}]
-        }),
-        &lim,
-    )
-    .unwrap();
-    let eval_at = |proof: &proof_core::model::Proof, bytes: &[u8], clock: u64| {
+    let eval_at = |bytes: &[u8], clock: u64| {
         let mut c = ctx();
         c.verified_at = clock;
         c.revocations_known_at = Some(clock);
-        let report = verify_proof(bytes, &c).unwrap();
-        let state = state_from_report_and_proof(&report, proof).unwrap();
-        let mut inp = inputs(&issuer);
-        inp.verified_at = clock;
-        (report, evaluate_policy(&state, &fresh_policy, &inp))
+        verify_proof(bytes, &c).unwrap()
     };
-    let (_, stale_out) = eval_at(&built.proof, &built.canonical, stale_clock);
-    assert_eq!(stale_out.decision, PolicyDecision::Fail);
+    // Sanity: original bytes verify clean at the stale clock (proof_fresh
+    // would fail, but the binding holds).
+    let baseline = eval_at(&built.canonical, stale_clock);
+    assert!(!baseline
+        .failure_codes()
+        .contains(&proof_core::ErrorCode::IdMismatch));
 
-    // Re-stamp `created_at` in the envelope. No signature covers it.
+    // Re-stamp `created_at` in the envelope.
     let mut v = proof_format::decode_strict(&built.canonical, &lim).unwrap();
     if let proof_format::CborValue::Map(pairs) = &mut v {
         for (k, val) in pairs.iter_mut() {
@@ -1002,14 +995,19 @@ fn created_at_restamp_moves_freshness_without_breaking_binding() {
         &lim,
     )
     .unwrap();
-    let (report, fresh_out) = eval_at(&restamped_proof, &restamped, stale_clock);
-    // Binding untouched: same proof_id, IDENTIFIERS clean.
-    assert_eq!(restamped_proof.proof_id, built.proof.proof_id);
-    assert!(!report
+    // The id over the restamped bytes differs from the embedded proof_id:
+    // the holder's rewrite is authenticated-time tamper-evidence.
+    let recomputed = proof_verify::pipeline::recomputed_proof_id(&restamped_proof).unwrap();
+    assert_ne!(recomputed, restamped_proof.proof_id);
+    // Verifier fails closed at IDENTIFIERS.
+    let report = eval_at(&restamped, stale_clock);
+    assert!(report
         .failure_codes()
         .contains(&proof_core::ErrorCode::IdMismatch));
-    // ...but freshness now passes on holder-rewritten bytes. Advisory only.
-    assert_eq!(fresh_out.decision, PolicyDecision::Pass);
+    assert_eq!(
+        report.cryptographic_validity,
+        proof_verify::Validity::Invalid
+    );
 }
 
 #[test]

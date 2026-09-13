@@ -41,36 +41,13 @@ impl Lcg {
     }
 }
 
-/// Byte ranges the proof id deliberately does NOT cover (FORMAT.md §6: the
-/// proof's `created_at` value is informational). Mutating these bits changes
-/// no verification decision, so a mutant there must stay Valid — this pins
-/// the documented trust boundary from the other side.
-fn unprotected_value_ranges(bytes: &[u8]) -> Vec<(usize, usize)> {
-    let label = b"created_at";
-    let mut out = vec![];
-    let mut i = 0;
-    while let Some(p) = bytes[i..]
-        .windows(label.len())
-        .position(|w| w == label)
-        .map(|p| p + i)
-    {
-        let vstart = p + label.len();
-        if let Some(&head) = bytes.get(vstart) {
-            let len = match head & 0x1f {
-                0..=23 => 1,
-                24 => 2,
-                25 => 3,
-                26 => 5,
-                27 => 9,
-                _ => 0, // forbidden construct; not an unprotected value
-            };
-            if len > 0 && vstart + len <= bytes.len() {
-                out.push((vstart, vstart + len));
-            }
-        }
-        i = p + label.len();
-    }
-    out
+/// Byte ranges the proof id deliberately does NOT cover. Since the wire fix
+/// (V1 CORE freeze deviation) `created_at` IS covered by `proof_id`, so there
+/// are no unprotected value ranges left: every byte flip must fail closed.
+/// Kept as a thin wrapper so the soak tests keep one place documenting the
+/// (now empty) trust-boundary exception list.
+fn unprotected_value_ranges(_bytes: &[u8]) -> Vec<(usize, usize)> {
+    vec![]
 }
 
 fn assert_fails_closed(bytes: &[u8], ctx: &VerifyCtx, tag: &str) {
@@ -97,7 +74,6 @@ fn baseline_proof_is_valid() {
 #[test]
 fn bit_flips_fail_closed() {
     let (bytes, ctx) = golden_proof();
-    let free = unprotected_value_ranges(&bytes);
     let mut rng = Lcg(0x5EED_1234_ABCD_0001);
     let n = bytes.len();
     for _ in 0..2000 {
@@ -105,18 +81,7 @@ fn bit_flips_fail_closed() {
         let pos = (rng.next() as usize) % n;
         let bit = (rng.next() % 8) as u32;
         m[pos] ^= 1 << bit;
-        if free.iter().any(|&(a, b)| pos >= a && pos < b) {
-            // Documented exception: `created_at` is informational. Flipping a
-            // bit must keep the proof Valid — no decision depends on it.
-            let r = verify_proof(&m, &ctx).expect("created_at flip stays decodable");
-            assert_eq!(
-                r.cryptographic_validity,
-                Validity::Valid,
-                "bitflip@{pos}::{bit}: informational created_at must not affect the verdict"
-            );
-        } else {
-            assert_fails_closed(&m, &ctx, &format!("bitflip@{pos}::{bit}"));
-        }
+        assert_fails_closed(&m, &ctx, &format!("bitflip@{pos}::{bit}"));
     }
 }
 

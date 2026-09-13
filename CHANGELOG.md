@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (V1 in development; protocol semantics evolve on `main`)
 
+### Changed (WIRE: `created_at` bound into `proof_id` — CORE freeze deviation, pre-V1.0)
+
+- **`proof_id` now covers `created_at`.** The V1 binding map gains one key
+  (`"created_at"` over the proof's own creation timestamp), closing the
+  freshness gap the external review flagged: `proof_fresh` reads
+  `created_at`, which a proof holder could previously re-stamp without
+  breaking the binding (advisory replay hygiene only). With the timestamp
+  authenticated by the id, a re-stamped envelope recomputes to a different
+  `proof_id` and fails closed with `ID_MISMATCH` at IDENTIFIERS. This is a
+  breaking wire change (every existing proof id changes), recorded as a
+  **CORE-class deviation from the V1 freeze** in `docs/freeze-manifest.json`
+  with the rationale in `ARCHITECTURE-FREEZE.md` §5: V1 is unpublished, so
+  the window to fix the binding honestly is now, before golden vectors
+  become normative. Golden vectors 11/12, 13–18, 24–27, 29–31 regenerated;
+  Python (`interop/pengine.py`) and TypeScript (`interop/ts/pengine.ts`)
+  differentials updated in lockstep and cross-verified 37/37 + 33/33.
+  `proof_fresh` semantics unchanged; the now-redundant
+  `proof_fresh`-without-`not_expired` CLI warning was removed, and the
+  soak suite's `created_at`-flip exception is gone (every byte fails closed).
+  `docs/ARCHITECTURE-CHANGE-PROPOSAL-created_at-binding.md` documents the
+  decision (§11 PENDING).
+
 ### Added (independent external review hardening — envelope consistency + freshness honesty)
 
 - **Envelope consistency (fail closed).** A proof wrapper whose `id` disagrees
@@ -18,8 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `proof-api` (`/v1/verify`, `/v1/evaluate`, `/v1/explain`).
 - **Freshness honesty for `proof_fresh`.** `evaluate` now warns on stderr
   when a policy uses `proof_fresh` WITHOUT `not_expired`, because
-  `created_at` is holder-rewritable and outside `proof_id` (advisory replay
-  hygiene only). Strong freshness must come from signed attestation windows
+  `created_at` is self-declared age (bound by `proof_id` since the wire fix
+  above, so silent re-stamps fail `ID_MISMATCH`) rather than a trusted
+  timestamp. Strong freshness must come from signed attestation windows
   (`not_expired`) or transparency anchoring. `examples/policies/README.md`
   documents the rule; verdicts are unchanged (the frozen pipeline and policy
   semantics stay byte-stable).
@@ -28,16 +51,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `make demo` and `interop/differential.py --repo <repo>` agree from any
   directory (falls back to CWD-relative when run outside a checkout).
 
-### Known tradeoff (documented, frozen behavior unchanged)
+### Changed (WIRE-ADDITIVE: status-input hygiene no longer poisons validity — CORE freeze deviation, pre-V1.0)
 
-- **Unauthorized status objects** (a valid signature, but the signer has no
-  authority over the target) are reported `UNAUTHORIZED_STATUS`
-  (`crypto valid, evidence invalid`, lifecycle preserved) and never apply.
-  This is the documented fail-closed rule; integrators that treat status
-  inputs as untrusted should filter them (or use a `StatusSource` adapter)
-  before verification, since any party can supply a mis-signed status object
-  that forces `INDETERMINATE` policy evaluation without any trust
-  consequence for the attacker.
+- **Ineffective status effects are feed health, not proof failure.**
+  Malformed status claims, non-status supplied objects, bad supplied
+  signatures, `UNAUTHORIZED_STATUS`, and future-dated effects now record in a
+  new `STATUS` stage (excluded from `evidence_validity`) instead of
+  `REVOCATION`. A proof whose lifecycle is ACTIVE stays
+  `crypto valid, evidence valid` with `status_inputs_valid: false` and the
+  feed error in `failure_codes` — callers distinguish "proof revoked" from
+  "feed broken" without conflating them. Lifecycle outcomes (REVOKED /
+  COMPROMISED / UNKNOWN) stay in `REVOCATION` and still flip validity.
+  Policy now evaluates (PASS/FAIL) on ACTIVE proofs with bad feeds instead of
+  short-circuiting to INDETERMINATE; feed operators SHOULD alert on
+  `status_inputs_valid == false`. Recorded as a CORE-class deviation in
+  `ARCHITECTURE-FREEZE.md` §6: V1 unpublished, window to fix honestly is now.
+
+### Known tradeoff (superseded by the fix above)
+
+- **Unauthorized status objects (HISTORICAL rule, superseded).** Pre-V1.1
+  builds reported `UNAUTHORIZED_STATUS` as (`crypto valid, evidence invalid`,
+  lifecycle preserved) and never applied. Since the STATUS-stage fix above,
+  the same case reports (`crypto valid, evidence valid`,
+  `status_inputs_valid: false`, lifecycle ACTIVE) and never applies.
+  Integrators SHOULD still filter untrusted feeds (or use a `StatusSource`
+  adapter), but a mis-signed object no longer forces `INDETERMINATE` policy
+  evaluation.
 
 ### Added (convergence elevation: identity, delegation, transparency, lifecycle, conflict, versioning)
 

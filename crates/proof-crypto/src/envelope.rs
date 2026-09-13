@@ -60,6 +60,7 @@ pub fn verify_envelope(
                 .collect();
             proof_id_full(
                 &proof_format::proposition_to_cbor(&p.proposition),
+                p.created_at,
                 &eids,
                 &aids,
                 &vids,
@@ -336,6 +337,7 @@ mod tests {
         let prop_cbor = proof_format::proposition_to_cbor(&prop);
         let pid = proof_id_full(
             &prop_cbor,
+            1_700_000_200,
             &[ev.id.clone(), ev2.id.clone()],
             std::slice::from_ref(&att.id),
             std::slice::from_ref(&evd.id),

@@ -40,14 +40,19 @@
 | `SCHEMA_VIOLATION` | SCHEMA | unknown variant/field, missing field, closed-set breach |
 | `RELATIONSHIP_UNGROUNDED` | RELATIONSHIPS | trust-relevant edge lacks backing evidence |
 | `DANGLING_REFERENCE` | RELATIONSHIPS/EVIDENCE | endpoint/reference resolves to nothing |
-| `CYCLE_DETECTED` | GRAPH | SUPERSEDES subgraph cyclic/branching/too deep |
+| `CYCLE_DETECTED` | GRAPH | SUPERSEDES subgraph cyclic/branching/too deep; or any relationship cycle under the opt-in provenance DAG profile (`--require-acyclic`) |
 | `POLICY_INVALID` | POLICY | policy rejected before evaluation (never partial) |
-| `EXPIRED` | TIME | outside validity window at verifier clock |
+| `EXPIRED` | TIME / STATUS | TIME: outside validity window at verifier clock. STATUS: status effect not valid yet at verifier clock (future-dated feed object; proof validity unaffected) |
 | `REVOKED` | REVOCATION | covered by a valid signed revocation |
 | `REVOCATION_UNKNOWN` | REVOCATION | no/stale revocation info (fail closed) |
-| `UNAUTHORIZED_STATUS` | REVOCATION | status signer has no authority over target |
+| `UNAUTHORIZED_STATUS` | STATUS | status signer has no authority over target (feed hygiene; proof validity unaffected, see `status_inputs_valid`) |
 | `WITHDRAWN` | REVOCATION/EVIDENCE | covered by a valid signed withdrawal (history preserved) |
 | `COMPROMISED` | REVOCATION/EVIDENCE | tainted by a valid signed compromise marking at/after its instant (history not preserved) |
+
+> STATUS-stage failures (V1.1): malformed status claims, non-status supplied
+> objects, supplied-signature rejects, `UNAUTHORIZED_STATUS`, and future-dated
+> effects record in `STATUS`, never flip `evidence_validity`, and surface via
+> `status_inputs_valid: false`. Lifecycle outcomes stay in `REVOCATION`.
 
 One-to-one with `proof-core/src/error.rs` (checked by audit; keep in sync —
 renaming is breaking).

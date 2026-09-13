@@ -279,6 +279,13 @@ adapters:
 9. **EVIDENCE** — evidence digest bindings; attestation evidence_refs resolve.
 10. **RELATIONSHIPS** — endpoints resolve; grounding for trust-relevant edges.
 11. **GRAPH** — node/edge limits; SUPERSEDES linear-acyclic; depth bound.
+    Provenance DAG profile (V1.1, opt-in via `require_acyclic_provenance` /
+    `--require-acyclic`): when enabled, the full member graph must also be
+    acyclic (`CYCLE_DETECTED`); default off — REFERENCES cycles are linkage
+    (citations/see-also), not derivation. Derivation chains SHOULD enable it.
+11b. **STATUS** — caller-feed hygiene (V1.1): malformed/unauthorized/
+    future-dated/supplied-signature problems. Never flips validity; exposed
+    via `status_inputs_valid`.
 12. **POLICY (caller hand-off)** — pipeline reports `INDETERMINATE`; the
     caller evaluates policy (§12) on the verified state. The pipeline MUST
     NOT PASS by itself.
@@ -287,7 +294,8 @@ adapters:
 ### 9.2 Report: dimensioned verdicts
 
 v1 (IMP) emits the triple `{cryptographic_validity, evidence_validity,
-policy_decision}` + lifecycle records. The additive projection
+policy_decision}` + feed health `status_inputs_valid` (V1.1; STATUS-stage
+failures never flip validity) + lifecycle records. The additive projection
 `dimensions()` (IMP, `proof-verify/src/report.rs`) derives eight dimensions
 from the same stage records without changing the triple, each with verdict ∈
 `VALID | INVALID | INDETERMINATE | NOT_APPLICABLE`:
@@ -413,10 +421,11 @@ Rules:
   (`VerifiedState`, `Policy`, `EvalInputs`); defaults fail closed.
 - Trust list: valid signature alone never confers trust. `issuer_trusted`
   requires list membership AND a signature-verified attestation in proof.
-- `proof_fresh` is advisory replay hygiene, not a boundary: `created_at` is
-  informational and outside `proof_id`, so a holder can re-stamp it without
-  breaking the binding. Strong freshness comes from signed attestation
-  windows and transparency anchoring.
+- `proof_fresh` bounds self-declared age against the verifier clock:
+  `created_at` IS covered by `proof_id` (V1 CORE freeze deviation, pre-V1.0
+  wire fix), so a holder re-stamp breaks the binding (`ID_MISMATCH`).
+  It is still not a trusted timestamp — pair with signed attestation
+  windows and transparency anchoring for strong freshness.
 - Direct `evaluate_policy` callers keep trust inputs within
   `Limits::max_trusted_issuers` (the one-shot `verify_and_evaluate`
   enforces this and fails closed with `LIMIT_EXCEEDED`).

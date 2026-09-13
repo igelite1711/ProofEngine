@@ -117,6 +117,7 @@ fn empty_linkage_is_byte_identical_v1() {
     let prop_cbor = proof_format::proposition_to_cbor(&proposition());
     let classic = proof_id(
         &prop_cbor,
+        1_700_000_200,
         &[pay.id.clone(), inv.id.clone()],
         std::slice::from_ref(&att.id),
         std::slice::from_ref(&evd.id),

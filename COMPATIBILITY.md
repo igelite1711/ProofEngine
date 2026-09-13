@@ -26,8 +26,10 @@ Additive-only semantics; new behavior = versioned capability row. Existing
 artifacts never change meaning. Breaking change requires: migration rule +
 historical preservation + compat tooling + documented breaking change +
 safe conversion utility. Never silently reinterpret old proofs.
-`created_at` excluded from `proof_id` by design (informational); policies
-must not treat it as authenticated (`proof_fresh` documents this).
+`created_at` IS covered by `proof_id` since the V1 CORE freeze deviation
+(pre-V1.0 wire fix): re-stamping fails `ID_MISMATCH`. `proof_fresh` still
+bounds only self-declared age against the verifier clock; `not_expired`
+(signed windows) remains the strong-freshness requirement.
 
 ## 2b. Crate version tiers
 

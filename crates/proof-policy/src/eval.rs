@@ -362,10 +362,10 @@ fn eval_one(req: &Requirement, state: &VerifiedState, inputs: &EvalInputs) -> Re
                 fail(&name, "no transparency_receipt in proof")
             }
         }
-        // V1.1: Proof freshness (replay protection)
-        // Advisory only: `created_at` is unauthenticated (see
-        // `Requirement::ProofFresh`). The qualifier travels in the message so
-        // explanations never oversell this check.
+        // V1.1: Proof freshness (replay protection). `created_at` IS
+        // covered by `proof_id` (V1 CORE freeze deviation): re-stamps fail
+        // IDENTIFIERS. It still bounds only self-declared age against the
+        // verifier clock — pair with `not_expired` for strong freshness.
         Requirement::ProofFresh { max_age_seconds } => {
             // Zero clock = no trustworthy time: fail closed like TIME and
             // NotExpired do. Otherwise age saturates to 0 and any max_age
@@ -375,7 +375,7 @@ fn eval_one(req: &Requirement, state: &VerifiedState, inputs: &EvalInputs) -> Re
             }
             let age = inputs.verified_at.saturating_sub(state.proof_created_at);
             if age <= *max_age_seconds {
-                pass(&name, format!("proof age {age}s <= {max_age_seconds}s (created_at unauthenticated — advisory)"))
+                pass(&name, format!("proof age {age}s <= {max_age_seconds}s (created_at bound by proof_id; self-declared age)"))
             } else {
                 fail(&name, format!("proof too old: {age}s > {max_age_seconds}s"))
             }

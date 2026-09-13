@@ -265,6 +265,50 @@ mod tests {
         assert_eq!(code, proof_cli::EXIT_ERR);
     }
 
+    /// V1.1 F3: `EQUIVALENT` endpoints may name free identity refs
+    /// (e.g. `did:org:acme`) as asserted — grounding still required, shaped
+    /// ids must still resolve. Non-EQUIVALENT bare labels still fail fast.
+    #[test]
+    fn relate_allows_equivalent_identity_refs() {
+        // EQUIVALENT with free refs is writable (grounding checked at build).
+        // Use --evidence-ref with a well-formed (not necessarily member) id:
+        // `relate` only shape-checks here; membership is the pipeline's job.
+        // For the unit, assert the file IS written (no fail-fast).
+        let w = tmpdir("relate-equiv");
+        let out = format!("{w}/rel.json");
+        let code = run(&args(&[
+            "relate",
+            "--from",
+            "did:org:acme",
+            "--type",
+            "EQUIVALENT",
+            "--to",
+            "did:person:alice",
+            "--evidence-ref",
+            "evd:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "--out",
+            &out,
+        ]));
+        assert_eq!(code, proof_cli::EXIT_OK);
+        assert!(std::path::Path::new(&out).exists());
+        // Shaped-but-malformed ids still fail fast even for EQUIVALENT.
+        let out2 = format!("{w}/rel2.json");
+        let code = run(&args(&[
+            "relate",
+            "--from",
+            "did:org:acme",
+            "--type",
+            "EQUIVALENT",
+            "--to",
+            "evt:v2:short",
+            "--evidence-ref",
+            "evd:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "--out",
+            &out2,
+        ]));
+        assert_eq!(code, proof_cli::EXIT_ERR);
+    }
+
     /// Friction fix: `build` without `--evidence` names the
     /// `--evidence ""` escape hatch; `--evidence ""` means zero evidence.
     #[test]

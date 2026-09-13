@@ -106,12 +106,14 @@ pub fn common(cli: &Cli) -> Result<CommonInputs, String> {
 /// `VerifyCtx` surface is reachable:
 /// `--esp256`, `--historical`, `--report-all`,
 /// `--accepted-vocab ns:max,...` (repeatable),
-/// `--extra-grounded TYPE,...` (repeatable).
+/// `--extra-grounded TYPE,...` (repeatable),
+/// `--require-acyclic` (provenance DAG profile, opt-in).
 pub struct VerifierPolicy {
     pub allowed_algs: proof_crypto::AllowedAlgs,
     pub report_all_failures: bool,
     pub accepted_vocabularies: Vec<proof_core::model::VocabularyAccept>,
     pub extra_grounded: Vec<String>,
+    pub require_acyclic_provenance: bool,
 }
 
 pub fn verifier_policy(cli: &Cli) -> Result<VerifierPolicy, String> {
@@ -160,6 +162,7 @@ pub fn verifier_policy(cli: &Cli) -> Result<VerifierPolicy, String> {
         report_all_failures: cli.has("report-all"),
         accepted_vocabularies,
         extra_grounded,
+        require_acyclic_provenance: cli.has("require-acyclic"),
     })
 }
 
@@ -203,6 +206,7 @@ pub fn verify(cli: &Cli) -> Result<i32, String> {
             report_all_failures: vp.report_all_failures,
             accepted_vocabularies: vp.accepted_vocabularies,
             extra_grounded: vp.extra_grounded,
+            require_acyclic_provenance: vp.require_acyclic_provenance,
             ..Default::default()
         },
     )
@@ -273,6 +277,7 @@ pub fn batch_verify(cli: &Cli) -> Result<i32, String> {
             report_all_failures: vp.report_all_failures,
             accepted_vocabularies: vp.accepted_vocabularies,
             extra_grounded: vp.extra_grounded,
+            require_acyclic_provenance: vp.require_acyclic_provenance,
             ..Default::default()
         },
         max_batch,
@@ -288,6 +293,7 @@ pub fn batch_verify(cli: &Cli) -> Result<i32, String> {
             "proof_id": m.report.proof_id,
             "cryptographic_validity": format!("{:?}", m.report.cryptographic_validity),
             "evidence_validity": format!("{:?}", m.report.evidence_validity),
+            "status_inputs_valid": m.report.status_inputs_valid,
             "codes": m.report.failure_codes().iter().map(|c| format!("{c:?}")).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     });
@@ -335,20 +341,11 @@ pub fn evaluate(cli: &Cli, explain: bool) -> Result<i32, String> {
         serde_json::from_str(&policy_text).map_err(|e| format!("parse policy: {e}"))?;
     let policy = proof_policy::parse_policy(&policy_val, &crate::limits())
         .map_err(|e| format!("policy: {e}"))?;
-    // Freshness hardening (advisory-boundary separation): `proof_fresh` reads
-    // the holder-rewritable, unauthenticated `created_at`. A policy that
-    // relies on it WITHOUT a signed attestation window (`not_expired`) mistakes
-    // advisory replay hygiene for a security boundary. Refuse to guess: warn
-    // loudly on stderr (stdout stays machine-readable) so the caller adds
-    // `not_expired` or a transparency requirement before trusting PASS.
-    if proof_policy::policy_uses_proof_fresh(&policy)
-        && !proof_policy::policy_uses_not_expired(&policy)
-    {
-        eprintln!(
-            "warning: policy `{}` uses proof_fresh without not_expired — proof_fresh reads unauthenticated created_at (holder-rewritable) and is advisory replay hygiene only; add not_expired (signed issued_at/expires_at windows) or a transparency requirement before treating PASS as fresh",
-            policy.id
-        );
-    }
+    // Freshness note: `proof_fresh` reads `created_at`, which IS covered by
+    // the proof_id binding (holder re-stamps break the id and fail at
+    // IDENTIFIERS), so no advisory-boundary warning is needed here. Strong
+    // freshness still comes from signed attestation windows (`not_expired`)
+    // and transparency anchoring.
     let statuses: Vec<proof_crypto::SignedStatus> = cli
         .many("status")
         .iter()
@@ -368,6 +365,7 @@ pub fn evaluate(cli: &Cli, explain: bool) -> Result<i32, String> {
             report_all_failures: vp.report_all_failures,
             accepted_vocabularies: vp.accepted_vocabularies,
             extra_grounded: vp.extra_grounded,
+            require_acyclic_provenance: vp.require_acyclic_provenance,
             ..Default::default()
         },
     )

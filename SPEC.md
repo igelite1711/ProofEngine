@@ -248,6 +248,14 @@ Arrays sorted by ID at build time. All relationship endpoints and
 evidence references must resolve to member IDs within the same Proof
 (portability rule). External payload content stays outside — digests only.
 
+**`proof_id` binding.** `proof_id` recomputes over the proposition, the
+proof's `created_at`, and the *sorted* member content arrays (`events`,
+`attestations` contents, `evidence`, `relationships`) plus
+`referenced_proofs`/`vocabularies` when present. `created_at` is bound
+(V1 CORE freeze deviation, pre-V1.0 wire fix): a holder re-stamp recomputes
+to a different id and fails `ID_MISMATCH` at IDENTIFIERS — freshness values
+can no longer move under a valid id (pinned by soak tests both directions).
+
 Composition linkage (`referenced_proofs`, §7): sorted, deduped ids of proofs
 this proof was composed from (≤ `max_referenced_proofs`, no self-reference).
 The binding covers the set when present (dropping a reference changes the
@@ -447,7 +455,7 @@ stage records without changing the triple.
 | `not_superseded` | — | No verified attestation is superseded by a valid signed supersession |
 | `evidence_present` | `kind` | Evidence of that kind is present (digest-bound) |
 | `transparency_present` | — | A `transparency_receipt` evidence item is present |
-| `proof_fresh` | `max_age_seconds` | Proof's `created_at` is within max_age_seconds of verifier clock. Advisory only: `created_at` is informational and outside `proof_id`, so a holder can re-stamp it without breaking the binding; strong freshness comes from signed attestation windows |
+| `proof_fresh` | `max_age_seconds` | Proof's `created_at` is within max_age_seconds of verifier clock. `created_at` IS covered by `proof_id` (V1 CORE freeze deviation, pre-V1.0 wire fix): a holder re-stamp fails `ID_MISMATCH`. Still advisory between cooperating parties — it bounds only self-declared age against the verifier clock; strong freshness comes from signed attestation windows |
 
 ### 7.2b Policy Version 2 (additive extension)
 

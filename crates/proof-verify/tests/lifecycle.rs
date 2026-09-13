@@ -299,14 +299,17 @@ fn unauthorized_revocation_fails() {
     )
     .unwrap();
     // `other` has no authority over an attestation issued by `key`.
+    // V1.1 F2 fix: an ineffective effect is feed-hygiene signal, not proof
+    // failure. The target stays ACTIVE and evidence stays Valid; callers
+    // distinguish via `status_inputs_valid == false` + UNAUTHORIZED_STATUS.
     let forged = revoke_attestation(&statement.id, None, &other, NOW_OK, &lim()).unwrap();
     let built = chain(vec![forged]);
     let report = verify_proof(&built.canonical, &live_ctx(NOW_OK)).unwrap();
     assert_eq!(report.cryptographic_validity, Validity::Valid);
-    assert_eq!(report.evidence_validity, Validity::Invalid);
+    assert_eq!(report.evidence_validity, Validity::Valid);
+    assert!(!report.status_inputs_valid);
     assert!(codes(&report).contains(&ErrorCode::UnauthorizedStatus));
-    // The effect never applied: target stays ACTIVE (the failure is the
-    // unauthorized status object itself).
+    // The effect never applied: target stays ACTIVE.
     assert_eq!(status_of(&report, &statement.id), LifecycleStatus::Active);
 }
 
@@ -361,11 +364,14 @@ fn future_dated_status_object_ignored() {
         &lim(),
     )
     .unwrap();
-    // signed an hour in the future: cannot be a present-day revocation
+    // signed an hour in the future: cannot be a present-day revocation.
+    // V1.1 F2 fix: future-dated effects are feed hygiene (STATUS), not proof
+    // failure. Evidence stays Valid; `status_inputs_valid` carries the signal.
     let revoke = revoke_attestation(&statement.id, None, &key, NOW_OK + 3_600, &lim()).unwrap();
     let built = chain(vec![revoke]);
     let report = verify_proof(&built.canonical, &live_ctx(NOW_OK)).unwrap();
-    assert_eq!(report.evidence_validity, Validity::Invalid);
+    assert_eq!(report.evidence_validity, Validity::Valid);
+    assert!(!report.status_inputs_valid);
     assert!(codes(&report).contains(&ErrorCode::Expired));
     // Not applied: still active under an otherwise valid context.
     assert_eq!(status_of(&report, &statement.id), LifecycleStatus::Active);

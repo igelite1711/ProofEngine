@@ -172,6 +172,7 @@ fn report_json(report: &proof_verify::VerifyReport) -> serde_json::Value {
         "proof_id": report.proof_id,
         "cryptographic_validity": format!("{:?}", report.cryptographic_validity),
         "evidence_validity": format!("{:?}", report.evidence_validity),
+        "status_inputs_valid": report.status_inputs_valid,
         "policy_decision": format!("{:?}", report.policy_decision),
         "codes": report.failure_codes().iter().map(|c| format!("{c:?}")).collect::<Vec<_>>(),
         "lifecycle": report.lifecycle.iter().map(|l| serde_json::json!({

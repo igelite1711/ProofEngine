@@ -39,6 +39,8 @@ One map for all 35 documents. **Authority rule:** on protocol semantics
 | [Versioning](../VERSIONING.md) | V1 versioning authority (§16) | Version numbers and compatibility |
 | [Interoperability](../INTEROPERABILITY.md) | V1 interop authority (§17) | Working with other implementations |
 | [Longevity](LONGEVITY.md) | Migration contract | Long-term viability and migration |
+| [Operator Runbook](OPERATOR-RUNBOOK.md) | Operations checklist | Clocks, freshness, feeds, trust lists, exits |
+| [Confidentiality](CONFIDENTIALITY.md) | Privacy scope | What the core does not do + patterns |
 
 ## Security
 

@@ -7,13 +7,28 @@ use crate::Cli;
 use proof_core::model::{EventContent, Evidence, MetaValue, Proof, Relationship};
 use proof_core::HashRef;
 
-/// Inspect a proof artifact: display its contents without verification.
-/// Accepts `-` for stdin, like `verify`.
+/// Inspect a proof or single artifact: display contents without verification.
+/// Accepts `-` for stdin, like `verify`. Proofs print the full member view;
+/// single artifacts (`event`/`attestation`/`evidence`/`relationship`/`status`)
+/// print their id and fields. Nothing here is trusted — use `verify` for
+/// validity.
 pub fn inspect(cli: &Cli) -> Result<String, String> {
     let proof_path = cli.proof_path()?;
     let (text, label) = crate::read_input_text(&proof_path)?;
     let v: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("parse {label}: {e}"))?;
+
+    // Single-artifact dispatch (V1.1 F8 fix): the wrapper `kind` selects the
+    // decoder. Proofs fall through to the full view below.
+    if let Some(kind) = v.get("kind").and_then(|x| x.as_str()) {
+        match kind {
+            "event" | "attestation" | "evidence" | "relationship" | "status" => {
+                return inspect_artifact(&v, kind, &label, cli);
+            }
+            "proof" => {}
+            _ => {}
+        }
+    }
 
     let hex_str = v
         .get("cbor")
@@ -268,4 +283,102 @@ pub fn proof_json(proof: &Proof, label: &str) -> serde_json::Value {
         "evidence": proof.evidence.iter().map(evidence_json).collect::<Vec<_>>(),
         "relationships": proof.relationships.iter().map(relationship_json).collect::<Vec<_>>(),
     })
+}
+
+/// Single-artifact view (V1.1 F8): decode one artifact wrapper by its `kind`
+/// and print id + fields. Read-only; ids are recomputed from bytes (a file
+/// whose bytes do not match its id is rejected, never displayed as valid).
+fn inspect_artifact(
+    v: &serde_json::Value,
+    kind: &str,
+    label: &str,
+    cli: &Cli,
+) -> Result<String, String> {
+    let hex_str = v
+        .get("cbor")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| format!("{label}: missing `cbor`"))?;
+    let bytes = hex::decode(hex_str).map_err(|e| format!("{label}: bad hex: {e}"))?;
+    let limits = crate::limits();
+    let value =
+        proof_format::decode_strict(&bytes, &limits).map_err(|e| format!("{label}: {e}"))?;
+    let claimed = v.get("id").and_then(|x| x.as_str()).unwrap_or("?");
+    let out = match kind {
+        "event" => {
+            let e = proof_format::schema::cbor_to_event(&value, &limits)
+                .map_err(|e| format!("{label}: {e}"))?;
+            format!(
+                "Artifact (read-only, not verified)\n\n  Kind      event\n  ID        {}\n  Type      {}\n  Subject   {}\n  Effective {}\n  Payload   {}:{}\n  Metadata  {} entries",
+                crate::sanitize(claimed),
+                crate::sanitize(e.event_type.as_str()),
+                crate::sanitize(&e.subject),
+                e.effective_at,
+                e.payload_ref.alg.name(),
+                hex::encode(&e.payload_ref.digest),
+                e.metadata.len(),
+            )
+        }
+        "attestation" => {
+            let a = proof_format::schema::cbor_to_attestation(&value, &limits)
+                .map_err(|e| format!("{label}: {e}"))?;
+            format!(
+                "Artifact (read-only, not verified)\n\n  Kind      attestation\n  ID        {}\n  Issuer    {}\n  Subject   {}\n  Claim     {}\n  Issued    {}\n  Expires   {}",
+                crate::sanitize(claimed),
+                crate::sanitize(&a.issuer),
+                crate::sanitize(&a.subject),
+                crate::sanitize(&a.claim.claim_type),
+                a.issued_at,
+                a.expires_at.map_or("none".to_string(), |t| t.to_string()),
+            )
+        }
+        "evidence" => {
+            let e = proof_format::schema::cbor_to_evidence(&value, &limits)
+                .map_err(|e| format!("{label}: {e}"))?;
+            format!(
+                "Artifact (read-only, not verified)\n\n  Kind      evidence\n  ID        {}\n  EKind     {}\n  Digest    {}:{}\n  AttRef    {}\n  Hint      {}",
+                crate::sanitize(claimed),
+                crate::sanitize(e.kind.as_str()),
+                e.digest.alg.name(),
+                hex::encode(&e.digest.digest),
+                e.attestation_ref.as_deref().unwrap_or("none"),
+                e.hint.as_deref().unwrap_or("none"),
+            )
+        }
+        "relationship" => {
+            let r = proof_format::schema::cbor_to_relationship(&value, &limits)
+                .map_err(|e| format!("{label}: {e}"))?;
+            format!(
+                "Artifact (read-only, not verified)\n\n  Kind      relationship\n  ID        {}\n  Edge      {} → {} ({})\n  EvdRef    {}\n  AttRef    {}",
+                crate::sanitize(claimed),
+                crate::sanitize(&r.from),
+                crate::sanitize(&r.to),
+                crate::sanitize(r.rel_type.as_str()),
+                r.evidence_ref.as_deref().unwrap_or("none"),
+                r.attestation_ref.as_deref().unwrap_or("none"),
+            )
+        }
+        "status" => {
+            let a = proof_format::schema::cbor_to_attestation(&value, &limits)
+                .map_err(|e| format!("{label}: {e}"))?;
+            format!(
+                "Artifact (read-only, not verified)\n\n  Kind      status ({})\n  ID        {}\n  Issuer    {}\n  Subject   {}\n  Issued    {}",
+                crate::sanitize(&a.claim.claim_type),
+                crate::sanitize(claimed),
+                crate::sanitize(&a.issuer),
+                crate::sanitize(&a.subject),
+                a.issued_at,
+            )
+        }
+        _ => return Err(format!("{label}: unknown artifact kind `{kind}`")),
+    };
+    if cli.has("json") {
+        println!(
+            "{}",
+            serde_json::json!({"source": label, "kind": kind, "id": claimed, "view": out})
+        );
+        return Ok(label.to_string());
+    }
+    println!("{out}");
+    println!("\nINSPECTED is not VERIFIED. Use `verify` to check validity.");
+    Ok(out)
 }

@@ -63,6 +63,11 @@ pub struct VerifiedState {
     pub proof_id: String,
     pub crypto_valid: bool,
     pub evidence_valid: bool,
+    /// Caller-feed health for status inputs (V1.1 F2 fix). False when any
+    /// STATUS-stage check failed. Proof validity is unaffected (ineffective
+    /// effects never apply), but feed operators SHOULD alert: it
+    /// distinguishes "proof revoked" from "feed broken".
+    pub status_inputs_valid: bool,
     /// Issuers whose attestations carry verified signatures in this proof.
     pub verified_issuers: Vec<String>,
     /// Ids of signature-verified attestations (aligned with `attestation_times`).
@@ -79,7 +84,8 @@ pub struct VerifiedState {
     pub attestation_times: Vec<(u64, Option<u64>)>,
     pub rel_types: Vec<RelType>,
     pub evidence_kinds: Vec<EvidenceKind>,
-    /// The proof's created_at timestamp (informational, outside proof_id binding).
+    /// The proof's created_at timestamp (covered by the proof_id binding;
+    /// V1 CORE freeze deviation, pre-V1.0 wire fix).
     /// Used by the `proof_fresh` policy requirement (V1.1).
     pub proof_created_at: u64,
     /// Verified statement claims (signature-verified, any lifecycle).
@@ -281,6 +287,7 @@ pub fn state_from_report_and_proof(
         proof_id: rid.to_string(),
         crypto_valid: report.cryptographic_validity == Validity::Valid,
         evidence_valid: report.evidence_validity == Validity::Valid,
+        status_inputs_valid: report.status_inputs_valid,
         verified_issuers,
         attestation_ids,
         active_attestation_ids,

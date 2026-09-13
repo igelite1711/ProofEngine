@@ -10,7 +10,8 @@
 
 * Canonical CBOR subset + re-encode-and-compare (`FORMAT.md` §1).
 * Ids `<prefix>:v1:<b64uNoPad(sha256(canonical))>`; `proof_id` binds sorted
-  member sets + proposition; `created_at` excluded (informational).
+  member sets + proposition + `created_at` (covered since the V1 CORE freeze
+  deviation, pre-V1.0 wire fix).
 * COSE_Sign1 untagged, protected exactly `{1:alg,4:kid}`, unprotected `{}`,
   payload embedded, `external_aad=h'504531'` ("PE1").
 * Registry: `-19 Ed25519 REQUIRED default-on`; `-9 ESP256 OPTIONAL

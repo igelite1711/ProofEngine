@@ -44,17 +44,17 @@ pub enum Requirement {
     TransparencyPresent,
     /// The proof was created within `max_age_seconds` of the verifier clock.
     /// Provides replay protection: a valid but stale proof fails this check.
-    /// Uses the proof's `created_at` field (informational, outside proof_id).
+    /// Uses the proof's `created_at` field, which IS covered by `proof_id`
+    /// (V1 CORE freeze deviation, pre-V1.0 wire fix): re-stamping it breaks
+    /// the id and fails `ID_MISMATCH` at IDENTIFIERS.
     ///
-    /// ATTACKER MODEL (read before relying on this): `created_at` is
-    /// *unauthenticated* — rewriting it changes neither `proof_id`
-    /// (IDENTIFIERS still passes) nor any signature. A holder of a stale
-    /// proof can therefore re-stamp it as fresh without detection by the
-    /// core. This requirement is advisory replay hygiene between
-    /// cooperating parties, NOT a security boundary against a proof holder.
-    /// Strong freshness must come from attestation validity windows
-    /// (`not_expired`, signed `issued_at`/`expires_at` the holder cannot
-    /// rewrite) and/or transparency anchoring (V2 adapters).
+    /// SCOPE (read before relying on this): `created_at` is self-declared
+    /// age bound against the verifier clock, not a trusted timestamp. The
+    /// binding prevents silent re-stamps, but a holder can still mint a fresh
+    /// proof wrapper around old members only by changing the id (resolving
+    /// to nothing old). Pair with `not_expired` (signed attestation windows
+    /// the holder cannot rewrite) and/or transparency anchoring for strong
+    /// freshness.
     ProofFresh { max_age_seconds: u64 },
     // ---- V2 adjudication leaves (policy_version 2 only) ----
     /// `issuer` is authorized by `root`: root is trust-listed and issuer

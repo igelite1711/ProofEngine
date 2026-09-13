@@ -23,7 +23,10 @@
    changing semantics is major.
 3. Error-code wire strings are stable (ERROR-MODEL.md); renaming is major.
 4. Id prefixes and the `proof_id` construction (sorted member sets,
-   `created_at` excluded) are stable; changing binding is major.
+   `created_at` covered) are stable from V1.0; changing binding is major.
+   (The 2026-09 pre-V1.0 wire fix that added `created_at` to the binding is a
+   documented CORE freeze deviation while V1 is unpublished — see
+   `ARCHITECTURE-FREEZE.md` §5 and `docs/freeze-manifest.json`.)
 5. Hash agility: new digest algorithms arrive via `HashRef.alg` enum + (see `docs/LONGEVITY.md` §3 for the full dual-verify migration contract) -
    object `v` bump with a dual-verify migration window; verifiers MUST NOT
    assume SHA-256 forever (FORMAT §2).

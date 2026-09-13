@@ -82,6 +82,77 @@ pub fn validate_graph(
 /// set. `extra_grounded` adds to the default `requires_grounding()` set, so
 /// future vocabularies declare their own trust-relevant kinds without a core
 /// change (AUDIT §5). Pass `None` for V1 defaults.
+/// Provenance DAG profile (V1.1 F4 fix). When the caller opts in
+/// (`VerifyCtx::require_acyclic_provenance`), the full member-endpoint graph
+/// must be acyclic — not just the SUPERSEDES subgraph. Iterative DFS over
+/// member endpoints (EQUIVALENT free-string identity refs excluded, as they
+/// are asserted aliases, not derivation steps). V1 default is off:
+/// REFERENCES cycles remain linkage-valid unless the caller asks for DAG.
+/// Runs after `validate_graph_with_grounding` succeeds; fails closed with
+/// `CYCLE_DETECTED` on any directed cycle.
+pub fn check_acyclic_provenance(edges: &[EdgeRecord], nodes: &NodeSet) -> Result<(), ProofError> {
+    use std::collections::{HashMap, HashSet};
+    // Member-only adjacency: EQUIVALENT free refs are not derivation.
+    let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut all: HashSet<&str> = HashSet::new();
+    for e in edges {
+        if e.content.rel_type.as_str() == RelType::EQUIVALENT {
+            continue;
+        }
+        // Only member endpoints participate (pipeline guarantees resolution;
+        // direct callers may include free strings — skip non-members here).
+        if !nodes.contains(&e.content.from) || !nodes.contains(&e.content.to) {
+            continue;
+        }
+        adj.entry(e.content.from.as_str())
+            .or_default()
+            .push(e.content.to.as_str());
+        all.insert(e.content.from.as_str());
+        all.insert(e.content.to.as_str());
+    }
+    // Iterative DFS with explicit stack (no recursion on hostile input).
+    const WHITE: u8 = 0;
+    const GRAY: u8 = 1;
+    const BLACK: u8 = 2;
+    let mut color: HashMap<&str, u8> = all.iter().map(|n| (*n, WHITE)).collect();
+    for start in all.clone() {
+        if color[&start] != WHITE {
+            continue;
+        }
+        let mut stack: Vec<(&str, bool)> = vec![(start, false)];
+        while let Some((n, processed)) = stack.pop() {
+            if processed {
+                color.insert(n, BLACK);
+                continue;
+            }
+            if color[&n] == BLACK {
+                continue;
+            }
+            if color[&n] == GRAY {
+                return Err(ErrorCode::CycleDetected.err(format!(
+                    "cycle detected in provenance graph at {n} (DAG profile)"
+                )));
+            }
+            color.insert(n, GRAY);
+            stack.push((n, true));
+            if let Some(nexts) = adj.get(n) {
+                for m in nexts {
+                    match color.get(m).copied().unwrap_or(WHITE) {
+                        BLACK => {}
+                        GRAY => {
+                            return Err(ErrorCode::CycleDetected.err(format!(
+                                "cycle detected in provenance graph at {m} (DAG profile)"
+                            )));
+                        }
+                        _ => stack.push((m, false)),
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_graph_with_grounding(
     edges: &[EdgeRecord],
     nodes: &NodeSet,
@@ -487,13 +558,34 @@ mod tests {
 
     #[test]
     fn non_supersedes_cycles_allowed() {
-        // REFERENCES cycles are not forbidden in V0.1 (only SUPERSEDES is).
+        // REFERENCES cycles are not forbidden by default (only SUPERSEDES
+        // is); the provenance DAG profile (`check_acyclic_provenance`) is
+        // opt-in for derivation chains.
         let n = nodes(&["a", "b"]);
         let edges = vec![
             edge("a", RelType::new(RelType::REFERENCES), "b", false),
             edge("b", RelType::new(RelType::REFERENCES), "a", false),
         ];
         validate_graph(&edges, &n, &lim()).unwrap();
+        let err = check_acyclic_provenance(&edges, &n).unwrap_err();
+        assert_eq!(err.code, ErrorCode::CycleDetected);
+    }
+
+    #[test]
+    fn provenance_dag_allows_chains_rejects_cycles() {
+        let n = nodes(&["a", "b", "c"]);
+        let chain = vec![
+            edge("a", RelType::new(RelType::REFERENCES), "b", false),
+            edge("b", RelType::new(RelType::REFERENCES), "c", false),
+        ];
+        check_acyclic_provenance(&chain, &n).unwrap();
+        let cycle = vec![
+            edge("a", RelType::new(RelType::REFERENCES), "b", false),
+            edge("b", RelType::new(RelType::REFERENCES), "c", false),
+            edge("c", RelType::new(RelType::REFERENCES), "a", false),
+        ];
+        let err = check_acyclic_provenance(&cycle, &n).unwrap_err();
+        assert_eq!(err.code, ErrorCode::CycleDetected);
     }
 
     #[test]

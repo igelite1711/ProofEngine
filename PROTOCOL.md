@@ -12,7 +12,8 @@
 > policy compliance are distinct concepts and MUST NOT be silently conflated.
 
 The pipeline reports the first three as separate outputs (`VerifyReport`:
-`cryptographic_validity`, `evidence_validity`, per-attestation lifecycle);
+`cryptographic_validity`, `evidence_validity`, per-attestation lifecycle)
+plus feed health `status_inputs_valid` (STATUS-stage hygiene, never validity);
 the policy engine turns them into a decision only under caller-supplied
 requirements (notably `not_superseded` for currentness). See POLICY.md,
 LIFECYCLE.md.

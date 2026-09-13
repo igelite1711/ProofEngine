@@ -13,7 +13,7 @@
 | 2 | Attestation | `att:v1:` | Yes (COSE_Sign1) | issuer-bound claim over a subject + validity window |
 | 3 | Evidence | `evd:v1:` | No (id-bound) | digest-bound external reference + optional attestation ref |
 | 4 | Relationship | `rel:v1:` | No (id-bound) | typed edge from→to + optional evidence/attestation refs |
-| 5 | Proof | `prf:v1:` | No (binds member ids) | proposition + sorted member id sets + optional `referenced_proofs` linkage + optional `vocabularies` declarations + created_at (informational) |
+| 5 | Proof | `prf:v1:` | No (binds member ids + created_at) | proposition + `created_at` + sorted member id sets + optional `referenced_proofs` linkage + optional `vocabularies` declarations (created_at covered — V1 CORE freeze deviation, pre-V1.0 wire fix) |
 
 Non-persisted roles: `Proposition` (value object: kind/subject/predicate/
 object/at_time/context), `Policy` (evaluation input), status objects
@@ -58,8 +58,9 @@ below carry pinned semantics. Unknown *fields* are rejected (fail closed).
 - Self-edges (`from == to`) rejected.
 - Relationship `relationship_id` covers both `evidence_ref` and
   `attestation_ref` (binding fix, Phase 3).
-- `created_at` on Proof is informational and NOT covered by `proof_id`
-  (FORMAT §3; pinned by soak tests both directions).
+- `created_at` on Proof IS covered by `proof_id` (V1 CORE freeze deviation,
+  pre-V1.0 wire fix; FORMAT §3; re-stamping fails `ID_MISMATCH`, pinned by
+  soak tests + `created_at_restamp_breaks_binding_and_fails_id_mismatch`).
 - Timestamps are uint Unix seconds; `expires_at` may be nil (unbounded).
 
 Traceability: PE-FMT-008, PE-GRAPH-001, PE-LIFE-001

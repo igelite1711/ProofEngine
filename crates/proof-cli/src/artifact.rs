@@ -182,14 +182,35 @@ pub fn write_evidence(cli: &Cli) -> Result<String, String> {
 /// `evd:…`) that will be members of the proof — NOT bare labels like
 /// `invoice:i9`. Bare labels always fail later at `verify` with
 /// DANGLING_REFERENCE, so fail fast here with a hint.
+/// Exception (V1.1 F3 fix): `EQUIVALENT` endpoints may name external identity
+/// refs (e.g. `did:org:acme`) as asserted — the backing attestation (required
+/// grounding) is where trust lives, mirroring `proof-graph` semantics.
+/// Shaped ids (`xxx:vN:…`) must still resolve; only free strings ride as
+/// asserted.
 pub fn write_relationship(cli: &Cli) -> Result<String, String> {
+    let rel_type = cli.req("type")?;
+    let is_equivalent = rel_type == proof_core::model::RelType::EQUIVALENT;
     for flag in ["from", "to"] {
         let v = cli.req(flag)?;
-        if !looks_like_artifact_id(&v) {
+        if looks_like_artifact_id(&v) {
+            continue;
+        }
+        if is_equivalent && is_free_identity_ref(&v) {
+            continue;
+        }
+        if is_equivalent && looks_shaped(&v) {
             return Err(format!(
-                "`--{flag} {v}` is not an artifact id (want `evt:…`, `att:…` or `evd:…`); bare labels like `invoice:i9` never resolve — create the artifact first (e.g. `create-event`) and use its id"
+                "`--{flag} {v}` looks like an artifact id but is malformed (want `evt:…`, `att:…` or `evd:…`); shaped ids must resolve — free identity refs must not contain `:vN:`"
             ));
         }
+        return Err(format!(
+            "`--{flag} {v}` is not an artifact id (want `evt:…`, `att:…` or `evd:…`); bare labels like `invoice:i9` never resolve — create the artifact first (e.g. `create-event`) and use its id{}",
+            if is_equivalent {
+                "; for EQUIVALENT identity refs use free strings like `did:org:acme` (grounding still required)"
+            } else {
+                ""
+            }
+        ));
     }
     for flag in ["evidence-ref", "attestation-ref"] {
         if let Some(v) = cli.opt(flag) {
@@ -307,6 +328,34 @@ fn looks_like_artifact_id(s: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// Any `xxx:vN:…` shape (mirrors `proof-graph` fail-closed rule): shaped ids
+/// must resolve, never ride as asserted identity — even unknown versions.
+fn looks_shaped(s: &str) -> bool {
+    let mut parts = s.splitn(3, ':');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(p), Some(v), Some(rest)) => {
+            !p.is_empty()
+                && !p.contains(' ')
+                && !p.contains('/')
+                && v.len() > 1
+                && v.as_bytes()[0] == b'v'
+                && v[1..].bytes().all(|b| b.is_ascii_digit())
+                && !rest.is_empty()
+        }
+        _ => false,
+    }
+}
+
+/// Free identity ref for EQUIVALENT endpoints: non-empty, no whitespace,
+/// bounded length, and NOT shaped (shaped must resolve). Trust lives in the
+/// required grounding attestation, never in the string.
+fn is_free_identity_ref(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 256
+        && !s.bytes().any(|b| b.is_ascii_whitespace())
+        && !looks_shaped(s)
 }
 
 /// Digest hex (64 chars = SHA-256, 96 = SHA-384) → HashRef.

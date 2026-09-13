@@ -2,7 +2,9 @@
 
 > V1 lifecycle authority (states, validity/currentness/freshness, clocks,
 > authority, precedence). On semantics `PROOF-ENGINE-SPEC.md` §§10–11 win.
-> Pipeline stages TIME + REVOCATION implement this document.
+> Pipeline stages TIME + REVOCATION implement this document; STATUS carries
+> feed hygiene (malformed/unauthorized/future-dated effects, V1.1) and never
+> flips validity — see `status_inputs_valid`.
 
 ## Three distinct dimensions
 
@@ -64,9 +66,9 @@ disproof, note on absence. Strict callers adjudicate via
 ## Authority and freshness rules
 
 - Applies only if: well-formed claim AND authority for the kind AND not
-  future-dated. Else `UNAUTHORIZED_STATUS` / `EXPIRED` / `SCHEMA_VIOLATION`,
-  never applied. Authority per kind: revoke/supersede — signer == target's
-  original issuer OR ∈ `revocation_authorities`; withdraw — authorities, or
+  future-dated. Else `UNAUTHORIZED_STATUS` / `EXPIRED` / `SCHEMA_VIOLATION`
+  recorded in STATUS (feed hygiene, validity unaffected), never applied.
+  Authority per kind: revoke/supersede — signer == target's original issuer OR ∈ `revocation_authorities`; withdraw — authorities, or
   target attestation's issuer, or bound-attestation issuer for evidence
   (events/relationships need explicit authority); compromise — target
   identity itself (self-report) or authorities.

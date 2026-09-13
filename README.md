@@ -31,7 +31,7 @@ It is a **protocol-level foundation** that applications and industries can build
 | [The Problem](#the-problem) | Why Proof Engine exists |
 | [Core Model](#core-model) | The verification pipeline |
 | [Five Primitives](#the-five-core-primitives) | Event, Attestation, Evidence, Relationship, Proof |
-| [Verification](#verification) | The 11-check + POLICY + FINAL pipeline (13 fixed positions) |
+| [Verification](#verification) | The 11-check + STATUS + POLICY + FINAL pipeline |
 | [Policy](#policy) | Caller-supplied trust decisions |
 | [Neutral by Design](#neutral-by-design) | 12 industries, zero core changes |
 | [Quick Start](#quick-start) | Get running in 30 seconds |
@@ -329,7 +329,7 @@ Those are **applications** of the protocol.
 | Science | Research | Experiment → Replication with dataset evidence |
 | Cyber | Security | Alert → Patch mitigation with vulnerability-report evidence |
 
-All 12 use the **same** builder, **same** 11-check + POLICY + FINAL pipeline, **same** policy engine. The verdict shape is a pure function of artifact structure, never of domain vocabulary.
+All 12 use the **same** builder, **same** 11-check + STATUS + POLICY + FINAL pipeline, **same** policy engine. The verdict shape is a pure function of artifact structure, never of domain vocabulary.
 
 The core remains the same.
 
@@ -419,7 +419,7 @@ A central design goal is:
 
 The verifier should be able to independently examine the Proof and its supporting material according to the applicable rules.
 
-**This is not theoretical.** An independent Python verifier (`interop/pengine.py`) implements the full verification pipeline from the specification alone — no Rust imports, stdlib-only. It verifies golden vectors produced by the Rust implementation and creates proofs that the Rust CLI verifies.
+**This is not theoretical.** An independent Python verifier (`interop/pengine.py`) implements the cryptographic interop core from the specification alone — parse, canonicality, identifiers, signatures, and proof-id binding, no Rust imports, stdlib-only. It verifies golden vectors produced by the Rust implementation and creates proofs that the Rust CLI verifies. Time/lifecycle/graph/policy remain engine-side by design (caller-supplied inputs); full-verdict portability is tracked as future work (see `INTEROPERABILITY.md`).
 
 The ultimate interoperability test is therefore:
 
@@ -631,6 +631,9 @@ make demo
 Fastest proof in seconds (no manual ID plumbing): `make quick-proof`
 (`bash tools/quick_proof.sh --keep --work /tmp/proof-quick` to keep files).
 Production keys: prefer `--seed-file` over `--seed` (argv is visible).
+Minimal build (CLI only, no bench/API): `cargo build --locked -p proof-cli`.
+Operator checklist: `docs/OPERATOR-RUNBOOK.md`. Confidentiality scope:
+`docs/CONFIDENTIALITY.md`.
 
 Run `make help` to see all available commands.
 
@@ -655,7 +658,7 @@ Run `make help` to see all available commands.
 | `proof-cli verify` | Verify a proof (positional path or stdin with `-`) |
 | `proof-cli evaluate` | Verify a proof and evaluate a policy |
 | `proof-cli explain` | Explain a verification result (requires `--policy`) |
-| `proof-cli inspect` | Inspect a proof (read-only, no trust decisions) |
+| `proof-cli inspect` | Inspect a proof or single artifact (read-only, no trust decisions) |
 | `proof-cli graph` | Visualize proof relationships (text/dot/mermaid) |
 | `proof-cli export` | Export an artifact to the standard envelope (validated) |
 | `proof-cli import` | Import a standard envelope (validated) |
@@ -796,7 +799,7 @@ println!("{}", proof_policy::explain_full(&report, &outcome));
 | `proof-format` | Canonical CBOR encode/decode | Depends on core |
 | `proof-crypto` | Ed25519/P-256 sign/verify | Depends on core, format |
 | `proof-graph` | DAG validation, cycle checks | Depends on core |
-| `proof-verify` | 11-check + POLICY + FINAL verification pipeline | Depends on all above |
+| `proof-verify` | 11-check + STATUS + POLICY + FINAL verification pipeline | Depends on all above |
 | `proof-policy` | Policy evaluation engine | Depends on verify |
 | `proof-cli` | Command-line tool | Depends on all above |
 

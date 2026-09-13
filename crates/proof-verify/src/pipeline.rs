@@ -78,6 +78,15 @@ pub struct VerifyCtx {
     /// `validate_graph_with_grounding` so future vocabularies declare their
     /// own trust-relevant kinds without a core change (AUDIT §5).
     pub extra_grounded: Vec<String>,
+    /// Provenance DAG profile (V1.1 F4 fix, default false = V1 semantics).
+    /// False: only the SUPERSEDES subgraph must be linear/acyclic (V1 rule);
+    /// general cycles (e.g. REFERENCES A→B→C→A) are linkage-valid.
+    /// True: the full relationship graph must additionally be acyclic
+    /// (iterative DFS over member endpoints; EQUIVALENT identity refs
+    /// excluded). Provenance users (derived-from chains) SHOULD enable this;
+    /// linkage users (citations, see-also) SHOULD leave it off. Opt-in, so
+    /// existing proofs keep byte-identical verdicts unless the caller asks.
+    pub require_acyclic_provenance: bool,
 }
 
 impl Default for VerifyCtx {
@@ -95,6 +104,7 @@ impl Default for VerifyCtx {
             report_all_failures: false,
             accepted_vocabularies: vec![],
             extra_grounded: vec![],
+            require_acyclic_provenance: false,
         }
     }
 }
@@ -126,6 +136,17 @@ const CRYPTO_STAGES: &[&str] = &[
     "KEYS",
 ];
 const EVIDENCE_STAGES: &[&str] = &["TIME", "REVOCATION", "EVIDENCE", "RELATIONSHIPS", "GRAPH"];
+/// Status-input hygiene stage (V1.1 fix for external-review F2).
+/// `STATUS` records caller-feed and ineffective-effect problems —
+/// malformed status claims, non-status supplied objects, bad signatures on
+/// supplied objects, unauthorized effects, and future-dated effects.
+/// These NEVER flip `evidence_validity`: an ineffective effect leaves the
+/// target lifecycle untouched (ACTIVE stays ACTIVE). Feed health is exposed
+/// separately via `VerifyReport::status_inputs_valid` so callers can
+/// distinguish "proof revoked" from "feed broken" without conflating them.
+/// Lifecycle outcomes (REVOKED/COMPROMISED/UNKNOWN) stay in `REVOCATION`
+/// and DO flip validity.
+const STATUS_STAGE: &str = "STATUS";
 
 fn stage_valid(checks: &[CheckRecord], stages: &[&str]) -> Validity {
     let bad = checks.iter().any(|c| !c.ok && stages.contains(&c.stage));
@@ -163,11 +184,15 @@ fn finalize(
     // failure): report Invalid, never a vacuous Valid. Without this, garbage
     // bytes would present as `evidence_validity: valid` next to a crypto
     // failure (audit P1-1/P1-2: only callers ANDing both validities were safe).
+    // NOTE: STATUS-stage input-hygiene failures are intentionally excluded
+    // from EVIDENCE_STAGES (see STATUS_STAGE): a bad feed must not poison a
+    // good proof. Feed health travels in `status_inputs_valid`.
     let evidence_validity = if lifecycle_checked {
         stage_valid(&checks, EVIDENCE_STAGES)
     } else {
         Validity::Invalid
     };
+    let status_inputs_valid = !checks.iter().any(|c| !c.ok && c.stage == STATUS_STAGE);
     VerifyReport {
         proof_id,
         cryptographic_validity,
@@ -182,6 +207,7 @@ fn finalize(
         evidence_status,
         conflicts,
         checks,
+        status_inputs_valid,
     }
 }
 
@@ -216,6 +242,55 @@ fn time_validity(content: &AttestationContent, ctx: &VerifyCtx) -> Result<(), St
 /// Verify portable Proof bytes with no database access. Returns a report even
 /// for malformed input (fail-closed as data). `Err` is reserved for caller
 /// misuse (e.g. requesting remote fetches the engine will never perform).
+/// Recompute the proof id over a parsed proof's own members. Exposed so
+/// tests, front ends and tooling share the exact binding the verifier checks
+/// at IDENTIFIERS (including the `created_at` term).
+pub fn recomputed_proof_id(proof: &proof_core::model::Proof) -> Result<String, ProofError> {
+    let event_ids: Vec<String> = proof
+        .events
+        .iter()
+        .map(|e| {
+            Ok(proof_crypto::id::event_id(&encode_canonical(
+                &event_to_cbor(e).map_err(|e| {
+                    ErrorCode::SchemaViolation.err(format!("member event failed to encode: {e}"))
+                })?,
+            )))
+        })
+        .collect::<Result<Vec<_>, ProofError>>()?;
+    let att_ids: Vec<String> = proof
+        .attestations
+        .iter()
+        .map(|a| {
+            proof_crypto::id::attestation_id(&encode_canonical(&attestation_to_cbor(&a.content)))
+        })
+        .collect();
+    let evd_ids: Vec<String> = proof
+        .evidence
+        .iter()
+        .map(|e| proof_crypto::id::evidence_id(&encode_canonical(&evidence_to_cbor(e))))
+        .collect();
+    let rel_ids: Vec<String> = proof
+        .relationships
+        .iter()
+        .map(|r| proof_crypto::id::relationship_id(&encode_canonical(&relationship_to_cbor(r))))
+        .collect();
+    let vocab_pairs: Vec<(String, u64)> = proof
+        .vocabularies
+        .iter()
+        .map(|vd| (vd.ns.clone(), vd.version))
+        .collect();
+    Ok(proof_id_full(
+        &proposition_to_cbor(&proof.proposition),
+        proof.created_at,
+        &event_ids,
+        &att_ids,
+        &evd_ids,
+        &rel_ids,
+        &proof.referenced_proofs,
+        &vocab_pairs,
+    ))
+}
+
 pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, ProofError> {
     // PE-SEC-003 · PE-EVID-003: no network fetch during verification.
     if ctx.allow_remote {
@@ -462,23 +537,10 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
     }
 
     // ---- 4. IDENTIFIERS ----  PE-VERIFY-004
-    // The binding covers member id sets plus composition linkage and
-    // vocabulary declarations (empty sets → byte-identical V1 binding, so
-    // existing proofs keep identical ids).
-    let vocab_pairs: Vec<(String, u64)> = proof
-        .vocabularies
-        .iter()
-        .map(|vd| (vd.ns.clone(), vd.version))
-        .collect();
-    let recomputed = proof_id_full(
-        &proposition_to_cbor(&proof.proposition),
-        &event_ids,
-        &att_ids,
-        &evd_ids,
-        &rel_ids,
-        &proof.referenced_proofs,
-        &vocab_pairs,
-    );
+    // The binding covers member id sets, the creation timestamp, composition
+    // linkage and vocabulary declarations (empty linkage/vocab sets encode the
+    // byte-identical extension of the base V1 binding).
+    let recomputed = recomputed_proof_id(&proof)?;
     if recomputed != stored_id {
         checks.push(CheckRecord::fail(
             "IDENTIFIERS",
@@ -593,10 +655,17 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
     }
 
     // ---- 7. TIME ----  PE-VERIFY-007 PE-LIFE-002 PE-LIFE-003
-    // Timeliness of every signature-verified attestation against the explicit
-    // verifier clock + skew. Any failure is `EXPIRED` (fail closed).
+    // Timeliness of every signature-verified STATEMENT attestation against
+    // the explicit verifier clock + skew. Any failure is `EXPIRED` (fail
+    // closed). Status attestations (revoke/supersede/withdraw/compromise)
+    // are excluded here by design (V1.1 F2): their own timeliness is
+    // effect-timeliness, recorded in STATUS as feed hygiene — a future-dated
+    // revoke must not poison TIME when its effect never applies.
     let mut time_failed: HashSet<String> = HashSet::new();
     for (att_id, content) in &verified {
+        if claim_kind(content) != ClaimKind::Statement {
+            continue;
+        }
         let obj = format!("att:{att_id}");
         match time_validity(content, ctx) {
             Ok(()) => checks.push(CheckRecord::ok(
@@ -662,7 +731,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         at_time: None,
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
-                        "REVOCATION",
+                        STATUS_STAGE,
                         obj,
                         e.code,
                         format!("malformed revoke claim: {}", e.message),
@@ -681,7 +750,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         at_time: None,
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
-                        "REVOCATION",
+                        STATUS_STAGE,
                         obj,
                         e.code,
                         format!("malformed supersede claim: {}", e.message),
@@ -700,7 +769,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         at_time: None,
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
-                        "REVOCATION",
+                        STATUS_STAGE,
                         obj,
                         e.code,
                         format!("malformed withdraw claim: {}", e.message),
@@ -719,7 +788,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         at_time: Some(at_time),
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
-                        "REVOCATION",
+                        STATUS_STAGE,
                         obj,
                         e.code,
                         format!("malformed compromise claim: {}", e.message),
@@ -751,7 +820,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         at_time: None,
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
-                        "REVOCATION",
+                        STATUS_STAGE,
                         label,
                         e.code,
                         format!("malformed revoke claim: {}", e.message),
@@ -767,7 +836,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         at_time: None,
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
-                        "REVOCATION",
+                        STATUS_STAGE,
                         label,
                         e.code,
                         format!("malformed supersede claim: {}", e.message),
@@ -783,7 +852,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         at_time: None,
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
-                        "REVOCATION",
+                        STATUS_STAGE,
                         label,
                         e.code,
                         format!("malformed withdraw claim: {}", e.message),
@@ -799,21 +868,21 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                         at_time: Some(at_time),
                     }),
                     Err(e) => checks.push(CheckRecord::fail(
-                        "REVOCATION",
+                        STATUS_STAGE,
                         label,
                         e.code,
                         format!("malformed compromise claim: {}", e.message),
                     )),
                 },
                 ClaimKind::Statement => checks.push(CheckRecord::fail(
-                    "REVOCATION",
+                    STATUS_STAGE,
                     label,
                     ErrorCode::SchemaViolation,
                     "supplied object is not a status claim (revoke/supersede/withdraw/compromise)",
                 )),
             },
             Err(e) => checks.push(CheckRecord::fail(
-                "REVOCATION",
+                STATUS_STAGE,
                 label,
                 e.code,
                 format!("status object rejected: {}", e.message),
@@ -881,7 +950,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
         };
         if !empowered {
             checks.push(CheckRecord::fail(
-                "REVOCATION",
+                STATUS_STAGE,
                 eff.object.clone(),
                 ErrorCode::UnauthorizedStatus,
                 format!(
@@ -894,7 +963,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
             && eff.issued_at <= ctx.verified_at.saturating_add(ctx.clock_skew_leeway);
         if !timely {
             checks.push(CheckRecord::fail(
-                "REVOCATION",
+                STATUS_STAGE,
                 eff.object.clone(),
                 ErrorCode::Expired,
                 "status object is not valid yet at the verifier clock",
@@ -1199,6 +1268,25 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                     g.node_count, g.edge_count, g.longest_supersedes_chain
                 ),
             ));
+            // Provenance DAG profile (V1.1 F4, opt-in): REFERENCES and other
+            // derivation edges must additionally be acyclic. Off by default
+            // (V1 linkage semantics); enable via
+            // `VerifyCtx::require_acyclic_provenance` / `--require-acyclic`.
+            if ctx.require_acyclic_provenance {
+                match proof_graph::check_acyclic_provenance(&edges, &node_set) {
+                    Ok(()) => checks.push(CheckRecord::ok(
+                        "GRAPH",
+                        format!("proof:{stored_id}"),
+                        "provenance DAG profile: no cycles (opt-in)",
+                    )),
+                    Err(e) => checks.push(CheckRecord::fail(
+                        "GRAPH",
+                        format!("proof:{stored_id}"),
+                        e.code,
+                        e.message,
+                    )),
+                }
+            }
         }
         Err(e) => {
             let stage = match e.code {

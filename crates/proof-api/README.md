@@ -13,3 +13,10 @@ cargo test -p proof-api         # 8 integration tests over the serve path
 Boundaries: std-only HTTP (no framework), zero network inside
 `verify_proof`, allow_remote always false. Production auth/TLS/fronting
 is the deployer's job.
+
+Verifier-policy scope: the HTTP context carries clock/skew/trust/status/
+authority/freshness only (Ed25519-only, fail-fast, no vocab notes, V1
+grounding, linkage DAG off). Full `VerifyCtx` flags (`--esp256`,
+`--historical`, `--report-all`, `--accepted-vocab`, `--extra-grounded`,
+`--require-acyclic`) are CLI/Rust-only; responses include
+`status_inputs_valid` either way.

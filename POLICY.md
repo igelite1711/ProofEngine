@@ -36,7 +36,7 @@ versions are rejected with `POLICY_INVALID` before any evaluation. The
 | `not_superseded` | — | no signature-verified attestation in this proof is SUPERSEDED by a valid signed supersession. Without this requirement a superseded (stale but historical) attestation still satisfies the other requirements — PASS then means "valid", not "current" |
 | `evidence_present` | `kind` | evidence of that kind is present (digest-bound) |
 | `transparency_present` | — | a `transparency_receipt` evidence item is present |
-| `proof_fresh` | `max_age_seconds` | the proof's `created_at` is within `max_age_seconds` of the verifier clock. Advisory replay hygiene only: `created_at` is informational and outside `proof_id`, so a proof holder can re-stamp it without breaking the binding or any signature. Do not treat this as a security boundary; strong freshness comes from signed attestation windows (`not_expired`) and transparency anchoring |
+| `proof_fresh` | `max_age_seconds` | the proof's `created_at` is within `max_age_seconds` of the verifier clock. `created_at` IS covered by `proof_id` (V1 CORE freeze deviation, pre-V1.0 wire fix): a holder re-stamp breaks the id and fails `ID_MISMATCH`. Still advisory between cooperating parties: it bounds only self-declared age against the verifier clock — strong freshness comes from signed attestation windows (`not_expired`) and transparency anchoring |
 
 `issuer` must be a well-formed `key:*` KeyRef (validated at parse time);
 `relationship` and `kind` are open vocabulary strings (transported verbatim

@@ -9,7 +9,8 @@
 ## 1. Stages (fixed order)
 
 `PARSE → SCHEMA → CANONICAL → IDENTIFIERS → SIGNATURES → KEYS → TIME →
-REVOCATION/SUPERSESSION → EVIDENCE → RELATIONSHIPS → GRAPH → POLICY
+REVOCATION/SUPERSESSION → EVIDENCE → RELATIONSHIPS → GRAPH → STATUS
+(feed hygiene, V1.1; never flips validity) → POLICY
 (caller hand-off, INDETERMINATE) → FINAL`.
 
 Failures recorded, never repaired. `PARSE/SCHEMA` always fail-fast (no object
@@ -22,14 +23,15 @@ carries ≥1 stable code; unknown never becomes valid.
 `VerificationContext {verified_at (0=sentinel), clock_skew_leeway,
 allowed_algs, trusted_issuers, revocation_authorities, status_objects,
 revocations_known_at, limits, allow_remote:false, report_all_failures,
-accepted_vocabularies, extra_grounded}`.
+accepted_vocabularies, extra_grounded, require_acyclic_provenance}`.
 `VerifyCtx`/`EvalInputs` are thin projections (no break). Context echoed in
 reports, never stored, never trusted. Zero network I/O in `verify_proof()`.
 
 ## 3. Verdicts
 
 V1 triple `{cryptographic_validity, evidence_validity, policy_decision}`
-preserved. Additive projection `dimensions()`:
+preserved, plus feed health `status_inputs_valid` (V1.1; false = STATUS-stage
+failures present, validity unaffected). Additive projection `dimensions()`:
 `structural / cryptographic / evidence / provenance / temporal / revocation /
 policy / overall` ∈ `VALID | INVALID | INDETERMINATE | NOT_APPLICABLE`.
 `NOT_APPLICABLE` (e.g. provenance with no edges) never fails alone;

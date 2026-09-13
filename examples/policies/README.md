@@ -30,14 +30,14 @@ These are example verification policies you can adapt for your use case.
 | [settlement.json](settlement.json) | Payment settling an invoice |
 | [fresh-only.json](fresh-only.json) | Proof must be recent (replay hygiene — advisory, see below) |
 
-> `proof_fresh` reads the holder-rewritable, unauthenticated `created_at`
-> (outside `proof_id`) and is **advisory replay hygiene between cooperating
-> parties, NOT a security boundary against a proof holder** — a holder can
-> re-stamp it without breaking any signature. Every policy that uses
-> `proof_fresh` MUST also require `not_expired` (signed `issued_at` /
+> `proof_fresh` reads the proof's `created_at`, which IS covered by `proof_id`
+> (a holder re-stamping it breaks the id and fails at the IDENTIFIERS stage).
+> It remains **advisory replay hygiene between cooperating parties, NOT a
+> security boundary against a proof holder** — freshness against the verifier
+> clock only bounds self-declared age. For strong freshness every policy that
+> uses `proof_fresh` SHOULD also require `not_expired` (signed `issued_at` /
 > `expires_at` windows the holder cannot rewrite) or a transparency
-> requirement for strong freshness. `evaluate` warns on stderr when
-> `proof_fresh` stands alone without `not_expired`.
+> requirement.
 
 ## Requirements reference
 

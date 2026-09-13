@@ -10,15 +10,15 @@ Within the trust model of `THREAT-MODEL.md`, and given an honest verifier
 clock and an honest revocation-information source, the engine guarantees:
 
 1. **Tamper evidence.** Any modification of the bytes a proof id covers —
-   the proposition, event/attestation/evidence/relationship member sets and
-   their contents — fails verification, even one bit. Ids are recomputed from
-   canonical bytes (`ID_MISMATCH`); signatures are checked against the key
-   named in the COSE header (`SIGNATURE_INVALID`). One documented exception:
-   the proof's own `created_at` field is informational (FORMAT.md §6) and
-   deliberately outside the id binding, so mutating it does not change any
-   verification decision; a mutation-soak test
-   (`crates/proof-verify/tests/soak.rs`) pins this boundary from both sides —
-   every covered byte fails closed, the informational field does not.
+   the proposition, the proof's `created_at` timestamp (V1 CORE freeze
+   deviation, pre-V1.0 wire fix), and the event/attestation/evidence/
+   relationship member sets and their contents — fails verification, even
+   one bit. Ids are recomputed from canonical bytes (`ID_MISMATCH`);
+   signatures are checked against the key named in the COSE header
+   (`SIGNATURE_INVALID`). A mutation-soak test
+   (`crates/proof-verify/tests/soak.rs`) pins the boundary from both sides:
+   every covered byte fails closed; there are no unprotected value ranges
+   left in a proof.
 2. **No unsigned trust statements.** An attestation is trusted only if its
    signature verifies, its issuer equals the signing key's KeyRef, and a
    caller-supplied policy lists that issuer. A valid signature alone never

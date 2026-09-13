@@ -201,19 +201,21 @@ controls their own inputs by definition.
 
 ### T11 — Timestamp manipulation
 - **Attack**: backdate `issued_at`, push `expires_at` to infinity, backdate a
-  revocation — or re-stamp the unauthenticated `created_at` to defeat
-  `proof_fresh`.
+  revocation — or re-stamp `created_at` to defeat `proof_fresh`.
 - **Mitigation**: embedded time is an assertion, never trust; all timeliness
   evaluated against caller-supplied `verified_at` ± bounded skew; `0` clock
   fails everything; future-dated status objects never apply; skew is
-  symmetric and documented. `proof_fresh` is explicitly advisory (holder can
-  re-stamp `created_at` without breaking the binding — pinned by test);
-  strong freshness comes from signed attestation windows and transparency.
+  symmetric and documented. Since the V1 CORE freeze deviation (pre-V1.0
+  wire fix), `created_at` IS covered by `proof_id`: a re-stamped proof fails
+  `ID_MISMATCH` at IDENTIFIERS and never evaluates (pinned by test).
+  `proof_fresh` still bounds only self-declared age against the verifier
+  clock; strong freshness comes from signed attestation windows and
+  transparency.
 - **Residual**: a lying verifier clock produces garbage-in/garbage-out
   (caller responsibility, declared in SECURITY.md); V2 transparency receipts
   anchor time without trusting embedded stamps.
 - **Tests**: lifecycle suite (golden-15, skew window), `time_validity`,
-  `created_at_restamp_moves_freshness_without_breaking_binding`.
+  `created_at_restamp_breaks_binding_and_fails_id_mismatch`.
 
 ### T12 — Revoked credentials / revocation suppression
 - **Attack**: present a revoked/expired credential as current; withhold

@@ -24,9 +24,11 @@ pub use policy::{
 };
 
 /// True when the policy evaluates `proof_fresh` anywhere (v1 list or v2 tree).
-/// Used by front ends to warn when advisory freshness stands alone without a
-/// signed window (`not_expired`): `created_at` is holder-rewritable and
-/// outside `proof_id`, so `proof_fresh`-only PASS is advisory, not a boundary.
+/// Diagnostic helper for front ends and tooling: `proof_fresh` reads
+/// `created_at`, which IS covered by `proof_id` (re-stamping breaks the id and
+/// fails at IDENTIFIERS), but it still only bounds self-declared age against
+/// the verifier clock. Pair with `not_expired` (signed windows) for strong
+/// freshness.
 pub fn policy_uses_proof_fresh(policy: &Policy) -> bool {
     if policy.version == 2 {
         if let Some(expr) = &policy.expression {
