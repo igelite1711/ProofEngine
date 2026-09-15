@@ -12,13 +12,16 @@ use proof_verify::{Validity, VerifyReport};
 use std::collections::{HashMap, HashSet};
 
 /// One verified statement claim, projected for policy adjudication
-/// (delegation chains, transparency inclusion, conflict review).
+/// (delegation chains, transparency inclusion, conflict review, field
+/// predicates). `fields` carries the claim's typed key-values so V2
+/// `claim_field` requirements can adjudicate content, not just presence.
 #[derive(Debug, Clone)]
 pub struct ClaimSummary {
     pub attestation_id: String,
     pub issuer: String,
     pub subject: String,
     pub claim_type: String,
+    pub fields: Vec<(String, proof_core::model::MetaValue)>,
 }
 
 /// One validated relationship edge with its asserter, for endpoint-aware
@@ -46,6 +49,18 @@ pub struct Delegation {
     pub scope: Option<String>,
     pub issued_at: u64,
     pub expires_at: Option<u64>,
+}
+
+/// A cryptographically bound evidence link: a verified ACTIVE statement
+/// attestation whose `evidence_ref` names the evidence and whose claim
+/// `evidence_digest` equals that evidence's digest. Only well-formed
+/// matching bindings are recorded here — malformed/mismatched fields fail
+/// closed in the pipeline EVIDENCE stage instead, and revoked/expired/
+/// superseded/compromised asserters never bind (same scope as `claim_field`).
+#[derive(Debug, Clone)]
+pub struct EvidenceBinding {
+    pub attestation_id: String,
+    pub evidence_id: String,
 }
 
 /// An identity binding projected from a verified `identity.bind`
@@ -98,6 +113,10 @@ pub struct VerifiedState {
     pub delegations: Vec<Delegation>,
     /// Identity bindings from verified `identity.bind` attestations.
     pub identity_bindings: Vec<IdentityBinding>,
+    /// Cryptographic claim-to-content bindings from verified ACTIVE
+    /// `evidence_digest` claims (opt-in semantic binding). Read by the v2
+    /// `evidence_bound` leaf; empty when no attestation binds.
+    pub evidence_bindings: Vec<EvidenceBinding>,
     /// Artifact ids covered by valid withdrawals (any artifact kind).
     pub withdrawn_ids: Vec<String>,
     /// Namespaces used by member labels (for vocabulary policy).
@@ -189,6 +208,7 @@ pub fn state_from_report_and_proof(
                 issuer: a.content.issuer.clone(),
                 subject: a.content.subject.clone(),
                 claim_type: a.content.claim.claim_type.clone(),
+                fields: a.content.claim.fields.clone(),
             });
             // Reserved statement-level conventions, projected for policy.
             if a.content.claim.claim_type == proof_crypto::claim::CLAIM_DELEGATE {
@@ -238,6 +258,59 @@ pub fn state_from_report_and_proof(
             }
         }
     }
+    // Opt-in semantic bindings (Fix 5 projection): verified ACTIVE statement
+    // attestations whose `evidence_ref` names proof evidence AND whose claim
+    // `evidence_digest` equals that evidence's digest (shared normalization
+    // with the pipeline via proof-crypto::claim::evidence_digest_hex).
+    // Malformed/mismatched fields never bind here — the pipeline already
+    // failed those closed at EVIDENCE.
+    let evidence_bindings: Vec<EvidenceBinding> = {
+        fn lower_hex(bytes: &[u8]) -> String {
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            let mut s = String::with_capacity(bytes.len() * 2);
+            for b in bytes {
+                s.push(HEX[(b >> 4) as usize] as char);
+                s.push(HEX[(b & 0x0f) as usize] as char);
+            }
+            s
+        }
+        let active: HashSet<&str> = active_attestation_ids.iter().map(|s| s.as_str()).collect();
+        let mut digest_by_evd: HashMap<String, String> = HashMap::new();
+        for e in &proof.evidence {
+            let canon = proof_format::encode_canonical(&proof_format::evidence_to_cbor(e));
+            digest_by_evd.insert(
+                proof_crypto::id::evidence_id(&canon),
+                lower_hex(&e.digest.digest),
+            );
+        }
+        let mut out = vec![];
+        for a in &proof.attestations {
+            let canon =
+                proof_format::encode_canonical(&proof_format::attestation_to_cbor(&a.content));
+            let id = proof_crypto::id::attestation_id(&canon);
+            if !verified.contains(id.as_str()) || !active.contains(id.as_str()) {
+                continue;
+            }
+            if proof_crypto::claim::claim_kind(&a.content)
+                != proof_crypto::claim::ClaimKind::Statement
+            {
+                continue;
+            }
+            let claimed = match proof_crypto::claim::evidence_digest_hex(&a.content.claim) {
+                Some(Ok(hex)) => hex,
+                _ => continue,
+            };
+            if let Some(eref) = a.content.evidence_ref.as_deref() {
+                if digest_by_evd.get(eref).is_some_and(|d| *d == claimed) {
+                    out.push(EvidenceBinding {
+                        attestation_id: id,
+                        evidence_id: eref.to_string(),
+                    });
+                }
+            }
+        }
+        out
+    };
     let mut edges = vec![];
     for r in &proof.relationships {
         let attestation = r.attestation_ref.clone();
@@ -304,6 +377,7 @@ pub fn state_from_report_and_proof(
         edges,
         delegations,
         identity_bindings,
+        evidence_bindings,
         withdrawn_ids: report.withdrawn_ids.clone(),
         referenced_proofs: proof.referenced_proofs.clone(),
         vocabularies_used,

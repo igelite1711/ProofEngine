@@ -187,15 +187,20 @@ controls their own inputs by definition.
   linkage (self-links, swapped sources).
 - **Mitigation**: node/edge/depth limits enforced; dangling endpoint/ref →
   `DANGLING_REFERENCE`; trust-relevant edges (`OWNS|CREATED|SETTLES|
-  EXECUTED` plus caller-configured additions via
-  `validate_graph_with_grounding`) require grounding
-  (`RELATIONSHIP_UNGROUNDED`); SUPERSEDES linear-acyclic (`CYCLE_DETECTED`,
-  branch → `SCHEMA_VIOLATION`); iterative Kahn's (no hostile recursion);
-  composition refs shape/sorted/bound-checked with self-links refused
-  (`CYCLE_DETECTED`) — and linkage contributes nothing to validity, so a
-  forged link cannot upgrade trust.
-- **Residual**: non-SUPERSEDES cycles are allowed by design (references may
-  be mutual) — graph *semantics* remain a policy matter.
+  EXECUTED|EQUIVALENT|CONTRADICTS` plus caller-configured additions via
+  `validate_graph_with_grounding`/`extra_grounded`) require grounding
+  (`RELATIONSHIP_UNGROUNDED`, fail-fast at `relate` unless
+  `--allow-ungrounded`); SUPERSEDES linear-acyclic (`CYCLE_DETECTED`,
+  branch → `SCHEMA_VIOLATION`); derivation subgraph always acyclic
+  (all types except REFERENCES/EQUIVALENT linkage; `CYCLE_DETECTED` →
+  evidence invalid); full-DAG opt-in (`--require-acyclic`/`--production`)
+  additionally rejects REFERENCES cycles; iterative Kahn's/DFS (no hostile
+  recursion); composition refs shape/sorted/bound-checked with self-links
+  refused (`CYCLE_DETECTED`) — and linkage contributes nothing to validity,
+  so a forged link cannot upgrade trust.
+- **Residual**: REFERENCES/EQUIVALENT linkage cycles remain allowed by design
+  (citations/see-also, identity assertions) — derivation *semantics* for
+  custom vocabularies stay fail-closed (custom types count as derivation).
 - **Tests**: `proof-graph` suite, `fuzz::graph_ingest`, golden-09/10/24/25/26,
   composition tests.
 
@@ -362,9 +367,11 @@ gates (advisories/bans/licenses/sources/yanked), zero `unsafe`, minimal deps,
 PR build gate for fuzz + nightly 600s smoke per target, traceability +
 neutrality gates, deterministic demo byte-pin.
 
-Gaps (open, not claimed): no SBOM artifact, no signed release artifacts, no
-SLSA-style provenance attestations, no `cargo vet`-style audit chain, advisory
-job runs `continue-on-error` (deny is the real gate). These are V2
+Gaps (open, not claimed): no signed release artifacts yet, no SLSA-style
+provenance attestations on releases, no `cargo vet`-style audit chain. SBOM
+tooling exists (`tools/gen_sbom.py` + CI determinism gate) but no published
+SBOM artifact yet. Single supply-chain gate: `cargo deny check` (the redundant
+second RustSec scan was removed — one gate owns the verdict). These are V2
 operational rows (`MIGRATION-PLAN.md` §Phase-10/11).
 
 ## 6. Privacy & confidentiality

@@ -185,8 +185,11 @@ impl RelType {
     }
 
     /// Trust-relevant edges MUST carry backing evidence.
-    /// This list is part of V1 semantics; well-known types are stable (see VERSIONING.md).
-    /// EQUIVALENT and CONTRADICTS are trust-relevant: identity and
+    /// Frozen V1 defaults (ARCHITECTURE-FREEZE.md F2/F9): this list is part of
+    /// V1 semantics and never grows by domain convenience. Future vocabularies
+    /// declare their own trust-relevant kinds via `VerifyCtx::extra_grounded`
+    /// / `VerificationContext::extra_grounded` (no core change, no freeze
+    /// reopen). EQUIVALENT and CONTRADICTS are trust-relevant: identity and
     /// contradiction assertions shape trust adjudication, so bare edges are
     /// rejected exactly like other trust-relevant types.
     pub fn requires_grounding(&self) -> bool {

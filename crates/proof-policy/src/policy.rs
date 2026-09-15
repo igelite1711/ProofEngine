@@ -12,10 +12,55 @@ use proof_core::{
 /// PE-POLICY-008.
 ///
 /// V1 (`policy_version: 1`) accepts exactly the first ten variants, combined
-/// by implicit AND. The eight adjudication variants below are V2-only
+/// by implicit AND. The adjudication variants below are V2-only
 /// (`policy_version: 2`, usable inside boolean/threshold expressions):
 /// v1 parsing rejects their type names, so v1 semantics are frozen
 /// byte-for-byte while new trust questions become expressible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldOp {
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+}
+
+impl FieldOp {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Eq => "eq",
+            Self::Ne => "ne",
+            Self::Gt => "gt",
+            Self::Gte => "gte",
+            Self::Lt => "lt",
+            Self::Lte => "lte",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "eq" => Some(Self::Eq),
+            "ne" => Some(Self::Ne),
+            "gt" => Some(Self::Gt),
+            "gte" => Some(Self::Gte),
+            "lt" => Some(Self::Lt),
+            "lte" => Some(Self::Lte),
+            _ => None,
+        }
+    }
+}
+
+/// Typed claim-field value for `claim_field` predicates. Mirrors
+/// `MetaValue` (text/uint/bool only — the same closed value space claims use,
+/// so no new serialization or comparison semantics are introduced).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldValue {
+    Text(String),
+    Uint(u64),
+    Bool(bool),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Requirement {
     /// Cryptographic validity established by the pipeline.
@@ -91,6 +136,14 @@ pub enum Requirement {
     /// not mere presence (e.g. renewal-carried evidence with unverified
     /// backing reads UNKNOWN and fails here while passing presence).
     EvidenceUsable { kind: EvidenceKind },
+    /// Evidence of this kind is cryptographically bound: some AVAILABLE
+    /// evidence of the kind is named by a verified ACTIVE attestation's
+    /// `evidence_ref` whose claim `evidence_digest` equals the evidence
+    /// digest. Strict counterpart to `evidence_usable` for callers that need
+    /// claim-to-content binding, not just availability — lets a policy
+    /// *require* the opt-in binding instead of merely benefiting when an
+    /// issuer happens to assert it. V2-only.
+    EvidenceBound { kind: EvidenceKind },
     /// The composition linkage directly names proof `id`. Composition
     /// hook: callers pinning which sources a proof must be built from.
     /// Direct linkage only (what `proof_id` binds); transitive closure is
@@ -100,6 +153,22 @@ pub enum Requirement {
     /// callers forbidding a source (tainted origin, wrong upstream).
     /// Direct linkage only, like `RequiresReference`.
     ForbidsReference { id: String },
+    /// A verified ACTIVE statement claim carries `field` satisfying `op`
+    /// against `value`. Optional `claim_type`/`subject` scope the search;
+    /// absent means any type/subject. Type-strict: uint compares only with
+    /// uint (all six ops), text only with `eq`/`ne` (byte equality, no locale
+    /// or normalization — same bytes-in_bytes-out rule as ids), bool only
+    /// with `eq`/`ne`. At least one matching ACTIVE claim passes; revoked,
+    /// expired, superseded, or compromised claims never satisfy. V2-only.
+    /// Example: `{"type":"claim_field","claim_type":"sensor.accurate",
+    /// "field":"ph","op":"gte","value":7}` (uint) or `"value":"paid"`.
+    ClaimField {
+        claim_type: Option<String>,
+        subject: Option<String>,
+        field: String,
+        op: FieldOp,
+        value: FieldValue,
+    },
 }
 
 impl Requirement {
@@ -137,8 +206,30 @@ impl Requirement {
                 format!("vocabulary_accepted({ns}, max_version={max_version})")
             }
             Self::EvidenceUsable { kind } => format!("evidence_usable({})", kind.as_str()),
+            Self::EvidenceBound { kind } => format!("evidence_bound({})", kind.as_str()),
             Self::RequiresReference { id } => format!("requires_reference({id})"),
             Self::ForbidsReference { id } => format!("forbids_reference({id})"),
+            Self::ClaimField {
+                claim_type,
+                subject,
+                field,
+                op,
+                value,
+            } => {
+                let val = match value {
+                    FieldValue::Text(s) => format!("\"{s}\""),
+                    FieldValue::Uint(n) => format!("{n}"),
+                    FieldValue::Bool(b) => format!("{b}"),
+                };
+                let mut scope = String::new();
+                if let Some(t) = claim_type {
+                    scope.push_str(&format!("type={t} "));
+                }
+                if let Some(s) = subject {
+                    scope.push_str(&format!("subject={s} "));
+                }
+                format!("claim_field({scope}{field} {} {val})", op.as_str())
+            }
         }
     }
 
@@ -161,12 +252,15 @@ impl Requirement {
             Self::NoConflictingEvidence => "no_conflicting_evidence",
             Self::VocabularyAccepted { .. } => "vocabulary_accepted",
             Self::EvidenceUsable { .. } => "evidence_usable",
+            Self::EvidenceBound { .. } => "evidence_bound",
             Self::RequiresReference { .. } => "requires_reference",
             Self::ForbidsReference { .. } => "forbids_reference",
+            Self::ClaimField { .. } => "claim_field",
         }
     }
 
-    /// True for the eight V2-only adjudication leaves.
+    /// True for the V2-only adjudication leaves (eight original +
+    /// `claim_field` + `evidence_bound`).
     pub fn is_v2_only(&self) -> bool {
         matches!(
             self,
@@ -176,8 +270,10 @@ impl Requirement {
                 | Self::NoConflictingEvidence
                 | Self::VocabularyAccepted { .. }
                 | Self::EvidenceUsable { .. }
+                | Self::EvidenceBound { .. }
                 | Self::RequiresReference { .. }
                 | Self::ForbidsReference { .. }
+                | Self::ClaimField { .. }
         )
     }
 }
@@ -255,7 +351,9 @@ pub(crate) fn requirement_to_cbor(req: &Requirement) -> proof_format::CborValue 
                 CborValue::Text(relationship.as_str().into()),
             ));
         }
-        Requirement::EvidencePresent { kind } | Requirement::EvidenceUsable { kind } => {
+        Requirement::EvidencePresent { kind }
+        | Requirement::EvidenceUsable { kind }
+        | Requirement::EvidenceBound { kind } => {
             req_map.push((
                 CborValue::Text("kind".into()),
                 CborValue::Text(kind.as_str().into()),
@@ -300,6 +398,45 @@ pub(crate) fn requirement_to_cbor(req: &Requirement) -> proof_format::CborValue 
                 CborValue::Text("max_version".into()),
                 CborValue::Uint(*max_version),
             ));
+        }
+        Requirement::ClaimField {
+            claim_type,
+            subject,
+            field,
+            op,
+            value,
+        } => {
+            if let Some(t) = claim_type {
+                req_map.push((
+                    CborValue::Text("claim_type".into()),
+                    CborValue::Text(t.clone()),
+                ));
+            }
+            if let Some(s) = subject {
+                req_map.push((
+                    CborValue::Text("subject".into()),
+                    CborValue::Text(s.clone()),
+                ));
+            }
+            req_map.push((
+                CborValue::Text("field".into()),
+                CborValue::Text(field.clone()),
+            ));
+            req_map.push((
+                CborValue::Text("op".into()),
+                CborValue::Text(op.as_str().into()),
+            ));
+            match value {
+                FieldValue::Text(s) => {
+                    req_map.push((CborValue::Text("value".into()), CborValue::Text(s.clone())))
+                }
+                FieldValue::Uint(n) => {
+                    req_map.push((CborValue::Text("value".into()), CborValue::Uint(*n)))
+                }
+                FieldValue::Bool(b) => {
+                    req_map.push((CborValue::Text("value".into()), CborValue::Bool(*b)))
+                }
+            }
         }
         _ => {}
     }
@@ -443,7 +580,7 @@ fn parse_requirement(v: &serde_json::Value, index: usize) -> Result<Requirement,
 }
 
 /// Parse one requirement leaf inside a v2 expression. Accepts the ten frozen
-/// v1 leaves plus the eight V2 adjudication leaves.
+/// v1 leaves plus the V2 adjudication leaves (including `claim_field`).
 pub(crate) fn parse_requirement_v2_leaf(
     obj: &serde_json::Map<String, serde_json::Value>,
     what: &str,
@@ -451,7 +588,7 @@ pub(crate) fn parse_requirement_v2_leaf(
     parse_requirement_inner(obj, what, false)
 }
 
-/// Shared leaf validation. `v1_only` rejects the eight V2 adjudication names,
+/// Shared leaf validation. `v1_only` rejects the V2 adjudication names,
 /// freezing v1 semantics byte-for-byte.
 fn parse_requirement_inner(
     obj: &serde_json::Map<String, serde_json::Value>,
@@ -459,7 +596,7 @@ fn parse_requirement_inner(
     v1_only: bool,
 ) -> Result<Requirement, ProofError> {
     let t = req_string(obj, "type", what)?;
-    // Frozen v1: the eight adjudication names never parse under v1, so v1
+    // Frozen v1: the adjudication names never parse under v1, so v1
     // semantics (and bytes) cannot drift as v2 grows.
     if v1_only
         && matches!(
@@ -470,8 +607,10 @@ fn parse_requirement_inner(
                 | "no_conflicting_evidence"
                 | "vocabulary_accepted"
                 | "evidence_usable"
+                | "evidence_bound"
                 | "requires_reference"
                 | "forbids_reference"
+                | "claim_field"
         )
     {
         return Err(ErrorCode::PolicyInvalid
@@ -612,6 +751,14 @@ fn parse_requirement_inner(
                 kind: EvidenceKind::new(k),
             })
         }
+        "evidence_bound" => {
+            reject_extra_keys(obj, &["type", "kind"], what)?;
+            let k = req_string(obj, "kind", what)?;
+            // Open vocabulary like evidence_usable: policy defines kinds.
+            Ok(Requirement::EvidenceBound {
+                kind: EvidenceKind::new(k),
+            })
+        }
         "requires_reference" => {
             reject_extra_keys(obj, &["type", "id"], what)?;
             Ok(Requirement::RequiresReference {
@@ -622,6 +769,84 @@ fn parse_requirement_inner(
             reject_extra_keys(obj, &["type", "id"], what)?;
             Ok(Requirement::ForbidsReference {
                 id: require_proof_ref(obj, "id", what)?,
+            })
+        }
+        "claim_field" => {
+            reject_extra_keys(
+                obj,
+                &["type", "claim_type", "subject", "field", "op", "value"],
+                what,
+            )?;
+            let claim_type = match obj.get("claim_type") {
+                None => None,
+                Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+                _ => {
+                    return Err(ErrorCode::PolicyInvalid
+                        .err(format!("{what}: claim_type must be a non-empty string")))
+                }
+            };
+            let subject = match obj.get("subject") {
+                None => None,
+                Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+                _ => {
+                    return Err(ErrorCode::PolicyInvalid
+                        .err(format!("{what}: subject must be a non-empty string")))
+                }
+            };
+            let field = req_string(obj, "field", what)?;
+            if field.is_empty() || field.len() > 128 {
+                return Err(
+                    ErrorCode::PolicyInvalid.err(format!("{what}: field length out of bounds"))
+                );
+            }
+            // `type` is reserved for the claim-type discriminator inside
+            // attestation claims; filtering on it via `field` would be
+            // ambiguous (leaf `claim_type` already scopes the claim). Reject
+            // to keep semantics explicit.
+            if field == "type" {
+                return Err(ErrorCode::PolicyInvalid.err(format!(
+                    "{what}: field \"type\" is reserved — use claim_type instead"
+                )));
+            }
+            let op_s = req_string(obj, "op", what)?;
+            let op = FieldOp::parse(&op_s).ok_or_else(|| {
+                ErrorCode::PolicyInvalid
+                    .err(format!("{what}: op must be one of eq/ne/gt/gte/lt/lte"))
+            })?;
+            let value = match obj.get("value") {
+                Some(serde_json::Value::String(s)) => FieldValue::Text(s.clone()),
+                Some(serde_json::Value::Number(n)) => {
+                    let u = n.as_u64().ok_or_else(|| {
+                        ErrorCode::PolicyInvalid.err(format!(
+                            "{what}: numeric value must be a non-negative integer"
+                        ))
+                    })?;
+                    FieldValue::Uint(u)
+                }
+                Some(serde_json::Value::Bool(b)) => FieldValue::Bool(*b),
+                _ => {
+                    return Err(ErrorCode::PolicyInvalid.err(format!(
+                        "{what}: value must be a string, non-negative integer, or bool"
+                    )))
+                }
+            };
+            // Type-strict ops: ordering only on uint; text/bool only eq/ne.
+            match (&value, &op) {
+                (FieldValue::Uint(_), _) => {}
+                (_, FieldOp::Eq) | (_, FieldOp::Ne) => {}
+                _ => {
+                    return Err(ErrorCode::PolicyInvalid.err(format!(
+                        "{what}: op {} requires a uint value (text/bool allow only eq/ne)",
+                        op.as_str()
+                    )))
+                }
+            }
+            Ok(Requirement::ClaimField {
+                claim_type,
+                subject,
+                field,
+                op,
+                value,
             })
         }
         _ => Err(ErrorCode::PolicyInvalid.err(format!("{what}: unknown requirement type {t}"))),

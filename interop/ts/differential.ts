@@ -394,7 +394,7 @@ writeFileSync(
   const r = runCli(
     "verify", "--proof", join(workDir, "proof.json"),
     "--clock", "1700000300", "--revocations-known-at", "1700000300",
-    "--out", join(workDir, "report.json")
+    "--no-require-status", "--out", join(workDir, "report.json")
   );
   let rep: any = {};
   try {
@@ -421,7 +421,7 @@ writeFileSync(
   const r = runCli(
     "verify", "--proof", join(workDir, "proof2.json"),
     "--clock", "1700000300", "--revocations-known-at", "1700000300",
-    "--out", join(workDir, "report2.json")
+    "--no-require-status", "--out", join(workDir, "report2.json")
   );
   let rep: any = {};
   try {

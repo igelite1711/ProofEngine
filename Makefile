@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test fmt fmt-check clippy demo quick-proof pilot-legal fuzzcheck trace neutrality no-panic domain-tests cddl-validate freeze-guard sbom release-meta clean install interop-py interop-ts interop bench-smoke bench-check scitt-check coverage
+.PHONY: help build test fmt fmt-check clippy demo quick-proof pilot-legal fuzzcheck trace neutrality no-panic domain-tests cddl-validate freeze-guard sbom release-meta clean install interop-py interop-ts interop conformance bench-smoke bench-check scitt-check coverage
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -51,6 +51,9 @@ interop-ts: ## Third independent verifier (TypeScript): typecheck + differential
 	cd interop/ts && (test -d node_modules || npm install --no-audit --no-fund) && PROOF_CLI=$(abspath $(PROOF_CLI)) npm run --silent differential
 
 interop: interop-py interop-ts ## All independent verifiers (Python + TypeScript)
+
+conformance: build ## Full-verdict conformance: replay every golden proof/policy vector through an engine front end and compare recorded verdicts (any implementation can mirror tools/conformance.py)
+	python3 tools/conformance.py --repo . --proof-cli $(PROOF_CLI) --work /tmp/proof-conformance
 
 bench-smoke: ## Quick benchmark smoke (2 iters, all scenarios, JSON)
 	cargo run --locked -p proof-bench -- --iters 2 --json

@@ -30,11 +30,15 @@ use proof_policy::{evaluate_policy, parse_policy, state_from_report_and_proof};
 use proof_verify::{verify_proof, PolicyDecision, Validity, VerifyCtx};
 
 /// The exact caller context every domain uses: one shape, twelve industries.
+/// Explicit caller-asserted absence (domain journeys pin vocabulary
+/// neutrality, not feed behavior; the fail-closed default is pinned by the
+/// core lifecycle tests).
 fn ctx(clock: u64) -> VerifyCtx {
     VerifyCtx {
         verified_at: clock,
         clock_skew_leeway: 300,
         revocations_known_at: Some(clock),
+        require_status_feed: false,
         ..VerifyCtx::default()
     }
 }

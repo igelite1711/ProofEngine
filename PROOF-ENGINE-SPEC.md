@@ -284,11 +284,13 @@ adapters:
    checks; lifecycle per §11.
 9. **EVIDENCE** — evidence digest bindings; attestation evidence_refs resolve.
 10. **RELATIONSHIPS** — endpoints resolve; grounding for trust-relevant edges.
-11. **GRAPH** — node/edge limits; SUPERSEDES linear-acyclic; depth bound.
-    Provenance DAG profile (V1.1, opt-in via `require_acyclic_provenance` /
-    `--require-acyclic`): when enabled, the full member graph must also be
-    acyclic (`CYCLE_DETECTED`); default off — REFERENCES cycles are linkage
-    (citations/see-also), not derivation. Derivation chains SHOULD enable it.
+11. **GRAPH** — node/edge limits; SUPERSEDES linear-acyclic; depth bound;
+    derivation subgraph always acyclic (`CYCLE_DETECTED` → evidence invalid;
+    REFERENCES/EQUIVALENT linkage excluded).
+    Full-DAG profile (V1.1, opt-in via `require_acyclic_provenance` /
+    `--require-acyclic`/`--production`): when enabled, REFERENCES cycles are
+    additionally rejected; default keeps REFERENCES citations linkage-valid.
+    Derivation loops fail by default (supply-chain laundering signal).
 11b. **STATUS** — caller-feed hygiene (V1.1): malformed/unauthorized/
     future-dated/supplied-signature problems. Never flips validity; exposed
     via `status_inputs_valid`.

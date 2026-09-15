@@ -254,6 +254,10 @@ fn verify_at(
             clock_skew_leeway: 300,
             status_objects: statuses,
             revocations_known_at: Some(at),
+            // Tour narrative asserts caller-checked absence on the fresh
+            // step (empty statuses); a supplied feed always satisfies the
+            // default fail-closed gate.
+            require_status_feed: false,
             ..VerifyCtx::default()
         },
     )
@@ -567,5 +571,8 @@ pub fn run(_cli: &Cli) -> Result<i32, String> {
     println!("\nSame engine. Different domain. Tour complete.");
     println!("Try: proof-cli verify, inspect, graph, evaluate, explain —");
     println!("every screen above maps to a command. The core does the work.");
+    println!("Bare verify PASS means historically valid: re-run any verify with");
+    println!("--production for the strict answer (fails closed on empty status");
+    println!("feeds and VALID-but-not-current proofs; see docs/OPERATOR-RUNBOOK.md).");
     Ok(crate::EXIT_OK)
 }

@@ -220,7 +220,11 @@ fn mistyped_backing_ref_rejected() {
             .map(|s| s.to_string()),
     );
     // SETTLES is trust-relevant: evidence_ref must be evd:v1:…, not att:.
-    let rel = make_relationship(
+    // Typed backing refs are enforced eagerly at construction —
+    // make_relationship canonicalizes through cbor_to_relationship, whose
+    // opt_ref_or_nil enforces the "evd:v1:" / "att:v1:" prefixes before any
+    // id is ever computed (fail at creation, not at graph validation).
+    let err = make_relationship(
         Relationship {
             v: 1,
             from: ev.id.clone(),
@@ -231,9 +235,26 @@ fn mistyped_backing_ref_rejected() {
         },
         &lim,
     )
-    .unwrap();
-    let (back, id) = verify_relationship(&rel.canonical, Some(&rel.id), &lim).unwrap();
-    let edge = EdgeRecord { content: back, id };
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::SchemaViolation);
+    // A hand-forged canonical edge bypassing construction is still rejected
+    // lazily by validate_graph (defense in depth for direct EdgeRecord use).
+    let content = Relationship {
+        v: 1,
+        from: ev.id.clone(),
+        rel_type: RelType::new(RelType::SETTLES),
+        to: ev2.id.clone(),
+        evidence_ref: Some(att.id.clone()),
+        attestation_ref: None,
+    };
+    let canonical =
+        proof_format::cbor::encode_canonical(&proof_format::schema::relationship_to_cbor(&content));
+    let bytes = canonical;
+    let forged = proof_crypto::id::relationship_id(&bytes);
+    let edge = EdgeRecord {
+        content,
+        id: forged,
+    };
     let err = validate_graph(&[edge], &nodes, &lim).unwrap_err();
     assert_eq!(err.code, ErrorCode::SchemaViolation);
 }

@@ -44,6 +44,49 @@ Using ONLY this doc set + fixtures:
 
 `interop/` executes exactly this recipe outside the Rust codebase.
 
+## Verdict-reproduction recipe (full verdicts, any engine)
+
+The recipe above proves forgery detection. Reproducing whole *verdicts*
+(valid/invalid per dimension, lifecycle states, policy decisions) needs no
+new cryptography — every later stage is a deterministic pure function of
+(proof bytes + explicit context). `tools/conformance.py` (stdlib-only, CI-
+gated via `make conformance`) replays every fixture carrying
+`proof_canonical_hex` through an engine front end and compares the recorded
+`expected` verdicts:
+
+1. Wrap `proof_canonical_hex` as an envelope (`{"cbor": <hex>}` — no `id`,
+   so the bytes authenticate themselves) and run the equivalent of
+   `verify --clock <verified_at> --skew <skew_leeway>
+   [--revocations-known-at <t>] [--authority <k>…]`.
+2. Compare `cryptographic_validity` / `evidence_validity` /
+   `policy_decision` exactly; every `expected.codes[]` entry must appear
+   among the failing checks; `expected.stage`+`expected.code` must match one
+   failing check; `proof_id` and `conflicts` count must match where recorded.
+3. Where the fixture carries `policy` + `eval_inputs`, run the equivalent of
+   `evaluate --policy <file> [--trusted <k>…] [--revoked <ids>] --json` under
+   the same clock and compare `policy_outcome.decision` plus each result's
+   `requirement`/`passed` (messages are implementation prose — never compare
+   them).
+4. Extra report fields are ignored: implementations may extend diagnostics
+   freely; only recorded fields gate conformance.
+
+Unit-shape fixtures (no `proof_canonical_hex`: CBOR edge cases, keys,
+graph shapes) stay covered by `interop/differential.py`. Together the two
+runners span binding-level and verdict-level agreement: 39 differential +
+22 conformance checks green at last cut.
+
+## Scope boundary (external review clarification)
+
+`interop/pengine.py` (stdlib-only) covers the cryptographic interop core:
+stages PARSE/CANONICAL/IDENTIFIERS/SIGNATURES/KEYS-shape plus `proof_id`
+binding. Time/lifecycle/graph/policy are engine-side by design — their
+inputs are caller-supplied (`VerificationContext`) and live in
+`proof-verify`/`proof-policy`, which the Python side never reimplements.
+Full-verdict agreement travels via `tools/conformance.py` (recorded
+`expected` verdicts replayed through any engine front end), not via the
+Python verifier alone. Do not read a Python PASS as a verdict; read it as
+forgery-detection agreement.
+
 ## Implementer notes (learned from the audit)
 
 - Canonical CBOR means RFC 8949 preferred serialization AND lexicographic

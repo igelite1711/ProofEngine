@@ -277,6 +277,21 @@ def _closed(m, allowed, what):
             raise InteropFail(f"unknown {what} field {k!r}")
 
 
+def _check_text(s, what, max_len=1024, allow_empty=False):
+    """Text bound parity with proof-format (1..1024 default; schema-level)."""
+    if not isinstance(s, str):
+        raise InteropFail(f"{what} must be text")
+    if (not allow_empty and not s) or len(s.encode("utf-8")) > max_len:
+        raise InteropFail(f"{what} length out of bounds")
+
+
+def _check_ref(s, what, prefix):
+    """Typed-reference parity (F4/F5): wrong-typed ids reject at schema."""
+    _check_text(s, what)
+    if not s.startswith(prefix):
+        raise InteropFail(f"{what} {s!r} must start with {prefix}")
+
+
 _EVENT_FIELDS = ("v", "type", "subject", "effective_at", "payload_ref",
                  "metadata")
 _ATTESTATION_FIELDS = ("v", "issuer", "subject", "claim", "issued_at",
@@ -325,6 +340,28 @@ def verify_proof(proof_raw):
     event_ids = []
     for m in members("events", "evt"):
         _closed(m, _EVENT_FIELDS, "event")
+        # Bounds parity: text 1..1024, metadata <=16 entries keys <=64.
+        md = dict(m)
+        for k in ("type", "subject"):
+            _check_text(md.get(k), f"event.{k}")
+        meta = md.get("metadata")
+        if meta is not None:
+            if not isinstance(meta, Map) or len(meta) > 16:
+                raise InteropFail("event.metadata size out of bounds")
+            for k, v in meta:
+                if not isinstance(k, str) or not k or len(k.encode()) > 64:
+                    raise InteropFail("event.metadata key out of bounds")
+                if isinstance(v, bool):
+                    continue
+                if isinstance(v, int):
+                    if v < 0:
+                        raise InteropFail("event.metadata value must be text/uint/bool")
+                    continue
+                if isinstance(v, str):
+                    if len(v.encode()) > 1024:
+                        raise InteropFail("event.metadata value too long")
+                    continue
+                raise InteropFail("event.metadata value must be text/uint/bool")
         event_ids.append(obj_id("evt", enc_any(m)))
     att_ids, issuers = [], []
     for entry in members("attestations", "att"):
@@ -336,6 +373,35 @@ def verify_proof(proof_raw):
         ed = dict(entry)
         content_raw = enc_any(_req(entry, "content"))
         _closed(_map(content_raw), _ATTESTATION_FIELDS, "attestation")
+        # Claim bounds: 1..16 entries, type text 1..128, typed evidence_ref.
+        payload = _map(content_raw)
+        pd = dict(payload)
+        claim = pd.get("claim")
+        if not isinstance(claim, Map) or not (1 <= len(claim) <= 16):
+            raise InteropFail("attestation.claim size out of bounds")
+        cd = dict(claim)
+        _check_text(cd.get("type"), "attestation.claim.type", max_len=128)
+        for k, v in claim:
+            if k == "type":
+                continue
+            if not isinstance(k, str) or not k or len(k.encode()) > 64:
+                raise InteropFail("attestation.claim key out of bounds")
+            if isinstance(v, bool):
+                continue
+            if isinstance(v, int):
+                if v < 0:
+                    raise InteropFail("attestation.claim value must be text/uint/bool")
+                continue
+            if isinstance(v, str):
+                if len(v.encode()) > 1024:
+                    raise InteropFail("attestation.claim value too long")
+                continue
+            raise InteropFail("attestation.claim value must be text/uint/bool")
+        er = pd.get("evidence_ref")
+        if isinstance(er, str):
+            _check_ref(er, "attestation.evidence_ref", "evd:v1:")
+        elif er is not None:
+            raise InteropFail("attestation.evidence_ref must be text or null")
         sign1 = _req(entry, "sign1")
         if not isinstance(sign1, bytes):
             raise InteropFail("sign1 must be bstr")
@@ -350,10 +416,37 @@ def verify_proof(proof_raw):
     evd_ids = []
     for m in members("evidence", "evd"):
         _closed(m, _EVIDENCE_FIELDS, "evidence")
+        ed = dict(m)
+        _check_text(ed.get("kind"), "evidence.kind")
+        hint = ed.get("hint")
+        if isinstance(hint, str):
+            if len(hint.encode()) > 256:
+                raise InteropFail("evidence.hint too long")
+        elif hint is not None:
+            raise InteropFail("evidence.hint must be text or null")
+        aref = ed.get("attestation_ref")
+        if isinstance(aref, str):
+            _check_ref(aref, "evidence.attestation_ref", "att:v1:")
+        elif aref is not None:
+            raise InteropFail("evidence.attestation_ref must be text or null")
         evd_ids.append(obj_id("evd", enc_any(m)))
     rel_ids = []
     for m in members("relationships", "rel"):
         _closed(m, _REL_FIELDS, "relationship")
+        rd = dict(m)
+        _check_text(rd.get("from"), "relationship.from")
+        _check_text(rd.get("to"), "relationship.to")
+        _check_text(rd.get("type"), "relationship.type")
+        er = rd.get("evidence_ref")
+        if isinstance(er, str):
+            _check_ref(er, "relationship.evidence_ref", "evd:v1:")
+        elif er is not None:
+            raise InteropFail("relationship.evidence_ref must be text or null")
+        ar = rd.get("attestation_ref")
+        if isinstance(ar, str):
+            _check_ref(ar, "relationship.attestation_ref", "att:v1:")
+        elif ar is not None:
+            raise InteropFail("relationship.attestation_ref must be text or null")
         rel_ids.append(obj_id("rel", enc_any(m)))
 
     # Composition linkage (SPEC §7): absent in V1 bytes → empty; present →

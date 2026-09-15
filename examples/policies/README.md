@@ -39,6 +39,14 @@ These are example verification policies you can adapt for your use case.
 > `expires_at` windows the holder cannot rewrite) or a transparency
 > requirement.
 
+> Currency overlay: `evaluate --strict-current`/`--production` fails closed
+> on VALID-but-not-current proofs (SUPERSEDED history or unverified
+> provenance hints) even when the policy itself would pass. Without the
+> overlay, PASS means "valid"; with it, PASS means "valid and current".
+> Prefer `not_superseded` / v2 `evidence_usable` / `no_conflicting_evidence`
+> inside policy for portable currency, `--production` for operator-side
+> verify==acceptable. See `docs/OPERATOR-RUNBOOK.md`.
+
 ## Requirements reference
 
 | Requirement | What it checks |

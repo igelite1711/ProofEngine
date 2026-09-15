@@ -73,9 +73,15 @@ pub fn verify_envelope(
     if recomputed != env.id {
         return Err(ErrorCode::IdMismatch.err("envelope id does not match recomputed id"));
     }
-    // Where a signature travels with the envelope, re-verify it when the
-    // caller supplies trust inputs; otherwise still shape-check the COSE
-    // envelope so malformed sign1 never reads as "verified envelope".
+    // Where a signature travels with the envelope, re-verify it.
+    // With trust inputs (`expected_issuer` + `allowed`) verify against the
+    // caller-supplied issuer (trust decision stays caller-side). Without trust
+    // inputs (import/export/decode paths) verify self-consistency: the
+    // signature must be valid for the content's own issuer field — a forged
+    // attestation (valid shape, bad signature) fails here with
+    // SIGNATURE_INVALID instead of reading as "verified envelope" (F7 fix).
+    // Shape-check alone never implies authenticity; callers needing trust
+    // must still supply expected_issuer + allowed and evaluate policy.
     if matches!(env.kind, ArtifactKind::Attestation | ArtifactKind::Status) {
         if let Some(s) = &env.sign1_b64u {
             use crate::cose::parse_sign1;
@@ -83,10 +89,23 @@ pub fn verify_envelope(
             let sig = URL_SAFE_NO_PAD
                 .decode(s)
                 .map_err(|_| ErrorCode::Malformed.err("envelope sign1 is not base64url"))?;
-            // Shape-check always; crypto verify only with trust inputs.
+            // Shape-check always; crypto verify whenever possible.
             parse_sign1(&sig, limits)?;
             if let (Some(issuer), Some(al)) = (expected_issuer, allowed) {
                 verify_sign1(&sig, issuer, al, limits)?;
+            } else {
+                // Self-consistency: decode content issuer and verify.
+                // Decode failures already passed above (id recomputed), so
+                // this re-decode cannot fail; defensive fail-closed on error.
+                let value = proof_format::decode_and_check_canonical(&bytes, limits)?;
+                let entry = proof_format::cbor_to_attestation(&value, limits)?;
+                let al = allowed.cloned().unwrap_or_else(AllowedAlgs::strict);
+                verify_sign1(&sig, &entry.issuer, &al, limits).map_err(|e| {
+                    ErrorCode::SignatureInvalid.err(format!(
+                        "envelope signature invalid for content issuer {}: {e}",
+                        entry.issuer
+                    ))
+                })?;
             }
         }
     }
@@ -223,6 +242,32 @@ mod tests {
         wrong.push(if last == 'A' { 'B' } else { 'A' });
         assert_ne!(wrong, key.key_ref());
         assert!(verify_envelope(&env, &lim(), Some(&wrong), Some(&AllowedAlgs::strict())).is_err());
+    }
+
+    #[test]
+    fn forged_attestation_envelope_fails_without_trust_inputs() {
+        // F7: valid shape + invalid signature must fail even with (None, None)
+        // — self-consistency verification, not shape-only acceptance.
+        let key = fixtures::test_key();
+        let other = crate::Ed25519Key::from_seed(&[7u8; 32]);
+        assert_ne!(other.key_ref(), key.key_ref());
+        let ev = event_fixture("payment:p1");
+        let att = attest(
+            fixtures::fixed_attestation_content(&key.key_ref(), &ev.id),
+            &key,
+            &lim(),
+        )
+        .unwrap();
+        // Sign the same content bytes with the WRONG key, keep claimed id.
+        let forged_sign1 = crate::cose::sign_ed25519(&att.canonical, &other);
+        let env = ArtifactEnvelope::new(
+            ArtifactKind::Attestation,
+            &att.id,
+            &att.canonical,
+            Some(b64u_nopad(&forged_sign1)),
+        );
+        let err = verify_envelope(&env, &lim(), None, None).unwrap_err();
+        assert_eq!(err.code, proof_core::ErrorCode::SignatureInvalid);
     }
 
     #[test]

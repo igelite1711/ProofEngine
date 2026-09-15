@@ -79,6 +79,7 @@ Field order on wire is irrelevant (map sorting canonicalizes) but docs list cano
 ```
 
 `expires_at` nil = no expiry (policy may still require expiry → FAIL). `claim` max 16 entries.
+`evidence_ref`, when present, must name `evd:v1:…` (typed at schema).
 
 ### 4.3 Evidence (v1)
 
@@ -87,6 +88,12 @@ Field order on wire is irrelevant (map sorting canonicalizes) but docs list cano
   "attestation_ref": tstr|nil, "hint": tstr|nil }
 ```
 
+Content-type/size conventions belong to domain profiles (`kind`/`hint`/claim
+fields carry them; the digest binds the bytes). The core never fetches —
+`attestation_ref` must name `att:v1:…` (typed at schema; wrong-typed ids fail
+`SCHEMA_VIOLATION`, dangling correct-prefix hints read `Unknown` with validity
+preserved — see §4.6 portability rule and `--strict-current`).
+
 ### 4.4 Relationship (v1)
 
 ```
@@ -94,7 +101,7 @@ Field order on wire is irrelevant (map sorting canonicalizes) but docs list cano
   "evidence_ref": tstr|nil, "attestation_ref": tstr|nil }
 ```
 
-Trust-relevant types (`SETTLES, OWNS, CREATED, EXECUTED, EQUIVALENT, CONTRADICTS`) REQUIRE one of `evidence_ref|attestation_ref`, else `RELATIONSHIP_UNGROUNDED`. Extra future kinds plug in via `extra_grounded` without a core change.
+Trust-relevant types (`SETTLES, OWNS, CREATED, EXECUTED, EQUIVALENT, CONTRADICTS`) REQUIRE one of `evidence_ref|attestation_ref`, else `RELATIONSHIP_UNGROUNDED`. Backing refs are typed (`evidence_ref` → `evd:v1:…`, `attestation_ref` → `att:v1:…`; wrong-typed ids fail `SCHEMA_VIOLATION`). Extra future kinds plug in via `extra_grounded` without a core change.
 
 ### 4.5 Proposition (v1)
 
@@ -130,7 +137,7 @@ Compromise  = Attestation with claim.type="compromise", claim.target=<keyref|id>
 
 Must be signed by original issuer OR a key in `revocation_authorities` (explicit VerifyCtx input), except: withdrawal additionally accepts the issuer of the target's bound attestation (evidence), and compromise additionally accepts the target identity itself (self-report; compromise only invalidates, never grants). Unsigned status lists are never trusted.
 
-Reserved statement-level conventions (no lifecycle effect, projected for policy): `delegate` (subject = grantee, optional `scope`), `identity.bind` (subject ≡ `equivalent`), `transparency.checkpoint` (issuer = log identity), and the `denies` claim field (opposition to an attestation id).
+Reserved statement-level conventions (no lifecycle effect, projected for policy): `delegate` (subject = grantee, optional `scope`), `identity.bind` (subject ≡ `equivalent`), `transparency.checkpoint` (issuer = log identity), the `denies` claim field (opposition to an attestation id), and the opt-in `evidence_digest` claim field (`<64|96 hex>` with `evidence_ref`; pipeline verifies equality with the bound evidence digest, mismatch/missing/malformed fails EVIDENCE closed).
 
 ## 5. Signatures (COSE_Sign1, detached-ish enveloped)
 

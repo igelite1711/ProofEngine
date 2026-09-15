@@ -42,6 +42,13 @@ jobs:
           ./target/debug/proof-cli --work /tmp/proof-interop
           | tee /tmp/proof-interop/differential.log
 
+      - name: Full-verdict conformance (golden proof/policy vectors)
+        run: >-
+          mkdir -p /tmp/proof-conformance &&
+          python3 tools/conformance.py --repo . --proof-cli
+          ./target/debug/proof-cli --work /tmp/proof-conformance
+          | tee /tmp/proof-conformance/conformance.log
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -63,4 +70,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: interop-evidence
-          path: /tmp/proof-interop/
+          path: |
+            /tmp/proof-interop/
+            /tmp/proof-conformance/

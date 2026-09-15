@@ -1,7 +1,7 @@
 //! Fuzz target: the policy parser. Invariants: (1) never panics on arbitrary
 //! bytes (interpreted as UTF-8 JSON); (2) the accepted requirement set is
-//! closed — a parsed policy only contains the eighteen known requirement types
-//! (ten v1 leaves + eight v2 adjudication leaves); v2 expressions validate
+//! closed — a parsed policy only contains the twenty known requirement types
+//! (ten v1 leaves + ten v2 adjudication leaves); v2 expressions validate
 //! before anything evaluates;
 //! (3) parsing is deterministic: the same input yields the same policy.
 
@@ -41,8 +41,10 @@ fuzz_target!(|data: &[u8]| { // PE-POLICY-008
                     | Requirement::NoConflictingEvidence
                     | Requirement::VocabularyAccepted { .. }
                     | Requirement::EvidenceUsable { .. }
+                    | Requirement::EvidenceBound { .. }
                     | Requirement::RequiresReference { .. }
-                    | Requirement::ForbidsReference { .. } => {}
+                    | Requirement::ForbidsReference { .. }
+                    | Requirement::ClaimField { .. } => {}
                 }
             }
             // Determinism: re-parse must yield the identical description set.

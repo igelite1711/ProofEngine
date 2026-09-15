@@ -9,11 +9,13 @@ pub mod check;
 pub mod demo;
 pub mod doctor;
 pub mod graph;
+pub mod id;
 pub mod ingest;
 pub mod inspect;
 pub mod journey;
 pub mod make;
 pub mod port;
+pub mod seen;
 pub mod store;
 
 use std::collections::{HashMap, HashSet};
@@ -265,16 +267,23 @@ fn load_key_material(seed: &str, what: &str) -> Result<proof_crypto::Ed25519Key,
         return Ok(proof_crypto::build::fixtures::test_key());
     }
     let bytes = hex::decode(seed).map_err(|e| format!("{what} bad hex: {e}"))?;
-    let arr: [u8; 32] = bytes
+    let mut arr: [u8; 32] = bytes
         .try_into()
         .map_err(|_| format!("{what} must be `test` or 64 hex chars (32 bytes)"))?;
-    Ok(proof_crypto::Ed25519Key::from_seed(&arr))
+    let key = proof_crypto::Ed25519Key::from_seed(&arr);
+    // F12: zero the stack seed copy after deriving the key (the SigningKey
+    // owns its own copy, zeroed on Drop). Volatile to resist dead-store elim.
+    use zeroize::Zeroize;
+    arr.zeroize();
+    Ok(key)
 }
 
 /// Load a key for commands taking `--seed`/`--seed-file`. `--seed-file`
 /// reads the seed from a file (capped by MAX_INPUT_FILE_BYTES) so raw key
 /// material never lands in argv, shell history, or process listings;
 /// `--seed` keeps working for demos/tests. The two flags must not combine.
+/// F12: `--seed <hex>` (non-`test`) prints a stderr warning pointing at
+/// `--seed-file`, because argv is visible to ps(1) and shell history.
 pub fn load_key_opt(cli: &Cli) -> Result<proof_crypto::Ed25519Key, String> {
     match (cli.opt("seed"), cli.opt("seed-file")) {
         (Some(_), Some(_)) => Err("--seed and --seed-file are mutually exclusive".into()),
@@ -282,7 +291,14 @@ pub fn load_key_opt(cli: &Cli) -> Result<proof_crypto::Ed25519Key, String> {
             let seed = read_input_file(&path)?;
             load_key_material(seed.trim(), "--seed-file")
         }
-        (Some(seed), None) => load_key(&seed),
+        (Some(seed), None) => {
+            if seed != "test" && !cli.quiet() {
+                eprintln!(
+                    "warning: --seed <hex> exposes raw key material in argv (ps/history); prefer --seed-file <path> for production keys"
+                );
+            }
+            load_key(&seed)
+        }
         (None, None) => Err("missing required flag --seed (or --seed-file)".into()),
     }
 }
@@ -391,6 +407,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "inspect",
         "Show proof contents (read-only, no trust decisions)",
     ),
+    ("id", "Print an artifact id or issuer (shell plumbing)"),
     ("graph", "Visualize proof relationships"),
     ("create-event", "Create an event artifact"),
     ("attest", "Create a signed attestation"),
@@ -442,16 +459,22 @@ OPTIONS
   --report-all                collect past CANONICAL diagnostics instead of fail-fast
   --accepted-vocab <ns:max>   accepted vocabulary namespace bound, repeatable + comma-separated (informational notes)
   --extra-grounded <TYPE>     extra trust-relevant edge kind(s), repeatable + comma-separated
-  --require-acyclic           provenance DAG profile: reject any relationship cycle (opt-in; default allows REFERENCES cycles as linkage)
+  --require-acyclic           provenance DAG profile: reject any relationship cycle (opt-in; default: derivation cycles already fail, REFERENCES cycles remain linkage-valid)
+  --require-status            no-op affirming the default: empty status feed fails closed (kept for compatibility)
+  --no-require-status         explicitly allow empty feed (caller-asserted absence, recorded with a note; genesis/demo only)
+  --production                strict operator profile: implies --require-acyclic + --strict-current currency (feed gate already default-on; use for verify==acceptable)
   --strict-current            fail closed on VALID-but-not-current: SUPERSEDED history or unverified provenance hints → exit 1 (history preserved, currency denied)
+  --seen-store <file>         replay guardrail: check the proof id against a seen-store before accepting (replay → exit 1; runs on success paths only; same file shape as tools/seen_set.py)
+  --seen-context <ctx>        binding context for --seen-store (nonce/tx/challenge; required with --seen-store)
+  --seen-record               append the proof id to --seen-store on success (omit for check-only)
   --out, -o <file>            write JSON report to file (`-` = stdout); default prints JSON to stdout
   --quiet, -q                 suppress the human summary on stderr
 
 OUTPUT
   stdout = machine-readable JSON report (never prose, never color).
   stderr = human summary (✓/✗ per stage, RESULT, exit meaning).
-  exit 0 = valid AND (if --strict-current) currently acceptable, 1 = invalid verdict or not-current, 2 = usage/engine error.
-  note: SUPERSEDED proofs are historically VALID without --strict-current; use `evaluate` with `not_superseded` or --strict-current for currency.",
+  exit 0 = valid AND (if --strict-current/--production) currently acceptable AND (if --seen-store) unseen, 1 = invalid verdict, not-current, or replay, 2 = usage/engine error (incl. unreadable seen-store when requested).
+  note: SUPERSEDED proofs are historically VALID without --strict-current/--production; use `evaluate` with `not_superseded` or --strict-current/--production for currency.",
         "evaluate" => "\
 evaluate — verify a proof and evaluate a declarative policy over the result.
 
@@ -462,16 +485,26 @@ OPTIONS
   --policy <file>             policy JSON (required)
   --clock <u64>               verifier clock (required)
   --trusted <keyref>          trusted issuer(s), repeatable
-  --revoked <id[,id…]>        revoked id(s), repeatable
-  --status <file>             signed status objects (repeatable)
+  --revoked <id[,id…]>        caller denylist id(s), unsigned (repeatable; checked by `not_revoked` policy leaf only — NOT the signed lifecycle feed; use --status for signed revoke/supersede)
+  --status <file>             signed status objects (repeatable; verified lifecycle feed — REVOKED/COMPROMISED flip evidence validity)
   --authority <keyref>        revocation authority (repeatable)
   --revocations-known-at <u64> freshness bound (required for PASS)
   --skew <u64>                clock skew leeway (default 300)
-  --esp256 --historical --report-all --accepted-vocab <ns:max> --extra-grounded <TYPE> --require-acyclic
-                              verifier-policy flags (same semantics as verify)
-  --json, -j                  print the merged policy_outcome + report JSON on stdout
+  --esp256 --historical --report-all --accepted-vocab <ns:max> --extra-grounded <TYPE> --require-acyclic --require-status --no-require-status --strict-current --production
+                               verifier-policy + currency flags (same semantics as verify; --production overlays currency on policy)
+  --seen-store <file> --seen-context <ctx> [--seen-record]
+                               replay guardrail: check/record the proof id per binding context (replay → exit 1; runs on policy-PASS paths only; shares tools/seen_set.py file shape)
+  --json, -j                  print one merged JSON document on stdout ({policy_outcome, report}; explain adds `explanation`)
 
-  exit 0 = policy PASS, 1 = FAIL/INDETERMINATE, 2 = usage/engine error.",
+  OUTPUT (Fix 6: single truth per mode)
+    prose (default): stdout = decision prose only (`decision pass|fail|indeterminate` + per-requirement lines).
+      The pipeline report JSON is NOT printed (use --out/--json for it); the authoritative
+      decision is the prose `decision` + exit code, never report.policy_decision (always indeterminate).
+    --json: stdout = one JSON document {policy_outcome, report}; authoritative decision is policy_outcome.decision.
+    --out <file>: report JSON to file, decision prose to stdout.
+    --strict-current/--production overlays currency: VALID-but-not-current fails (exit 1) even when policy passes.
+    --seen-store/--seen-context/--seen-record overlays replay: an already-processed proof id fails (exit 1) even when policy passes.
+  exit 0 = policy PASS (and current, if strict/production; and unseen, if seen-store), 1 = FAIL/INDETERMINATE/not-current/replay, 2 = usage/engine error.",
         "explain" => "\
 explain — verify + policy, then print a human-readable causal explanation.
 
@@ -479,8 +512,9 @@ USAGE
   proof-cli explain --proof <file> --policy <file> --clock <u64> [options]
 
 Same required flags as evaluate (--clock, --revocations-known-at, --status,
---authority, --trusted, --skew). Differences: --json is ignored (prose only
-on stdout; use --out <file> to also save the JSON report). Exit codes as evaluate.",
+--authority, --trusted, --skew, verifier-policy + currency flags). Differences: prose
+is the default (use --out <file> to also save the JSON report); --json prints one
+merged document ({policy_outcome, report, explanation}). Exit codes as evaluate.",
         "inspect" => "\
 inspect — show what a proof or artifact contains. Performs NO trust decisions.
 
@@ -491,6 +525,21 @@ USAGE
   proof-cli inspect <artifact.json> (event/attestation/evidence/relationship/status)
 
 INSPECTED is not VERIFIED. Use `verify` to check validity.",
+        "id" => "\
+id — print one field of an artifact file (shell plumbing for content-addressed ids).
+
+USAGE
+  proof-cli id --artifact <file> [--field id|issuer]
+
+  --field id (default): the artifact's content id (evt:/att:/evd:/rel:/prf:…).
+  --field issuer: the issuer keyref (attestation/status artifacts only).
+
+  Replaces python one-liners in shell flows:
+    EVT=$(proof-cli id --artifact ev1.json)
+    ISSUER=$(proof-cli id --artifact att.json --field issuer)
+
+  Prints the value on stdout (exit 0); missing file/field is exit 2.
+  Read-only: verifies nothing (use `verify` for trust decisions).",
         "graph" => "\
 graph — visualize the relationships inside a proof.
 
@@ -507,10 +556,10 @@ USAGE
   proof-cli build --kind <t> --subject <s> --predicate <p> [--object <o>]
     [--at-time <u64>] [--context k=v,…] --created-at <u64>
     --events <f[,f…]> --attestations <f[,f…]>
-    --evidence <f[,f…]> --relationships <f[,f…]> --out <file>
+    [--evidence <f[,f…]>] [--relationships <f[,f…]>] --out <file>
 
-  Pass `--evidence \"\"` (and/or `--relationships \"\"`) for a proof with no
-  members of that kind. --from/--to/--object take artifact ids
+  --evidence/--relationships may be omitted for zero members (explicit `--evidence \"\"`
+  keeps working). --from/--to/--object take artifact ids
   (evt:/att:/evd:…), never bare labels like invoice:i9.",
         "create-event" => "\
 create-event — write an event artifact (JSON wrapper around canonical CBOR).
@@ -530,24 +579,32 @@ USAGE
     [--evidence-ref <id>] --out <file>
 
   Prefer --seed-file <path> over --seed <hex> (argv is visible to ps/history).
-  Field order in --claim is free: pairs are canonicalized automatically.",
+  Field order in --claim is free: pairs are canonicalized automatically.
+  Opt-in semantic binding (Fix 5): --claim evidence_digest=<64|96 hex> with
+  --evidence-ref <evd:v1:…> cryptographically ties the attested value to the
+  dataset digest (mismatch fails EVIDENCE closed; absent field = no check).",
         "add-evidence" => "\
 add-evidence — write an evidence artifact (id-bound, no signature of its own).
 
 USAGE
-  proof-cli add-evidence --kind <kind> --digest-hex <64|96 hex>
-    [--attestation-ref <id>] [--hint <text>] --out <file>",
+  proof-cli add-evidence --kind <kind> (--digest-hex <64|96 hex> | --digest-file <path|->)
+    [--attestation-ref <id>] [--hint <text>] --out <file>
+
+  --digest-file hashes file bytes (SHA-256) — no manual digest plumbing.",
         "relate" => "\
 relate — write a relationship edge between two artifact ids.
 
 USAGE
   proof-cli relate --from <artifact-id> --type <TYPE> --to <artifact-id>
-    [--evidence-ref <id>] [--attestation-ref <id>] --out <file>
+    [--evidence-ref <id>] [--attestation-ref <id>] [--allow-ungrounded] --out <file>
 
   --from/--to take evt:/att:/evd: ids, NOT bare labels (fails fast with a hint).
   Exception: EQUIVALENT endpoints may name external identity refs
   (e.g. did:org:acme) as asserted — grounding (--evidence-ref/--attestation-ref)
-  is still required and shaped ids must still resolve.",
+  is still required and shaped ids must still resolve.
+  Trust-relevant types (OWNS/CREATED/SETTLES/EXECUTED/EQUIVALENT/CONTRADICTS)
+  require grounding and fail fast without it (use --allow-ungrounded only for
+  intentional negative-test vectors; verify still fails closed).",
         "revoke" => "\
 revoke — write a signed revocation status object for an attestation.
 
@@ -557,7 +614,8 @@ USAGE
 supersede — write a signed supersession status object.
 
 USAGE
-  proof-cli supersede --seed <test|64hex> --old <id> --new <id> --at <u64> --out <file>",
+  proof-cli supersede --seed <test|64hex> --old <id> --new <id> --at <u64> --out <file>
+  aliases: --target for --old, --successor for --new",
         "withdraw" => "\
 withdraw — write a signed withdrawal (cease reliance; history preserved).
 
@@ -571,11 +629,19 @@ USAGE
         "export" => "\
 export — wrap a CLI artifact as a standard ArtifactEnvelope (validated).
 
+  Attestation/status envelopes are crypto-verified for self-consistency
+  (signature must be valid for the content issuer); forged signatures fail
+  with SIGNATURE_INVALID. Shape-only acceptance never implies authenticity —
+  trust still requires verify + policy.
 USAGE
   proof-cli export --proof <file> --out <envelope.json>",
         "import" => "\
 import — validate an ArtifactEnvelope and write the CLI artifact shape.
 
+  Attestation/status envelopes are crypto-verified for self-consistency
+  (signature must be valid for the content issuer); forged signatures fail
+  with SIGNATURE_INVALID. Import success means well-formed + self-consistent,
+  not trusted — trust still requires verify + policy.
 USAGE
   proof-cli import --proof <envelope.json> --out <file>",
         "convert" => "\
@@ -586,22 +652,26 @@ USAGE
         "compose" => "\
 compose — union member sets from multiple proofs into one composite proof,
 recording the sources as composition linkage (bound by the new proof_id).
+The UNION graph is validated at compose time (grounding, dangling refs,
+SUPERSEDES linearity, derivation acyclicity) — cross-proof cycles fail here,
+not later at verify. TIME/REVOCATION currency stays verify-time (use
+--production there); custom trust-relevant kinds ride --extra-grounded.
 
 USAGE
-  proof-cli compose --proofs <a.json,b.json> --kind <k> --subject <s> --predicate <p> --created-at <u64> --out <proof.json>",
+  proof-cli compose --proofs <a.json,b.json> --kind <k> --subject <s> --predicate <p> --created-at <u64> [--extra-grounded <TYPE>] --out <proof.json>",
         "resolve" => "\
 resolve — fetch-and-verify transitive composition linkage against a file
 store (bundle layer; root validity unchanged, incompleteness is fail-closed).
 
 USAGE
-  proof-cli resolve --proof <file> --store <dir> --clock <u64> [--depth <u64>=8] [--status <f>] [--authority <k>] [--trusted <keyref>] [--revocations-known-at <u64>] [--esp256] [--historical] [--report-all] [--accepted-vocab <ns:max>] [--extra-grounded <TYPE>] [--require-acyclic] (incomplete linkage → exit 1)",
+  proof-cli resolve --proof <file> --store <dir> --clock <u64> [--depth <u64>=8] [--status <f>] [--authority <k>] [--trusted <keyref>] [--revocations-known-at <u64>] [--esp256] [--historical] [--report-all] [--accepted-vocab <ns:max>] [--extra-grounded <TYPE>] [--require-acyclic] [--require-status] [--production] (incomplete linkage → exit 1)",
         "batch-verify" => "\
 batch-verify — verify many proofs under one shared context. Each member
 verifies independently with identical semantics to verify (no sampling,
 no short-circuit); exit 0 iff every member is crypto- and evidence-Valid.
 
 USAGE
-  proof-cli batch-verify --proofs <a.json,b.json> --clock <u64> [--max-batch <u64>=256] [--status <f>] [--authority <k>] [--trusted <keyref>] [--revocations-known-at <u64>] [--esp256] [--historical] [--report-all] [--accepted-vocab <ns:max>] [--extra-grounded <TYPE>] [--require-acyclic] [--out <file>]",
+  proof-cli batch-verify --proofs <a.json,b.json> --clock <u64> [--max-batch <u64>=256] [--status <f>] [--authority <k>] [--trusted <keyref>] [--revocations-known-at <u64>] [--esp256] [--historical] [--report-all] [--accepted-vocab <ns:max>] [--extra-grounded <TYPE>] [--require-acyclic] [--require-status] [--production] [--out <file>]",
         "ingest" => "\
 ingest — read newline-delimited external event records (file or stdin) and
 write canonical event artifacts plus a manifest. Fail-closed: the first
@@ -614,10 +684,14 @@ USAGE
 init-policy — generate a policy JSON from a template + issuer (no manual editing).
 
 USAGE
-  proof-cli init-policy --issuer <keyref> [--template settlement|strict-document|fresh-only|basic-payment] [--relationship SETTLES] [--evidence-kind transaction_record] --out <policy.json>
-  proof-cli init-policy --issuer <keyref> --attestation <att.json> [--template settlement] --out <policy.json>  (reads issuer from attestation file)
+  proof-cli init-policy --issuer <keyref> [--template settlement|strict-document|fresh-only|basic-payment|minimal] [--relationship SETTLES] [--evidence-kind transaction_record] --out <policy.json>
+  proof-cli init-policy --issuer <keyref> --attestation <att.json> [--template settlement] (--proof <proof.json> | --relationship <T> [--evidence-kind <K>]) --out <policy.json>  (reads issuer from attestation file)
+  proof-cli init-policy --attestation <att.json> --proof <proof.json> --out <policy.json>  (infers relationship/evidence kinds from the proof; generic for any domain)
 
-Templates: settlement (sig+issuer+expiry+revocation+SETTLES+evidence), strict-document (settlement + not_superseded), fresh-only (sig+issuer+proof_fresh 3600), basic-payment (sig+issuer+relationship).
+Settlement-family templates (settlement|strict-document|basic-payment) require domain vocabulary: pass --proof to infer it or explicit --relationship/--evidence-kind flags (missing inputs are a usage error, not silent payment defaults); --template minimal needs none.
+
+Templates: settlement (sig+issuer+expiry+revocation+relationship+evidence), strict-document (settlement + not_superseded), fresh-only (sig+issuer+proof_fresh 3600), basic-payment (sig+issuer+relationship), minimal (sig+issuer+expiry+revocation; domain-agnostic starter, no relationship/evidence vocabulary).
+--proof infers --relationship/--evidence-kind from the proof's first members (explicit flags win); without it defaults are SETTLES/transaction_record for the payment walkthrough.
 The `key:ed25519:` prefix is kept exactly once; REPLACE_WITH placeholders never appear in output.",
         "demo" => "\
 demo — deterministic end-to-end story: build → verify PASS → tamper → FAIL →
@@ -667,7 +741,7 @@ pub fn completion_script(shell: &str) -> Result<String, String> {
              \x20   if [ \"$COMP_CWORD\" -eq 1 ]; then\n\
              \x20       COMPREPLY=($(compgen -W \"{}\" -- \"$cur\"))\n\
              \x20   else\n\
-             \x20       COMPREPLY=($(compgen -W \"--proof --policy --clock --skew --out --quiet --json --trusted --authority --status --seed --seed-file --format --esp256 --historical --report-all --accepted-vocab --extra-grounded\" -- \"$cur\"))\n\
+             \x20                     COMPREPLY=($(compgen -W \"--proof --policy --clock --skew --out --quiet --json --trusted --authority --status --seed --seed-file --format --esp256 --historical --report-all --accepted-vocab --extra-grounded --require-acyclic --require-status --no-require-status --strict-current --production --seen-store --seen-context --seen-record\" -- \"$cur\"))\n\
              \x20   fi\n\
              }}\n\
              complete -F _proof_cli_complete proof-cli\n",
@@ -794,6 +868,7 @@ CORE
   evaluate     Verify a proof and evaluate a policy
   explain      Explain a verification result (requires --policy)
   inspect      Inspect a proof (read-only, no trust decisions)
+  id           Print an artifact id/issuer (shell plumbing)
   graph        Visualize proof relationships
 
 CREATION
@@ -831,6 +906,9 @@ COMMON FLAGS
   --out, -o    Output file (`-` = stdout)
   --clock      Verification timestamp (u64, mandatory for verify/evaluate)
   --skew       Clock skew leeway (u64, default 300)
+  --production Strict operator profile for verify/evaluate/batch-verify/resolve:
+               implies --require-acyclic + --strict-current currency
+               (feed gate already default-on; verify==acceptable; see `help verify`)
 
 The proof path may be positional: `verify proof.json` means
 `verify --proof proof.json`. `-` reads the proof from stdin.

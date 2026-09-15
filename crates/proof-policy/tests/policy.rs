@@ -44,6 +44,9 @@ fn ctx() -> VerifyCtx {
         verified_at: CLOCK_OK,
         clock_skew_leeway: 300,
         revocations_known_at: Some(CLOCK_OK),
+        // Policy-timing tests, not feed tests: explicit caller-asserted
+        // absence (default fails closed; see proof-verify lifecycle tests).
+        require_status_feed: false,
         ..VerifyCtx::default()
     }
 }
@@ -447,6 +450,7 @@ fn credential_lifecycle_expiry_renewal_and_currency() {
         verified_at: LATE,
         clock_skew_leeway: 300,
         revocations_known_at: Some(LATE),
+        require_status_feed: false,
         ..VerifyCtx::default()
     };
     let late_inputs = || EvalInputs {
@@ -459,6 +463,7 @@ fn credential_lifecycle_expiry_renewal_and_currency() {
         verified_at: MID,
         clock_skew_leeway: 300,
         revocations_known_at: Some(MID),
+        require_status_feed: false,
         ..VerifyCtx::default()
     };
     let mid_inputs = || EvalInputs {
@@ -935,6 +940,8 @@ fn verify_and_evaluate_pairs_one_context() {
         verified_at: CLOCK_OK,
         revocations_known_at: Some(CLOCK_OK),
         trusted_issuers: vec![key.key_ref()],
+        // Pairing test, not feed test: explicit caller-asserted absence.
+        require_status_feed: false,
         ..VerificationContext::default()
     };
     let issuer = key.key_ref();
@@ -1058,4 +1065,65 @@ fn verify_and_evaluate_bounds_revocations_by_status_objects() {
     let too_many = RS::new((0..100).map(|i| format!("att:dummy:{i}")));
     let err = verify_and_evaluate(&built.canonical, &ctx, &policy, too_many).unwrap_err();
     assert_eq!(err.code, ErrorCode::LimitExceeded);
+}
+
+#[test]
+fn denylist_and_signed_lifecycle_are_independent_channels() {
+    // F8: unsigned denylist (policy `not_revoked`) never reads the signed
+    // lifecycle feed (pipeline REVOCATION), and vice versa. A signed-revoked
+    // proof with an empty denylist is INDETERMINATE (pipeline preconditions
+    // fail, policy unevaluated) — not a `not_revoked` FAIL. A valid proof with
+    // a denylisted id is FAIL via `not_revoked` (pipeline still VALID).
+    let key = fixtures::test_key();
+    let pay = event(EventType::new(EventType::PAYMENT_CREATED), "payment:p9");
+    let statement = attest(
+        fixtures::fixed_attestation_content(&key.key_ref(), &pay.id),
+        &key,
+        &limits(),
+    )
+    .unwrap();
+    // Valid proof + denylist hit → policy FAIL (pipeline VALID).
+    let (built, issuer, att_id) = setup();
+    let report = verify_proof(&built.canonical, &ctx()).unwrap();
+    assert_eq!(report.evidence_validity, Validity::Valid);
+    let state = state_from_report_and_proof(&report, &built.proof).unwrap();
+    let mut inp = inputs(&issuer);
+    inp.revocations = RevocationSet::new([att_id]);
+    let out = evaluate_policy(&state, &merchant_policy(&issuer), &inp);
+    assert_eq!(out.decision, PolicyDecision::Fail);
+    // Signed-revoked proof + empty denylist → INDETERMINATE (pipeline INVALID,
+    // policy unevaluated, no leaf results).
+    let revoke = revoke_attestation(&statement.id, None, &key, CLOCK_OK, &limits()).unwrap();
+    let mut b = ProofBuilder::new(
+        Proposition {
+            v: 1,
+            kind: "t".into(),
+            subject: pay.id.clone(),
+            predicate: "p".into(),
+            object: None,
+            at_time: None,
+            context: vec![],
+        },
+        CLOCK_OK,
+    );
+    b.add_event(pay);
+    b.add_attestation(statement);
+    let evd = make_evidence(
+        EvidenceKind::new(EvidenceKind::TRANSACTION_RECORD),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xEEu8; 32]).unwrap(),
+        None,
+        None,
+        &limits(),
+    )
+    .unwrap();
+    b.add_evidence(evd);
+    let built2 = b.build(&limits()).unwrap();
+    let mut ctx2 = ctx();
+    ctx2.status_objects = vec![proof_crypto::build::to_signed_status(&revoke).unwrap()];
+    let report2 = verify_proof(&built2.canonical, &ctx2).unwrap();
+    assert_eq!(report2.evidence_validity, Validity::Invalid);
+    let state2 = state_from_report_and_proof(&report2, &built2.proof).unwrap();
+    let out2 = evaluate_policy(&state2, &merchant_policy(&issuer), &inputs(&issuer));
+    assert_eq!(out2.decision, PolicyDecision::Indeterminate);
+    assert!(out2.results.is_empty());
 }

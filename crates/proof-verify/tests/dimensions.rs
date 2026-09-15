@@ -15,6 +15,9 @@ fn ctx() -> VerifyCtx {
         verified_at: 1_700_000_200,
         clock_skew_leeway: 300,
         revocations_known_at: Some(1_700_000_200),
+        // These tests exercise dimensions/relationships, not feed behavior:
+        // explicitly assert caller-checked absence (default fails closed).
+        require_status_feed: false,
         ..VerifyCtx::default()
     }
 }
@@ -281,6 +284,7 @@ fn extra_grounded_makes_custom_kind_require_backing() {
         verified_at: 1_700_000_200,
         revocations_known_at: Some(1_700_000_200),
         extra_grounded: vec!["ACME_APPROVES".into()],
+        require_status_feed: false,
         ..VerificationContext::default()
     };
     assert_eq!(u.to_verify_ctx().extra_grounded, vec!["ACME_APPROVES"]);
@@ -318,7 +322,19 @@ fn status_source_populates_context_and_pipeline_still_verifies() {
     .unwrap();
     assert_eq!(v.revocations_known_at, Some(1_700_000_200));
     // The pipeline still verifies end-to-end through the populated context.
+    // The status source supplied an EMPTY feed, so the fail-closed default
+    // rejects it (UNKNOWN) — the source proves freshness, not absence.
     let r = verify_proof(&valid_bytes(), &u.to_verify_ctx()).unwrap();
     assert_eq!(r.cryptographic_validity, Validity::Valid);
-    assert_eq!(r.evidence_validity, Validity::Valid);
+    assert_eq!(r.evidence_validity, Validity::Invalid);
+    assert!(r
+        .lifecycle
+        .iter()
+        .all(|l| l.status == proof_core::LifecycleStatus::Unknown));
+    // Explicit caller-asserted absence still verifies (genesis/demo path).
+    let mut allowed = u.to_verify_ctx();
+    allowed.require_status_feed = false;
+    let r2 = verify_proof(&valid_bytes(), &allowed).unwrap();
+    assert_eq!(r2.cryptographic_validity, Validity::Valid);
+    assert_eq!(r2.evidence_validity, Validity::Valid);
 }

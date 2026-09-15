@@ -14,9 +14,16 @@ use proof_core::model::RelType;
 use proof_verify::PolicyDecision;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-/// Caller-supplied revocation data. V1 semantics: an id present here is
-/// revoked; anything else is "no revocation known" (NOT "fresh"). Freshness
-/// windows and transparency-anchored status land in Phase 6.
+/// Caller-supplied denylist (unsigned, never lifecycle).
+/// V1 semantics: an id present here is caller-denied; anything else is "no
+/// denial known" (NOT "fresh"). This is NOT the signed lifecycle feed —
+/// signed revoke/supersede/withdraw/compromise objects verify in the pipeline
+/// (`VerifyCtx::status_objects`, REVOCATION stage) and flip `evidence_validity`
+/// there. This set is a local, unsigned blocklist (sanctions, incident response,
+/// operator override) checked by the `not_revoked` policy leaf only. The two
+/// channels never read each other by design: lifecycle is authenticated proof
+/// state, denylist is caller opinion. Name kept as `RevocationSet` for API
+/// compatibility; think "denylist".
 #[derive(Debug, Clone, Default)]
 pub struct RevocationSet {
     pub revoked: HashSet<String>,
@@ -410,7 +417,14 @@ fn eval_one(req: &Requirement, state: &VerifiedState, inputs: &EvalInputs) -> Re
                 ),
                 None => fail(
                     &name,
-                    format!("no active delegation chain from {root} to {issuer}"),
+                    match scope {
+                        Some(sc) => format!(
+                            "no active delegation chain from {root} to {issuer} (every link must carry scope {sc}; check each link's scope, link-attestation lifecycle, and root trust-listing)"
+                        ),
+                        None => format!(
+                            "no active delegation chain from {root} to {issuer} (check link-attestation lifecycle and root trust-listing)"
+                        ),
+                    },
                 ),
             }
         }
@@ -493,6 +507,43 @@ fn eval_one(req: &Requirement, state: &VerifiedState, inputs: &EvalInputs) -> Re
                 )
             }
         }
+        Requirement::EvidenceBound { kind } => {
+            // Strict counterpart to `evidence_usable`: some AVAILABLE evidence
+            // of the kind must additionally be cryptographically bound — named
+            // by a verified ACTIVE attestation's `evidence_ref` whose claim
+            // `evidence_digest` equals the evidence digest (projected as
+            // `evidence_bindings`; the pipeline already failed mismatches
+            // closed at EVIDENCE).
+            let available: HashSet<&str> = state
+                .evidence_statuses
+                .iter()
+                .filter(|e| {
+                    &e.kind == kind && e.status == proof_core::model::EvidenceStatus::Available
+                })
+                .map(|e| e.id.as_str())
+                .collect();
+            if state
+                .evidence_bindings
+                .iter()
+                .any(|b| available.contains(b.evidence_id.as_str()))
+            {
+                pass(
+                    &name,
+                    format!(
+                        "evidence {} cryptographically bound (evidence_digest matches)",
+                        kind.as_str()
+                    ),
+                )
+            } else {
+                fail(
+                    &name,
+                    format!(
+                        "no bound AVAILABLE evidence of kind {} (bind via claim evidence_digest + evidence_ref)",
+                        kind.as_str()
+                    ),
+                )
+            }
+        }
         Requirement::RequiresReference { id } => {
             if state.referenced_proofs.iter().any(|r| r == id) {
                 pass(&name, format!("composition linkage names {id}"))
@@ -507,6 +558,103 @@ fn eval_one(req: &Requirement, state: &VerifiedState, inputs: &EvalInputs) -> Re
                 pass(&name, format!("composition linkage omits {id}"))
             }
         }
+        Requirement::ClaimField {
+            claim_type,
+            subject,
+            field,
+            op,
+            value,
+        } => eval_claim_field(state, &name, claim_type, subject, field, op, value),
+    }
+}
+
+/// V2 `claim_field`: at least one lifecycle-ACTIVE verified claim matches the
+/// optional type/subject scope and satisfies `op` on `field`. Type-strict and
+/// deterministic: uint supports all six ops; text/bool support eq/ne only
+/// (parse already enforces this, re-checked here defensively). Missing field,
+/// type mismatch, or no in-scope ACTIVE claim → FAIL (never vacuous pass).
+#[allow(clippy::too_many_arguments)]
+fn eval_claim_field(
+    state: &VerifiedState,
+    name: &str,
+    claim_type: &Option<String>,
+    subject: &Option<String>,
+    field: &str,
+    op: &crate::policy::FieldOp,
+    value: &crate::policy::FieldValue,
+) -> RequirementResult {
+    use crate::policy::{FieldOp, FieldValue};
+    use proof_core::model::MetaValue;
+    use std::collections::HashSet;
+    let active: HashSet<&str> = state
+        .active_attestation_ids
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+    let mut scoped = 0usize;
+    for c in &state.claims {
+        if !active.contains(c.attestation_id.as_str()) {
+            continue;
+        }
+        if let Some(t) = claim_type {
+            if &c.claim_type != t {
+                continue;
+            }
+        }
+        if let Some(s) = subject {
+            if &c.subject != s {
+                continue;
+            }
+        }
+        scoped += 1;
+        let found = c.fields.iter().find(|(k, _)| k == field);
+        let Some((_, actual)) = found else { continue };
+        let matched = match (actual, value, op) {
+            (MetaValue::Uint(a), FieldValue::Uint(b), FieldOp::Eq) => a == b,
+            (MetaValue::Uint(a), FieldValue::Uint(b), FieldOp::Ne) => a != b,
+            (MetaValue::Uint(a), FieldValue::Uint(b), FieldOp::Gt) => a > b,
+            (MetaValue::Uint(a), FieldValue::Uint(b), FieldOp::Gte) => a >= b,
+            (MetaValue::Uint(a), FieldValue::Uint(b), FieldOp::Lt) => a < b,
+            (MetaValue::Uint(a), FieldValue::Uint(b), FieldOp::Lte) => a <= b,
+            (MetaValue::Text(a), FieldValue::Text(b), FieldOp::Eq) => a == b,
+            (MetaValue::Text(a), FieldValue::Text(b), FieldOp::Ne) => a != b,
+            (MetaValue::Bool(a), FieldValue::Bool(b), FieldOp::Eq) => a == b,
+            (MetaValue::Bool(a), FieldValue::Bool(b), FieldOp::Ne) => a != b,
+            // Type mismatch: this claim cannot satisfy (try next claim).
+            _ => continue,
+        };
+        if matched {
+            return pass(
+                name,
+                format!(
+                    "claim_field: ACTIVE claim {} ({}) has {} satisfying {} {}",
+                    c.attestation_id,
+                    c.claim_type,
+                    field,
+                    op.as_str(),
+                    match value {
+                        FieldValue::Text(s) => format!("\"{s}\""),
+                        FieldValue::Uint(n) => format!("{n}"),
+                        FieldValue::Bool(b) => format!("{b}"),
+                    }
+                ),
+            );
+        }
+    }
+    if scoped == 0 {
+        fail(
+            name,
+            "claim_field: no ACTIVE claim in scope (type/subject filter matched nothing)"
+                .to_string(),
+        )
+    } else {
+        fail(
+            name,
+            format!(
+                "claim_field: {scoped} ACTIVE claim(s) in scope, none satisfied {field} {}",
+                op.as_str()
+            ),
+        )
     }
 }
 

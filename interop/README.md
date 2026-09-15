@@ -17,7 +17,7 @@ interop/pengine.py      ids (sha256+b64u), COSE_Sign1 verify (Ed25519 +
                         artifact creators
                         (event/attestation/evidence/relationship/proof)
 interop/differential.py I2 (all 31 golden vectors) + I3a + I3b +
-                         negative-differential runner (37 checks, incl. closed-schema parity)
+                         negative-differential runner (39 checks, incl. closed-schema + typed-ref parity)
 interop/ts/             third implementation: independent TypeScript/Node
                         verifier (minicbor.ts strict CBOR, pengine.ts COSE +
                         proof binding via @noble/curves) with its own
@@ -34,7 +34,11 @@ interop/ts/             third implementation: independent TypeScript/Node
 - **Scope is cryptographic interop**: parse, canonicality, identifiers,
   signatures, proof binding. Time/lifecycle/graph/policy take
   caller-supplied inputs and live engine-side by design — the Python side
-  never guesses them.
+  never guesses them. Engine-side only (never interop): derivation-subgraph
+  acyclicity (Fix 2), `evidence_digest` semantic binding (Fix 5), status
+  knowledge cutoff `issued_at<=verified_at` (Fix 4), `currently_acceptable`
+  currency split + `--production` profile (Fix 1/3), empty-feed and
+  full-DAG gates.
 - Known divergences from engine limits (all fail-closed direction):
   decoder depth cap is fixed at 16 (no configurable `Limits`); no size caps
   (inputs here are fixtures and own outputs, never hostile streams).
@@ -44,9 +48,10 @@ interop/ts/             third implementation: independent TypeScript/Node
 ## Run
 
 ```console
-make interop-py   # Python differential (builds CLI + demo, 37 checks)
+make interop-py   # Python differential (builds CLI + demo, 39 checks)
 make interop-ts   # TypeScript differential (typecheck + golden corpus)
 make interop      # both independent verifiers
+make conformance  # full-verdict replay over golden proof/policy vectors (25 checks)
 ```
 
 Direct invocation (custom paths):

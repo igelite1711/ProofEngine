@@ -1,9 +1,9 @@
 // Copyright 2026 Proof Engine Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Policy v2: boolean connectives + thresholds over leaves, and the six
+//! Policy v2: boolean connectives + thresholds over leaves, and the ten
 //! adjudication leaves (delegation, identity, transparency, conflict,
-//! vocabulary, usability). V1 frozen behavior is asserted alongside: v2 leaf
-//! names never parse under v1, and v1 verdicts are byte-identical.
+//! vocabulary, usability, binding). V1 frozen behavior is asserted alongside:
+//! v2 leaf names never parse under v1, and v1 verdicts are byte-identical.
 
 use proof_core::model::{Claim, EventType, EvidenceKind, MetaValue, Proposition, RelType};
 use proof_core::{HashAlgorithm, HashRef, Limits};
@@ -27,6 +27,9 @@ fn ctx() -> VerifyCtx {
         verified_at: CLOCK_OK,
         clock_skew_leeway: 300,
         revocations_known_at: Some(CLOCK_OK),
+        // Feed-behavior-independent tests: explicit caller-asserted absence
+        // (default fails closed; see proof-verify lifecycle tests).
+        require_status_feed: false,
         ..VerifyCtx::default()
     }
 }
@@ -130,6 +133,10 @@ fn v1_rejects_v2_leaf_names_and_stays_frozen() {
         "no_conflicting_evidence",
         "vocabulary_accepted",
         "evidence_usable",
+        "evidence_bound",
+        "requires_reference",
+        "forbids_reference",
+        "claim_field",
     ] {
         let v = serde_json::json!({
             "policy_version": 1, "policy_id": "frozen",
@@ -940,6 +947,7 @@ fn v2_transparency_checkpoint_expiry_has_teeth() {
         verified_at: CLOCK_OK + 100_000,
         clock_skew_leeway: 300,
         revocations_known_at: Some(CLOCK_OK + 100_000),
+        require_status_feed: false,
         ..VerifyCtx::default()
     };
     let report = verify_proof(&built.canonical, &late).unwrap();
@@ -1100,6 +1108,7 @@ fn v2_stale_identity_never_merges() {
         verified_at: CLOCK_OK + 100_000,
         clock_skew_leeway: 300,
         revocations_known_at: Some(CLOCK_OK + 100_000),
+        require_status_feed: false,
         ..VerifyCtx::default()
     };
     let report = verify_proof(&built.canonical, &late).unwrap();
@@ -1413,4 +1422,260 @@ fn v2_reference_hooks_decide_on_direct_linkage() {
         trusted,
     );
     assert_eq!(out.decision, PolicyDecision::Pass, "{out:?}");
+}
+
+#[test]
+fn v2_claim_field_uint_predicates() {
+    // base_proof carries payment.settled {amount: 4200 uint} ACTIVE.
+    let built = base_proof(vec![]);
+    let trusted = vec![fixtures::test_key().key_ref()];
+    // eq / gte pass; gt on boundary fails; lt fails.
+    for (op, value, expect) in [
+        ("eq", 4200u64, PolicyDecision::Pass),
+        ("gte", 100u64, PolicyDecision::Pass),
+        ("gte", 4200u64, PolicyDecision::Pass),
+        ("gt", 4200u64, PolicyDecision::Fail),
+        ("lt", 5000u64, PolicyDecision::Pass),
+        ("lt", 100u64, PolicyDecision::Fail),
+        ("ne", 1u64, PolicyDecision::Pass),
+        ("lte", 4200u64, PolicyDecision::Pass),
+    ] {
+        let out = eval_built(
+            &built,
+            &v2(
+                "cf",
+                serde_json::json!({"type": "claim_field", "claim_type": "payment.settled", "field": "amount", "op": op, "value": value}),
+            ),
+            trusted.clone(),
+        );
+        assert_eq!(out.decision, expect, "op={op} value={value}: {out:?}");
+    }
+    // Wrong type scope matches nothing → FAIL (never vacuous pass).
+    let out = eval_built(
+        &built,
+        &v2(
+            "cf-scope",
+            serde_json::json!({"type": "claim_field", "claim_type": "payment.other", "field": "amount", "op": "eq", "value": 4200}),
+        ),
+        trusted.clone(),
+    );
+    assert_eq!(out.decision, PolicyDecision::Fail, "{out:?}");
+    // Missing field → FAIL.
+    let out = eval_built(
+        &built,
+        &v2(
+            "cf-missing",
+            serde_json::json!({"type": "claim_field", "claim_type": "payment.settled", "field": "nope", "op": "eq", "value": 1}),
+        ),
+        trusted.clone(),
+    );
+    assert_eq!(out.decision, PolicyDecision::Fail, "{out:?}");
+    // Type mismatch (text value vs uint field) → FAIL, not panic.
+    let out = eval_built(
+        &built,
+        &v2(
+            "cf-mismatch",
+            serde_json::json!({"type": "claim_field", "claim_type": "payment.settled", "field": "amount", "op": "eq", "value": "4200"}),
+        ),
+        trusted,
+    );
+    assert_eq!(out.decision, PolicyDecision::Fail, "{out:?}");
+}
+
+#[test]
+fn v2_commitment_pattern_hides_value_but_binds_policy() {
+    // CONFIDENTIALITY.md pattern, pinned executable: the claim carries only
+    // a salted SHA-256 commitment (`commit`), never the sensitive value.
+    // commit = hex(sha256("pe-commit-demo-salt|income:84000")) =
+    //   5752cca34a0199e42de6869abe609f93ed9e189c5877739c9282bfff9ec73819
+    // (recompute: printf 'pe-commit-demo-salt|income:84000' | sha256sum).
+    // Policy checks equality on the commitment; the preimage lives off-proof.
+    // Limits, stated in the test name: equality-only, no range proofs, no
+    // redaction — ZK predicates belong in adapters, never the core.
+    let key = fixtures::test_key();
+    let commit_att = statement(
+        &key,
+        "employee:e7",
+        "income.committed",
+        vec![(
+            "commit".into(),
+            MetaValue::Text(
+                "5752cca34a0199e42de6869abe609f93ed9e189c5877739c9282bfff9ec73819".into(),
+            ),
+        )],
+    );
+    let built = base_proof(vec![commit_att]);
+    let trusted = vec![fixtures::test_key().key_ref()];
+    // Exact commitment passes.
+    let out = eval_built(
+        &built,
+        &v2(
+            "commit-eq",
+            serde_json::json!({"type": "claim_field", "claim_type": "income.committed", "field": "commit", "op": "eq", "value": "5752cca34a0199e42de6869abe609f93ed9e189c5877739c9282bfff9ec73819"}),
+        ),
+        trusted.clone(),
+    );
+    assert_eq!(out.decision, PolicyDecision::Pass, "{out:?}");
+    // A commitment to a different value (income:84001 →
+    // 3da31f71fcde005ff652aee4c7f0788595d7ffea4fea79d86ca5067df461af47)
+    // does not match: FAIL, never vacuous pass.
+    let out = eval_built(
+        &built,
+        &v2(
+            "commit-ne",
+            serde_json::json!({"type": "claim_field", "claim_type": "income.committed", "field": "commit", "op": "eq", "value": "3da31f71fcde005ff652aee4c7f0788595d7ffea4fea79d86ca5067df461af47"}),
+        ),
+        trusted,
+    );
+    assert_eq!(out.decision, PolicyDecision::Fail, "{out:?}");
+}
+
+#[test]
+fn v2_claim_field_parse_rejects_bad_shapes() {
+    // v1 rejects claim_field (frozen).
+    let v1 = serde_json::json!({
+        "policy_version": 1, "policy_id": "f",
+        "requirements": [{"type": "claim_field", "field": "amount", "op": "eq", "value": 1}],
+    });
+    assert!(parse_policy(&v1, &limits()).is_err());
+    // Ordering op on text rejected at parse (not at eval).
+    let raw = serde_json::json!({
+        "policy_version": 2, "policy_id": "bad",
+        "expression": {"type": "claim_field", "field": "status", "op": "gt", "value": "paid"},
+    });
+    assert_eq!(
+        parse_policy(&raw, &limits()).unwrap_err().code,
+        proof_core::ErrorCode::PolicyInvalid
+    );
+    // field "type" reserved.
+    let raw2 = serde_json::json!({
+        "policy_version": 2, "policy_id": "bad2",
+        "expression": {"type": "claim_field", "field": "type", "op": "eq", "value": "x"},
+    });
+    assert!(parse_policy(&raw2, &limits()).is_err());
+}
+
+#[test]
+fn v2_evidence_bound_requires_cryptographic_binding() {
+    // Bound proof: statement attestation names the evidence AND its claim
+    // digest equals the evidence digest. Unbound base proof (same shapes,
+    // no digest field) must FAIL the leaf while passing usability.
+    let lim = limits();
+    let key = fixtures::test_key();
+    let pay = create_event(
+        proof_core::model::EventContent {
+            v: 1,
+            event_type: EventType::new(EventType::PAYMENT_CREATED),
+            subject: "payment:p9".into(),
+            effective_at: 1_700_000_000,
+            payload_ref: HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap(),
+            metadata: vec![],
+        },
+        &lim,
+    )
+    .unwrap();
+    let evd = make_evidence(
+        EvidenceKind::new("transaction_record"),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap(),
+        None,
+        None,
+        &lim,
+    )
+    .unwrap();
+    let mut content = proof_core::model::AttestationContent {
+        v: 1,
+        issuer: key.key_ref(),
+        subject: "payment:p9".into(),
+        claim: Claim {
+            claim_type: "payment.settled".into(),
+            fields: vec![("amount".into(), MetaValue::Uint(4200))],
+        },
+        issued_at: 1_700_000_100,
+        expires_at: None,
+        evidence_ref: Some(evd.id.clone()),
+    };
+    content
+        .claim
+        .fields
+        .push(("evidence_digest".into(), MetaValue::Text("ab".repeat(32))));
+    let att = attest(content, &key, &lim).unwrap();
+    let mut b = ProofBuilder::new(
+        Proposition {
+            v: 1,
+            kind: "payment.settles-invoice".into(),
+            subject: pay.id.clone(),
+            predicate: "settles".into(),
+            object: None,
+            at_time: Some(1_700_000_100),
+            context: vec![],
+        },
+        CLOCK_OK,
+    );
+    b.add_event(pay);
+    b.add_attestation(att);
+    b.add_evidence(evd);
+    let bound = b.build(&lim).unwrap();
+    let leaf = v2(
+        "bound",
+        serde_json::json!({"type": "evidence_bound", "kind": "transaction_record"}),
+    );
+    assert_eq!(
+        leaf.requirements.len(),
+        0,
+        "v2 leaves live in the expression tree, not requirements"
+    );
+    let trusted = vec![fixtures::test_key().key_ref()];
+    assert_eq!(
+        eval_built(&bound, &leaf, trusted.clone()).decision,
+        PolicyDecision::Pass
+    );
+    // Wrong kind fails; unbound base proof fails while usable passes.
+    let wrong = v2(
+        "wrong-kind",
+        serde_json::json!({"type": "evidence_bound", "kind": "receipt"}),
+    );
+    assert_eq!(
+        eval_built(&bound, &wrong, trusted.clone()).decision,
+        PolicyDecision::Fail
+    );
+    let plain = base_proof(vec![]);
+    let usable = v2(
+        "usable",
+        serde_json::json!({"type": "evidence_usable", "kind": "transaction_record"}),
+    );
+    assert_eq!(
+        eval_built(&plain, &usable, trusted.clone()).decision,
+        PolicyDecision::Pass
+    );
+    assert_eq!(
+        eval_built(&plain, &leaf, trusted).decision,
+        PolicyDecision::Fail
+    );
+}
+
+#[test]
+fn v2_evidence_bound_parse_and_describe() {
+    // v1 rejects the name (frozen); describe + canonical round-trip hold.
+    let v1 = serde_json::json!({
+        "policy_version": 1, "policy_id": "frozen",
+        "requirements": [{"type": "evidence_bound", "kind": "receipt"}],
+    });
+    assert!(parse_policy(&v1, &limits()).is_err());
+    let p = v2(
+        "h",
+        serde_json::json!({"type": "evidence_bound", "kind": "receipt"}),
+    );
+    let d = match &p.expression {
+        Some(e) => e.describe(),
+        None => panic!("v2 must carry an expression"),
+    };
+    assert!(d.contains("evidence_bound(receipt)"), "{d}");
+    assert_eq!(
+        policy_to_canonical_cbor(&p),
+        policy_to_canonical_cbor(&v2(
+            "h",
+            serde_json::json!({"type": "evidence_bound", "kind": "receipt"}),
+        ))
+    );
+    assert!(canonical_policy_hash(&p).starts_with("policy:v2:"));
 }

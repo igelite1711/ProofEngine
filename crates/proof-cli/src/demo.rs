@@ -154,6 +154,9 @@ pub fn run(out_dir: &str) -> Result<i32, String> {
             verified_at: T_FRESH,
             clock_skew_leeway: 300,
             revocations_known_at: Some(T_FRESH),
+            // Demo genesis step: no revocations exist yet; assert absence
+            // explicitly (default fails closed; production uses a feed).
+            require_status_feed: false,
             ..VerifyCtx::default()
         },
     )

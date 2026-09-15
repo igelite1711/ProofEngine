@@ -263,7 +263,8 @@ def main():
         json.dumps({"kind": "proof", "id": proof["id"], "cbor": proof["cbor"]}))
     rc, out, err = cli(a.proof_cli, "verify", "--proof",
                        os.path.join(a.work, "proof.json"), "--clock", "1700000300",
-                       "--revocations-known-at", "1700000300", "--out",
+                       "--revocations-known-at", "1700000300",
+                       "--no-require-status", "--out",
                        os.path.join(a.work, "report.json"))
     rep = json.load(open(os.path.join(a.work, "report.json"))) if rc == 0 else {}
     check("I3a python-created proof passes Rust verify",
@@ -282,7 +283,8 @@ def main():
         json.dumps({"kind": "proof", "id": proof2["id"], "cbor": proof2["cbor"]}))
     rc2, _, err2 = cli(a.proof_cli, "verify", "--proof",
                        os.path.join(a.work, "proof2.json"), "--clock", "1700000300",
-                       "--revocations-known-at", "1700000300", "--out",
+                       "--revocations-known-at", "1700000300",
+                       "--no-require-status", "--out",
                        os.path.join(a.work, "report2.json"))
     rep2 = json.load(open(os.path.join(a.work, "report2.json"))) if rc2 == 0 else {}
     check("I3a python-composed proof passes Rust verify",
@@ -349,6 +351,40 @@ def main():
                          "--clock", "1700000300",
                          "--revocations-known-at", "1700000300")
         check(f"NEG unknown {label} field rejected by Rust",
+              rc != 0 and "SCHEMA_VIOLATION" in err, f"exit={rc}")
+        assert py_ok and rc != 0
+
+    # ---- Part 6: typed-reference parity (F4/F5) ----
+    # Wrong-typed refs (att: in evidence slot, evd: in attestation slot) must
+    # reject on both sides with SCHEMA_VIOLATION, never ride as hints.
+    from minicbor import enc_any as _enc_any
+    v, pos = _dec(raw11)
+    assert pos == len(raw11) and isinstance(v, _Map)
+    d = dict(v)
+    # Find first attestation content and swap its evidence_ref to att:v1: shape.
+    atts = d.get("attestations")
+    if isinstance(atts, list) and atts:
+        entry = dict(atts[0])
+        content = dict(entry.get("content"))
+        # Use a well-formed att:v1: id (wrong slot on purpose).
+        content["evidence_ref"] = "att:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        entry["content"] = _Map(list(content.items()))
+        atts[0] = _Map(list(entry.items()))
+        bad = _enc_map(v)
+        try:
+            _vp(bad)
+            check("NEG wrong-typed evidence_ref rejected by Python", False, "accepted?!")
+            py_ok = False
+        except _IF:
+            check("NEG wrong-typed evidence_ref rejected by Python", True)
+            py_ok = True
+        open(os.path.join(a.work, "wrong-ref.json"), "w").write(
+            json.dumps({"kind": "proof", "id": "x", "cbor": bad.hex()}))
+        rc, _, err = cli(a.proof_cli, "verify", "--proof",
+                         os.path.join(a.work, "wrong-ref.json"),
+                         "--clock", "1700000300",
+                         "--revocations-known-at", "1700000300")
+        check("NEG wrong-typed evidence_ref rejected by Rust",
               rc != 0 and "SCHEMA_VIOLATION" in err, f"exit={rc}")
         assert py_ok and rc != 0
 

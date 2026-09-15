@@ -40,8 +40,8 @@ EVD=$(python3 -c "import json; print(json.load(open('$WORK/evd.json'))['id'])")
   --created-at 1700000200 --events "$WORK/draft.json,$WORK/signed.json" \
   --attestations "$WORK/att1.json" --evidence "$WORK/evd.json" \
   --relationships "$WORK/rel.json" --out "$WORK/proof.json" >/dev/null
-echo "== fresh execution (clock 1700000300) =="
-"${CLI[@]}" verify --proof "$WORK/proof.json" --clock 1700000300 --revocations-known-at 1700000300 2>&1 | tail -n 2
+echo "== fresh execution (clock 1700000300, absence explicitly asserted) =="
+"${CLI[@]}" verify --proof "$WORK/proof.json" --clock 1700000300 --revocations-known-at 1700000300 --no-require-status 2>&1 | tail -n 2
 # Second signing supersedes the first: history preserved, currentness gone.
 "${CLI[@]}" attest --seed test --subject matter:m7 --claim-type legal.document.signed \
   --claim version=2 --issued-at 1700000400 --out "$WORK/att2.json" >/dev/null

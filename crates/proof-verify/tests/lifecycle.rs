@@ -98,6 +98,10 @@ fn live_ctx(verified_at: u64) -> VerifyCtx {
         verified_at,
         clock_skew_leeway: SKEW,
         revocations_known_at: Some(verified_at),
+        // Unit-test feed stand-in: these tests assert caller-checked absence
+        // explicitly (the default fails closed; see
+        // empty_feed_fails_closed_by_default).
+        require_status_feed: false,
         ..VerifyCtx::default()
     }
 }
@@ -384,8 +388,106 @@ fn active_proof_reports_active_lifecycle() {
     assert_eq!(report.cryptographic_validity, Validity::Valid);
     assert_eq!(report.evidence_validity, Validity::Valid);
     assert!(report.lifecycle_checked);
-    assert!(report.checks.iter().all(|c| c.ok));
+    // Explicitly-allowed empty feed note present, validity unaffected.
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| c.ok && c.stage == "REVOCATION" && c.message.contains("explicitly allowed")));
     // Exactly one statement attestation → exactly one lifecycle record.
     assert_eq!(report.lifecycle.len(), 1);
     assert_eq!(report.lifecycle[0].status, LifecycleStatus::Active);
+}
+
+#[test]
+fn empty_feed_fails_closed_by_default() {
+    // Pre-launch core audit fix: freshness asserted with zero status objects
+    // and no explicit opt-out ⇒ UNKNOWN ⇒ fail closed (stale-feed hole).
+    let built = chain(vec![]);
+    let ctx = VerifyCtx {
+        verified_at: NOW_OK,
+        clock_skew_leeway: SKEW,
+        revocations_known_at: Some(NOW_OK),
+        ..VerifyCtx::default()
+    };
+    assert!(ctx.require_status_feed, "default must be fail-closed");
+    let report = verify_proof(&built.canonical, &ctx).unwrap();
+    assert_eq!(report.cryptographic_validity, Validity::Valid);
+    assert_eq!(report.evidence_validity, Validity::Invalid);
+    assert!(codes(&report).contains(&ErrorCode::RevocationUnknown));
+    assert_eq!(report.lifecycle[0].status, LifecycleStatus::Unknown);
+}
+
+#[test]
+fn require_status_feed_fails_closed_on_empty_feed() {
+    // Flag now defaults true; setting it explicitly behaves identically.
+    let built = chain(vec![]);
+    let mut ctx = live_ctx(NOW_OK);
+    ctx.require_status_feed = true;
+    let report = verify_proof(&built.canonical, &ctx).unwrap();
+    assert_eq!(report.cryptographic_validity, Validity::Valid);
+    assert_eq!(report.evidence_validity, Validity::Invalid);
+    assert!(codes(&report).contains(&ErrorCode::RevocationUnknown));
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| c.stage == "REVOCATION" && c.message.contains("require_status_feed")));
+}
+
+#[test]
+fn require_status_feed_passes_with_feed_present() {
+    // Same flag with a real (ineffective but present) feed does not force
+    // UNKNOWN: feed presence is what the flag gates, not effect success.
+    let key = fixtures::test_key();
+    let pay = event(EventType::new(EventType::PAYMENT_CREATED), "payment:p9");
+    let statement = attest(
+        fixtures::fixed_attestation_content(&key.key_ref(), &pay.id),
+        &key,
+        &lim(),
+    )
+    .unwrap();
+    let other = proof_crypto::Ed25519Key::from_seed(&[7u8; 32]);
+    let forged = revoke_attestation(&statement.id, None, &other, NOW_OK, &lim()).unwrap();
+    let built = chain(vec![forged]);
+    let mut ctx = live_ctx(NOW_OK);
+    ctx.require_status_feed = true;
+    let report = verify_proof(&built.canonical, &ctx).unwrap();
+    // Unauthorized effect → STATUS hygiene fail, but lifecycle ACTIVE (F2
+    // semantics) and feed requirement satisfied (non-empty).
+    assert_eq!(report.evidence_validity, Validity::Valid);
+    assert!(!report.status_inputs_valid);
+    assert_eq!(status_of(&report, &statement.id), LifecycleStatus::Active);
+}
+
+#[test]
+fn future_status_within_skew_does_not_apply_to_history() {
+    // Fix 4: a revocation issued AFTER the verifier clock never applies to
+    // that historical verification, even within skew. Skew covers honest
+    // clock drift for attestation windows (TIME), not future-knowledge
+    // time-travel for status effects.
+    let key = fixtures::test_key();
+    let pay = event(EventType::new(EventType::PAYMENT_CREATED), "payment:p9");
+    let statement = attest(
+        fixtures::fixed_attestation_content(&key.key_ref(), &pay.id),
+        &key,
+        &lim(),
+    )
+    .unwrap();
+    // Revocation 100s in the future (within 300s skew): previously applied
+    // (REVOKED at past clock — wrong history); now recorded as STATUS hygiene
+    // and ignored, leaving ACTIVE at the past clock.
+    let future_revoke =
+        revoke_attestation(&statement.id, None, &key, NOW_OK + 100, &lim()).unwrap();
+    let built = chain(vec![future_revoke]);
+    // Verify at NOW_OK (before the revocation existed): must stay ACTIVE.
+    let report = verify_proof(&built.canonical, &live_ctx(NOW_OK)).unwrap();
+    assert_eq!(status_of(&report, &statement.id), LifecycleStatus::Active);
+    assert_eq!(report.evidence_validity, Validity::Valid);
+    assert!(!report.status_inputs_valid); // future effect noted in STATUS
+                                          // Verify after the revocation existed: must be REVOKED.
+    let mut later = live_ctx(NOW_OK + 200);
+    later.verified_at = NOW_OK + 200;
+    later.revocations_known_at = Some(NOW_OK + 200);
+    let report2 = verify_proof(&built.canonical, &later).unwrap();
+    assert_eq!(status_of(&report2, &statement.id), LifecycleStatus::Revoked);
+    assert_eq!(report2.evidence_validity, Validity::Invalid);
 }

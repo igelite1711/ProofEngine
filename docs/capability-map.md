@@ -47,7 +47,7 @@ independently verifiable proofs." Everything else is an application.
 |----|-----------|----------|--------|----------|
 | CAP-010 | Generic event: happened-record with type, subject, effective time, payload digest, metadata | 2, 47–50 | IMP | `model.rs::EventContent`; schema tests |
 | CAP-011 | Temporal separation: event time ≠ observation/issuance ≠ verification ≠ status time | 18 | IMP | `effective_at`, `issued_at`/`expires_at`, `VerifyCtx.verified_at`, `revocations_known_at` |
-| CAP-012 | Historical validity ≠ current applicability (VALID ≠ CURRENT, SUPERSEDED ≠ invalid) | 19, 21–22 | IMP | Lifecycle: SUPERSEDED keeps evidence valid; `not_superseded`; golden-19 |
+| CAP-012 | Historical validity ≠ current applicability (VALID ≠ CURRENT, SUPERSEDED ≠ invalid; `currently_acceptable` split + `--production`/`--strict-current` overlay) | 19, 21–22 | IMP | Lifecycle: SUPERSEDED keeps evidence valid; `not_superseded`; `is_currently_acceptable`; golden-19; `production_overlays_currency_on_evaluate_and_batch` |
 | CAP-013 | Expiration / revocation / supersession / withdrawal / compromise as separate signed status events | 20–22 | IMP | Phase 6 + lifecycle elevation; `lifecycle.rs`; golden-29/30; PE-LIFE-001/004 |
 | CAP-014 | Unknown status must never convert to PASS | 27 | IMP | `revocations_known_at=None` → UNKNOWN → invalid |
 
@@ -55,7 +55,7 @@ independently verifiable proofs." Everything else is an application.
 
 | ID | Capability | Source § | Status | Evidence |
 |----|-----------|----------|--------|----------|
-| CAP-020 | Evidence integrity (digest-bound, canonical, id-bound, tamper-evident) |  §6 | IMP | `make_evidence`; golden-02–05 |
+| CAP-020 | Evidence integrity (digest-bound, canonical, id-bound, tamper-evident; opt-in claim `evidence_digest` semantic binding, fail-fast at attest) |  §6 | IMP | `make_evidence`; EVIDENCE `evidence_digest` check; golden-02–05; `evidence_digest_*` |
 | CAP-021 | Evidence kinds (generic incl. transparency_registration/receipt/checkpoint) | 4 | IMP | `model.rs::EvidenceKind` (open vocabulary, well-known labels) |
 | CAP-022 | Embedded vs referenced vs unavailable evidence distinguished — never silently treated as verified | 23, 26 | IMP/DOC | digest+ref model; fetch is caller duty (contract #4) |
 | CAP-023 | Evidence provenance (source/creator/time/hint) expressible without core semantics | 5 | PRT | `attestation_ref` + `hint` + claim fields; full provenance graph is caller-side |
@@ -78,12 +78,12 @@ independently verifiable proofs." Everything else is an application.
 | ID | Capability | Source § | Status | Evidence |
 |----|-----------|----------|--------|----------|
 | CAP-040 | Generic typed relationship model (12 well-known edge types incl. EQUIVALENT/CONTRADICTS, domain-neutral) |  §9, 10 | IMP | `model.rs::RelType`; PE-GRAPH-001 grounding (EQUIVALENT identity-ref endpoints) |
-| CAP-041 | Proof graph validation: refs resolve, grounding, acyclicity, depth/size limits, no dangling/duplicate members |  §11, 64 | IMP | `proof-graph`; PE-FMT-006; cycle/limit tests |
+| CAP-041 | Proof graph validation: refs resolve, grounding (fail-fast at relate), derivation always acyclic + full-DAG opt-in, depth/size limits, no dangling/duplicate members |  §11, 64 | IMP | `proof-graph` (`check_derivation_acyclic` + `check_acyclic_provenance`); PE-FMT-006; cycle/limit tests |
 | CAP-042 | Portable Proof: proposition + sorted member id sets + canonical bytes |  §12 | IMP | `ProofBuilder`; self-check round-trip |
 | CAP-043 | Proof creation journey (claim → subjects → evidence → attestations → relationships → build → sign → export) |  §13 | IMP | CLI journey + builder; `cli_e2e` |
 | CAP-044 | Proof verification journey (parse → schema → canonical → ids → sigs → keys → time → revocation → evidence → relationships → graph → decision outcome) |  §14 | IMP | 11-stage pipeline (`pipeline.rs`) |
 | CAP-045 | Nested proofs (Proof as evidence for a Proof)with depth/cycle protection |  §24 | V2 | representable via `external_reference`; first-class nesting **V2**; v1 union-composition via `compose` IMP |
-| CAP-046 | Proof composition by member-set union (dedup by id, provenance preserved) | §12 | IMP | `proof-cli compose`; union is content-addressed, new proof_id binds union |
+| CAP-046 | Proof composition by member-set union (dedup by id, provenance preserved; union graph validated at compose: grounding, dangling, SUPERSEDES linearity, derivation acyclicity; currency stays verify-time) | §12 | IMP | `proof-cli compose`; union is content-addressed, new proof_id binds union; golden-32 |
 | CAP-047 | Standard artifact envelope (`container_version/kind/id/cbor/sign1`) | §15 | IMP | `proof-format::envelope` + `proof-crypto::verify_envelope`; `export/import/convert` |
 | CAP-048 | Composition linkage (`referenced_proofs`: sorted/deduped/bounded, bound when present, byte-identical V1 when empty; self-links refused) | §12 | IMP | `proof_id_with_refs`; builder/pipeline/schema; golden-24/25/26; `compose` records sources |
 | CAP-049 | Bundle convention + blob authentication (digests mandatory, blobs also carried; store seam with memory/filesystem backends) | §12 | IMP | `proof-format::{bundle,store}`; `FileStore`; `bundle_store` test |
@@ -101,6 +101,7 @@ independently verifiable proofs." Everything else is an application.
 | CAP-057 | Conflict adjudication leaves (`no_conflicting_evidence`, threshold/or composition) | §25 | IMP | v2 tests; golden-28 |
 | CAP-058 | Vocabulary acceptance (declared/used namespaces vs accepted max versions) | §39 | IMP | `vocabulary_accepted` leaf; golden-27 |
 | CAP-059 | Evidence usability (AVAILABLE-only strict counterpart to presence) | §21 | IMP | `evidence_usable` leaf; evidence-status projection |
+| CAP-059b | Evidence binding requirement (cryptographic claim-to-content binding: `evidence_digest` match over AVAILABLE evidence; lets policy *require* the opt-in binding) | §21 | IMP | `evidence_bound` leaf; `evidence_bindings` projection; golden-33 |
 
 ## G. Verification context, verdict & explanation
 

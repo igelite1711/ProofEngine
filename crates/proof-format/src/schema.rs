@@ -75,6 +75,29 @@ fn opt_text_or_nil(
     Err(ErrorCode::SchemaViolation.err(format!("missing field {key}")))
 }
 
+/// Typed reference: `text|nil` that, when present, must start with `prefix`
+/// (e.g. `evd:v1:` for evidence refs, `att:v1:` for attestation refs).
+/// Wrong-typed ids (e.g. `att:v1:` in an evidence slot) fail closed at SCHEMA
+/// with `SCHEMA_VIOLATION` instead of riding as a dangling hint into
+/// `Unknown+valid` (external-review F4/F5 fix). Correct-prefix but unknown ids
+/// still pass schema and fail as `DANGLING_REFERENCE` / `Unknown` downstream.
+fn opt_ref_or_nil(
+    map: &[(CborValue, CborValue)],
+    key: &str,
+    prefix: &str,
+) -> Result<Option<String>, ProofError> {
+    match opt_text_or_nil(map, key)? {
+        None => Ok(None),
+        Some(s) => {
+            if !s.starts_with(prefix) {
+                return Err(ErrorCode::SchemaViolation
+                    .err(format!("field {key} {s} must start with {prefix}")));
+            }
+            Ok(Some(s))
+        }
+    }
+}
+
 fn opt_uint_or_nil(map: &[(CborValue, CborValue)], key: &str) -> Result<Option<u64>, ProofError> {
     for (k, v) in map {
         if let CborValue::Text(kk) = k {
@@ -356,7 +379,7 @@ pub fn cbor_to_attestation(
     let subject = text_field(map, "subject")?;
     let issued_at = uint_field(map, "issued_at")?;
     let expires_at = opt_uint_or_nil(map, "expires_at")?;
-    let evidence_ref = opt_text_or_nil(map, "evidence_ref")?;
+    let evidence_ref = opt_ref_or_nil(map, "evidence_ref", "evd:v1:")?;
     if let (Some(e), _) = (expires_at, issued_at) {
         if e < issued_at {
             return Err(ErrorCode::SchemaViolation.err("expires_at < issued_at"));
@@ -461,7 +484,7 @@ pub fn cbor_to_evidence(v: &CborValue, limits: &Limits) -> Result<Evidence, Proo
         .map(|(_, v)| v)
         .ok_or_else(|| ErrorCode::SchemaViolation.err("missing field digest"))?;
     let digest = hashref_from_cbor(digest_cbor)?;
-    let attestation_ref = opt_text_or_nil(map, "attestation_ref")?;
+    let attestation_ref = opt_ref_or_nil(map, "attestation_ref", "att:v1:")?;
     let hint = opt_text_or_nil(map, "hint")?;
     if hint.as_deref().is_some_and(|s| s.len() > 256) {
         return Err(ErrorCode::SchemaViolation.err("hint too long"));
@@ -531,8 +554,8 @@ pub fn cbor_to_relationship(v: &CborValue, limits: &Limits) -> Result<Relationsh
     let t = text_field(map, "type")?;
     // V1.0 NEUTRAL: accept any string, policy decides which types are valid
     let rel_type = RelType::new(t);
-    let evidence_ref = opt_text_or_nil(map, "evidence_ref")?;
-    let attestation_ref = opt_text_or_nil(map, "attestation_ref")?;
+    let evidence_ref = opt_ref_or_nil(map, "evidence_ref", "evd:v1:")?;
+    let attestation_ref = opt_ref_or_nil(map, "attestation_ref", "att:v1:")?;
     void_limits(limits)?;
     Ok(Relationship {
         v: 1,
@@ -1369,5 +1392,89 @@ mod tests {
             cbor_to_proof(&vb, &lim).unwrap_err().code,
             ErrorCode::SchemaViolation
         );
+    }
+
+    #[test]
+    fn typed_refs_reject_wrong_prefix() {
+        // F4/F5: wrong-typed ids fail closed at SCHEMA, never ride as hints.
+        use proof_core::model::{AttestationContent, Claim, Evidence, Relationship};
+        let lim = Limits::default();
+        let digest = HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap();
+        // attestation.evidence_ref must be evd:v1:
+        let att = AttestationContent {
+            v: 1,
+            issuer: "key:ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+            subject: "s".into(),
+            claim: Claim {
+                claim_type: "t".into(),
+                fields: vec![("k".into(), MetaValue::Text("v".into()))],
+            },
+            issued_at: 1,
+            expires_at: None,
+            evidence_ref: Some("att:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()),
+        };
+        assert_eq!(
+            cbor_to_attestation(&attestation_to_cbor(&att), &lim)
+                .unwrap_err()
+                .code,
+            ErrorCode::SchemaViolation
+        );
+        // evidence.attestation_ref must be att:v1:
+        let evd = Evidence {
+            v: 1,
+            kind: EvidenceKind::new("k"),
+            digest: digest.clone(),
+            attestation_ref: Some("evd:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()),
+            hint: None,
+        };
+        assert_eq!(
+            cbor_to_evidence(&evidence_to_cbor(&evd), &lim)
+                .unwrap_err()
+                .code,
+            ErrorCode::SchemaViolation
+        );
+        // relationship refs typed.
+        let rel = Relationship {
+            v: 1,
+            from: "evt:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+            rel_type: RelType::new("REFERENCES"),
+            to: "evt:v1:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB".into(),
+            evidence_ref: Some("att:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()),
+            attestation_ref: None,
+        };
+        assert_eq!(
+            cbor_to_relationship(&relationship_to_cbor(&rel), &lim)
+                .unwrap_err()
+                .code,
+            ErrorCode::SchemaViolation
+        );
+        let rel2 = Relationship {
+            v: 1,
+            from: "evt:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+            rel_type: RelType::new("REFERENCES"),
+            to: "evt:v1:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB".into(),
+            evidence_ref: None,
+            attestation_ref: Some("evd:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()),
+        };
+        assert_eq!(
+            cbor_to_relationship(&relationship_to_cbor(&rel2), &lim)
+                .unwrap_err()
+                .code,
+            ErrorCode::SchemaViolation
+        );
+        // Correct prefixes pass schema (resolution checked later).
+        let att_ok = AttestationContent {
+            v: 1,
+            issuer: "key:ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+            subject: "s".into(),
+            claim: Claim {
+                claim_type: "t".into(),
+                fields: vec![("k".into(), MetaValue::Text("v".into()))],
+            },
+            issued_at: 1,
+            expires_at: None,
+            evidence_ref: Some("evd:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()),
+        };
+        assert!(cbor_to_attestation(&attestation_to_cbor(&att_ok), &lim).is_ok());
     }
 }

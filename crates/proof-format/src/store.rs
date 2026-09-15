@@ -25,14 +25,36 @@ pub trait ArtifactStore {
 
 /// In-memory store. Test/dev default; production uses filesystem, object,
 /// SQL, document, or content-addressed backends behind the same trait.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MemoryStore {
     inner: HashMap<String, Vec<u8>>,
+    /// Transport-level per-blob cap. Defaults to `Limits::default().max_proof_size`
+    /// (1MiB) so store/verify bounds agree out of the box (F12); deployments
+    /// tightening `max_proof_size` should construct via `with_limits`.
+    max_bytes: usize,
+}
+
+impl Default for MemoryStore {
+    fn default() -> Self {
+        Self {
+            inner: HashMap::new(),
+            max_bytes: proof_core::Limits::default().max_proof_size,
+        }
+    }
 }
 
 impl MemoryStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Construct with an explicit `Limits` so store bounds track verifier
+    /// bounds (deployments that tighten `max_proof_size`).
+    pub fn with_limits(limits: &proof_core::Limits) -> Self {
+        Self {
+            inner: HashMap::new(),
+            max_bytes: limits.max_proof_size,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -49,11 +71,17 @@ impl ArtifactStore for MemoryStore {
         if id.is_empty() || cbor.is_empty() {
             return Err("store put requires non-empty id and bytes".into());
         }
-        // Transport-level DoS guard (default 1MiB). Stores are infrastructure
-        // so the error stays `String` by trait contract; verification bounds
-        // live in `Limits` and the pipeline.
-        if cbor.len() > 1024 * 1024 {
-            return Err(format!("store put: {} bytes exceeds 1MiB", cbor.len()));
+        // Transport-level DoS guard, tied to Limits (F12). Stores are
+        // infrastructure so the error stays `String` by trait contract;
+        // verification bounds live in `Limits` and the pipeline. Default is
+        // Limits::default().max_proof_size (1MiB); use with_limits() to track
+        // tightened deployments.
+        if cbor.len() > self.max_bytes {
+            return Err(format!(
+                "store put: {} bytes exceeds {} (MemoryStore max_bytes)",
+                cbor.len(),
+                self.max_bytes
+            ));
         }
         match self.inner.get(id) {
             Some(prev) if *prev != cbor => Err(format!(
@@ -89,5 +117,21 @@ mod tests {
         assert!(s.put("prf:v1:x", vec![9]).is_err());
         assert!(s.put("", vec![1]).is_err());
         assert!(s.put("prf:v1:y", vec![]).is_err());
+    }
+
+    #[test]
+    fn memory_store_tracks_limits() {
+        // F12: store bounds follow Limits instead of a hardcoded 1MiB.
+        let mut s = MemoryStore::with_limits(&proof_core::Limits {
+            max_proof_size: 16,
+            ..Default::default()
+        });
+        assert!(s.put("prf:v1:x", vec![1; 16]).is_ok());
+        assert!(s.put("prf:v1:y", vec![1; 17]).is_err());
+        // Default tracks the default limit (1MiB).
+        assert_eq!(
+            MemoryStore::new().max_bytes,
+            proof_core::Limits::default().max_proof_size
+        );
     }
 }

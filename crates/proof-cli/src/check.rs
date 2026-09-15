@@ -74,6 +74,13 @@ pub fn report_json(r: &VerifyReport) -> serde_json::Value {
         "cryptographic_validity": validity_str(r.cryptographic_validity),
         "evidence_validity": validity_str(r.evidence_validity),
         "policy_decision": r.policy_decision.as_str(),
+        // Fix 1/3 split: bare `verify` VALID means historically valid.
+        // Automation MUST check `currently_acceptable` (or use --production/
+        // --strict-current for exit-1 enforcement) before treating VALID as
+        // currently trustworthy. False on SUPERSEDED history or unverified
+        // provenance hints; WITHDRAWN/COMPROMISED/REVOKED/EXPIRED already flip
+        // evidence_invalid and need no extra gate.
+        "currently_acceptable": is_currently_acceptable(r),
         "lifecycle_checked": r.lifecycle_checked,
         "status_inputs_valid": r.status_inputs_valid,
         "lifecycle": r
@@ -253,15 +260,17 @@ pub fn envelope_mismatch_report(claimed: &str, actual: &str) -> VerifyReport {
 }
 
 /// M2: strict-currency check. Returns false (not current) when any
-/// attestation is SUPERSEDED or any evidence is SUPERSEDED / UNKNOWN-hint.
-/// WITHDRAWN/COMPROMISED/REVOKED/EXPIRED already flip evidence INVALID, so
-/// they need no extra gate; this covers the VALID-but-not-current cases.
+/// attestation is SUPERSEDED or UNKNOWN, or any evidence is SUPERSEDED /
+/// UNKNOWN-hint. WITHDRAWN/COMPROMISED/REVOKED/EXPIRED already flip evidence
+/// INVALID, so they need no extra gate (and stay currency-true: validity and
+/// currency are orthogonal signals — callers combine both, as cmd_verify
+/// does). UNKNOWN is the exception: unknown currency is itself not
+/// acceptable, so it fails both.
 pub fn is_currently_acceptable(report: &VerifyReport) -> bool {
-    if report
-        .lifecycle
-        .iter()
-        .any(|l| l.status == proof_core::LifecycleStatus::Superseded)
-    {
+    if report.lifecycle.iter().any(|l| {
+        l.status == proof_core::LifecycleStatus::Superseded
+            || l.status == proof_core::LifecycleStatus::Unknown
+    }) {
         return false;
     }
     if report.evidence_status.iter().any(|e| {
@@ -286,7 +295,11 @@ pub fn verdict_exit(report: &VerifyReport) -> i32 {
 /// Human-readable verification summary on stderr. Derived purely from the
 /// report (no independent decision logic). stdout stays machine-readable;
 /// callers must respect `--quiet`.
-pub fn emit_human_summary(report: &VerifyReport) {
+///
+/// `strict_fail`: `--strict-current`/`--production` override (VALID pipeline
+/// result that strict mode rejects for currency). Rendered as one coherent
+/// verdict line instead of two conflicting RESULT lines (external-review F14).
+pub fn emit_human_summary(report: &VerifyReport, strict_fail: bool) {
     let id = report.proof_id.as_deref().unwrap_or("?");
     let crypto_ok = report.passed_crypto();
     let evidence_ok = report.evidence_validity == Validity::Valid;
@@ -319,19 +332,40 @@ pub fn emit_human_summary(report: &VerifyReport) {
         eprintln!("  {mark} {} — {}", c.stage, crate::sanitize(&c.message));
     }
     let total = report.checks.len();
+    let currency_ok = is_currently_acceptable(report);
     let (result, code) = if crypto_ok && evidence_ok {
-        (crate::green("VALID"), crate::EXIT_OK)
+        if currency_ok {
+            (crate::green("VALID"), crate::EXIT_OK)
+        } else {
+            // Fix 1/3 rename: VALID-but-not-current is historical, not
+            // currently trustworthy. Exit stays 0 bare (frozen verdicts);
+            // --strict-current/--production exits 1 (handled by caller via
+            // strict_fail). Never let bare VALID be misread as acceptable.
+            (crate::green("VALID (historical — not currently acceptable; use --production/--strict-current or check currently_acceptable)"), crate::EXIT_OK)
+        }
     } else {
         (crate::red("INVALID"), crate::EXIT_FAIL)
     };
     eprintln!("{pass}/{total} checks passed");
-    eprintln!("RESULT {result} (exit {code})");
+    if strict_fail && crypto_ok && evidence_ok {
+        // Pipeline verdict is VALID but strict mode (--strict-current or
+        // --production) rejects the proof for currency: report the enforced
+        // verdict, never the unenforced one. Never two RESULT lines.
+        eprintln!(
+            "RESULT {} (historically valid — not currently acceptable) (exit {})",
+            crate::red("INVALID"),
+            crate::EXIT_FAIL
+        );
+    } else {
+        eprintln!("RESULT {result} (exit {code})");
+    }
     // M2: history-vs-current guidance. SUPERSEDED preserves history (evidence
     // VALID) but is not currently acceptable without policy adjudication.
     // Dangling attestation_ref hints (UNKNOWN ok:true) preserve validity but
     // leave provenance unverified. Warn loudly so bare `verify VALID` is never
     // misread as "currently acceptable". `evaluate` with `not_superseded` /
-    // `evidence_usable` (v2) adjudicates; `--strict-current` fails closed.
+    // `evidence_usable` (v2) adjudicates; `--strict-current`/`--production`
+    // fails closed.
     let has_superseded = report
         .lifecycle
         .iter()
@@ -342,7 +376,7 @@ pub fn emit_human_summary(report: &VerifyReport) {
             .any(|e| e.status == proof_core::model::EvidenceStatus::Superseded);
     if has_superseded {
         eprintln!(
-            "  note: SUPERSEDED — historically valid, history preserved; NOT currently acceptable without policy `not_superseded` passing. Use `evaluate` or `--strict-current` to fail closed on currency."
+            "  note: SUPERSEDED — historically valid, history preserved; NOT currently acceptable without policy `not_superseded` passing. Use `evaluate` or `--strict-current`/`--production` to fail closed on currency."
         );
     }
     let has_dangling_hint = report.evidence_status.iter().any(|e| {
@@ -351,7 +385,7 @@ pub fn emit_human_summary(report: &VerifyReport) {
     });
     if has_dangling_hint {
         eprintln!(
-            "  note: provenance hint unverified (attestation_ref dangles or not verified in-proof) — validity preserved, provenance NOT established. Strict callers use policy v2 `evidence_usable` or `--strict-current`."
+            "  note: provenance hint unverified (attestation_ref dangles or not verified in-proof) — validity preserved, provenance NOT established. Strict callers use policy v2 `evidence_usable` or `--strict-current`/`--production`."
         );
     }
     if !report.status_inputs_valid {
@@ -383,4 +417,95 @@ pub fn outcome_json(outcome: &proof_policy::PolicyOutcome) -> serde_json::Value 
             })
             .collect::<Vec<_>>(),
     })
+}
+
+#[cfg(test)]
+mod currency_tests {
+    use super::*;
+    use proof_core::model::EvidenceStatus;
+    use proof_core::LifecycleStatus;
+    use proof_verify::report::{EvidenceStatusRecord, LifecycleRecord, Validity as V};
+
+    fn base_report() -> proof_verify::VerifyReport {
+        proof_verify::VerifyReport {
+            proof_id: Some("prf:v1:x".into()),
+            cryptographic_validity: V::Valid,
+            evidence_validity: V::Valid,
+            policy_decision: proof_verify::PolicyDecision::Indeterminate,
+            lifecycle_checked: true,
+            lifecycle: vec![],
+            status_objects: vec![],
+            withdrawn_ids: vec![],
+            referenced_proofs: vec![],
+            vocabularies: vec![],
+            evidence_status: vec![],
+            conflicts: vec![],
+            checks: vec![],
+            status_inputs_valid: true,
+        }
+    }
+
+    #[test]
+    fn active_lifecycle_is_currently_acceptable() {
+        let mut r = base_report();
+        r.lifecycle.push(LifecycleRecord {
+            object: "att:x".into(),
+            status: LifecycleStatus::Active,
+            code: None,
+            message: "active".into(),
+        });
+        assert!(is_currently_acceptable(&r));
+    }
+
+    #[test]
+    fn superseded_lifecycle_fails_currency() {
+        let mut r = base_report();
+        r.lifecycle.push(LifecycleRecord {
+            object: "att:x".into(),
+            status: LifecycleStatus::Superseded,
+            code: None,
+            message: "superseded".into(),
+        });
+        assert!(!is_currently_acceptable(&r));
+    }
+
+    #[test]
+    fn unverified_provenance_hint_fails_currency() {
+        let mut r = base_report();
+        r.evidence_status.push(EvidenceStatusRecord {
+            object: "evd:x".into(),
+            status: EvidenceStatus::Unknown,
+            code: None,
+            message: "backing attestation not verified in this proof — provenance hint unverified, validity preserved".into(),
+        });
+        assert!(!is_currently_acceptable(&r));
+    }
+
+    #[test]
+    fn revoked_lifecycle_is_not_currency_gap() {
+        // REVOKED already fails evidence_validity; `--strict-current` only
+        // *additionally* rejects currency gaps on otherwise-valid proofs, so
+        // is_currently_acceptable must not conflate the two (callers combine
+        // verdict + strict flag, as cmd_verify does).
+        let mut r = base_report();
+        r.evidence_validity = V::Invalid;
+        assert!(is_currently_acceptable(&r));
+    }
+
+    #[test]
+    fn unknown_lifecycle_fails_currency() {
+        // UNKNOWN currency (e.g. empty feed under the fail-closed default)
+        // is itself not acceptable — unlike REVOKED, there is no validity
+        // failure to lean on for currency purposes; the boolean must agree
+        // with the exit code.
+        let mut r = base_report();
+        r.evidence_validity = V::Invalid;
+        r.lifecycle.push(LifecycleRecord {
+            object: "att:x".into(),
+            status: LifecycleStatus::Unknown,
+            code: Some(proof_core::ErrorCode::RevocationUnknown),
+            message: "unknown".into(),
+        });
+        assert!(!is_currently_acceptable(&r));
+    }
 }

@@ -13,10 +13,13 @@ use proof_verify::{
 fn ctx() -> VerifyCtx {
     // A live, fail-closed default: trustworthy clock inside the fixture
     // validity window and fresh revocation information all the way up to now.
+    // Explicit caller-asserted absence (these tests pin non-feed stages;
+    // the feed default is pinned by empty_feed_fails_closed_by_default).
     VerifyCtx {
         verified_at: 1_700_000_200,
         clock_skew_leeway: 300,
         revocations_known_at: Some(1_700_000_200),
+        require_status_feed: false,
         ..VerifyCtx::default()
     }
 }
@@ -399,4 +402,320 @@ fn remote_fetch_request_is_caller_error() {
     bad_ctx.allow_remote = true;
     let e = verify_proof(&c.built.canonical, &bad_ctx).unwrap_err();
     assert_eq!(e.code, ErrorCode::SchemaViolation);
+}
+
+#[test]
+fn evidence_digest_binding_holds_when_matching() {
+    // Fix 5: reserved claim field `evidence_digest` matching the bound
+    // evidence digest passes with an explicit ok record; absent field = no
+    // check (backward compatible).
+    let lim = Limits::default();
+    let key = fixtures::test_key();
+    let pay = event(EventType::new(EventType::PAYMENT_CREATED), "payment:p9");
+    let inv = event(EventType::new(EventType::INVOICE_ISSUED), "invoice:i9");
+    let digest_hex = hex::encode([0xEEu8; 32]);
+    // Evidence first (no backing ref needed for AVAILABLE).
+    let evd = make_evidence(
+        EvidenceKind::new(EvidenceKind::TRANSACTION_RECORD),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xEEu8; 32]).unwrap(),
+        None,
+        None,
+        &lim,
+    )
+    .unwrap();
+    // Attestation bound to that evidence + claim digest matching it.
+    let mut content = fixtures::fixed_attestation_content(&key.key_ref(), &pay.id);
+    content.evidence_ref = Some(evd.id.clone());
+    content
+        .claim
+        .fields
+        .push(("evidence_digest".into(), MetaValue::Text(digest_hex)));
+    let att = attest(content, &key, &lim).unwrap();
+    let edge = make_relationship(
+        Relationship {
+            v: 1,
+            from: pay.id.clone(),
+            rel_type: RelType::new(RelType::SETTLES),
+            to: inv.id.clone(),
+            evidence_ref: Some(evd.id.clone()),
+            attestation_ref: None,
+        },
+        &lim,
+    )
+    .unwrap();
+    let mut b = ProofBuilder::new(proposition(), 1_700_000_200);
+    b.add_event(pay);
+    b.add_event(inv);
+    b.add_attestation(att);
+    b.add_evidence(evd);
+    b.add_relationship(edge);
+    let built = b.build(&lim).unwrap();
+    let r = verify_proof(&built.canonical, &ctx()).unwrap();
+    assert_eq!(r.cryptographic_validity, Validity::Valid);
+    assert_eq!(r.evidence_validity, Validity::Valid);
+    assert!(r
+        .checks
+        .iter()
+        .any(|c| c.ok && c.stage == "EVIDENCE" && c.message.contains("semantic binding holds")));
+}
+
+#[test]
+fn evidence_digest_mismatch_fails_closed() {
+    // Fix 5: attested digest that does not match the bound evidence digest
+    // fails EVIDENCE with ID_MISMATCH (semantic forgery caught).
+    let lim = Limits::default();
+    let key = fixtures::test_key();
+    let pay = event(EventType::new(EventType::PAYMENT_CREATED), "payment:p9");
+    let inv = event(EventType::new(EventType::INVOICE_ISSUED), "invoice:i9");
+    let evd = make_evidence(
+        EvidenceKind::new(EvidenceKind::TRANSACTION_RECORD),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xEEu8; 32]).unwrap(),
+        None,
+        None,
+        &lim,
+    )
+    .unwrap();
+    let mut content = fixtures::fixed_attestation_content(&key.key_ref(), &pay.id);
+    content.evidence_ref = Some(evd.id.clone());
+    content.claim.fields.push((
+        "evidence_digest".into(),
+        MetaValue::Text(hex::encode([0xFFu8; 32])),
+    ));
+    let att = attest(content, &key, &lim).unwrap();
+    let edge = make_relationship(
+        Relationship {
+            v: 1,
+            from: pay.id.clone(),
+            rel_type: RelType::new(RelType::SETTLES),
+            to: inv.id.clone(),
+            evidence_ref: Some(evd.id.clone()),
+            attestation_ref: None,
+        },
+        &lim,
+    )
+    .unwrap();
+    let mut b = ProofBuilder::new(proposition(), 1_700_000_200);
+    b.add_event(pay);
+    b.add_event(inv);
+    b.add_attestation(att);
+    b.add_evidence(evd);
+    b.add_relationship(edge);
+    let built = b.build(&lim).unwrap();
+    let r = verify_proof(&built.canonical, &ctx()).unwrap();
+    assert_eq!(r.evidence_validity, Validity::Invalid);
+    assert!(r
+        .checks
+        .iter()
+        .any(|c| !c.ok && c.stage == "EVIDENCE" && c.code == Some(ErrorCode::IdMismatch)));
+}
+
+#[test]
+fn evidence_digest_non_text_fails_closed() {
+    // Non-text evidence_digest (uint/bool) cannot encode hex: fail closed,
+    // never silently bypass binding.
+    let lim = Limits::default();
+    let key = fixtures::test_key();
+    let pay = event(EventType::new(EventType::PAYMENT_CREATED), "payment:p9");
+    let inv = event(EventType::new(EventType::INVOICE_ISSUED), "invoice:i9");
+    let evd = make_evidence(
+        EvidenceKind::new(EvidenceKind::TRANSACTION_RECORD),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xEEu8; 32]).unwrap(),
+        None,
+        None,
+        &lim,
+    )
+    .unwrap();
+    let mut content = fixtures::fixed_attestation_content(&key.key_ref(), &pay.id);
+    content.evidence_ref = Some(evd.id.clone());
+    content
+        .claim
+        .fields
+        .push(("evidence_digest".into(), MetaValue::Uint(123)));
+    let att = attest(content, &key, &lim).unwrap();
+    let edge = make_relationship(
+        Relationship {
+            v: 1,
+            from: pay.id.clone(),
+            rel_type: RelType::new(RelType::SETTLES),
+            to: inv.id.clone(),
+            evidence_ref: Some(evd.id.clone()),
+            attestation_ref: None,
+        },
+        &lim,
+    )
+    .unwrap();
+    let mut b = ProofBuilder::new(proposition(), 1_700_000_200);
+    b.add_event(pay);
+    b.add_event(inv);
+    b.add_attestation(att);
+    b.add_evidence(evd);
+    b.add_relationship(edge);
+    let built = b.build(&lim).unwrap();
+    let r = verify_proof(&built.canonical, &ctx()).unwrap();
+    assert_eq!(r.evidence_validity, Validity::Invalid);
+    assert!(r
+        .checks
+        .iter()
+        .any(|c| !c.ok && c.stage == "EVIDENCE" && c.code == Some(ErrorCode::SchemaViolation)));
+}
+
+#[test]
+fn derivation_cycle_fails_by_default() {
+    // Fix 2: PRODUCED A->B->A fails GRAPH closed even without opt-in;
+    // REFERENCES A->B->A stays linkage-valid.
+    let lim = Limits::default();
+    let key = fixtures::test_key();
+    let a = event(EventType::new("t.a"), "item:a");
+    let b = event(EventType::new("t.b"), "item:b");
+    let att = attest(
+        fixtures::fixed_attestation_content(&key.key_ref(), &a.id),
+        &key,
+        &lim,
+    )
+    .unwrap();
+    let evd = make_evidence(
+        EvidenceKind::new("production_record"),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap(),
+        Some(att.id.clone()),
+        None,
+        &lim,
+    )
+    .unwrap();
+    let mk = |from: &str, to: &str, t: &str| {
+        make_relationship(
+            Relationship {
+                v: 1,
+                from: from.into(),
+                rel_type: RelType::new(t),
+                to: to.into(),
+                evidence_ref: Some(evd.id.clone()),
+                attestation_ref: Some(att.id.clone()),
+            },
+            &lim,
+        )
+        .unwrap()
+    };
+    // Derivation cycle.
+    let mut bld = ProofBuilder::new(proposition(), 1_700_000_200);
+    bld.add_event(a.clone());
+    bld.add_event(b.clone());
+    bld.add_attestation(att.clone());
+    bld.add_evidence(evd.clone());
+    bld.add_relationship(mk(&a.id, &b.id, RelType::PRODUCED));
+    bld.add_relationship(mk(&b.id, &a.id, RelType::PRODUCED));
+    let built = bld.build(&lim).unwrap();
+    let r = verify_proof(&built.canonical, &ctx()).unwrap();
+    assert_eq!(r.evidence_validity, Validity::Invalid);
+    assert!(r
+        .checks
+        .iter()
+        .any(|c| !c.ok && c.stage == "GRAPH" && c.code == Some(ErrorCode::CycleDetected)));
+    // REFERENCES cycle on same nodes stays valid by default.
+    let mk_ref = |from: &str, to: &str| {
+        make_relationship(
+            Relationship {
+                v: 1,
+                from: from.into(),
+                rel_type: RelType::new(RelType::REFERENCES),
+                to: to.into(),
+                evidence_ref: None,
+                attestation_ref: None,
+            },
+            &lim,
+        )
+        .unwrap()
+    };
+    let mut bld2 = ProofBuilder::new(proposition(), 1_700_000_200);
+    bld2.add_event(a);
+    bld2.add_event(b);
+    bld2.add_attestation(att);
+    bld2.add_evidence(evd);
+    // Need ids again for edges: read back from builder? Re-derive via fresh
+    // events is simpler — rebuild ids from known members.
+    // (a/b ids are still available via the built proof members below is
+    // overkill; instead construct a second minimal REFERENCES-only proof.)
+    let a2 = event(EventType::new("t.a2"), "item:a2");
+    let b2 = event(EventType::new("t.b2"), "item:b2");
+    let a2id = a2.id.clone();
+    let b2id = b2.id.clone();
+    let mut bld3 = ProofBuilder::new(proposition(), 1_700_000_200);
+    // Reuse key/attestation pattern for a self-contained proof.
+    let key2 = fixtures::test_key();
+    let att2 = attest(
+        fixtures::fixed_attestation_content(&key2.key_ref(), &a2id),
+        &key2,
+        &lim,
+    )
+    .unwrap();
+    let evd2 = make_evidence(
+        EvidenceKind::new("production_record"),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap(),
+        Some(att2.id.clone()),
+        None,
+        &lim,
+    )
+    .unwrap();
+    bld3.add_event(a2);
+    bld3.add_event(b2);
+    bld3.add_attestation(att2);
+    bld3.add_evidence(evd2);
+    bld3.add_relationship(mk_ref(&a2id, &b2id));
+    bld3.add_relationship(mk_ref(&b2id, &a2id));
+    let built_ref = bld3.build(&lim).unwrap();
+    let r_ref = verify_proof(&built_ref.canonical, &ctx()).unwrap();
+    assert_eq!(r_ref.evidence_validity, Validity::Valid);
+    let _ = bld2;
+}
+
+#[test]
+fn custom_edge_cycle_fails_as_derivation_by_default() {
+    // Linkage rule pin: every edge type except REFERENCES/EQUIVALENT is
+    // derivation. A custom-domain cycle (e.g. ACME_APPROVES A->B->A) fails
+    // GRAPH closed; only REFERENCES/EQUIVALENT ride as linkage.
+    let lim = Limits::default();
+    let key = fixtures::test_key();
+    let a = event(EventType::new("t.a"), "item:ca");
+    let b = event(EventType::new("t.b"), "item:cb");
+    let att = attest(
+        fixtures::fixed_attestation_content(&key.key_ref(), &a.id),
+        &key,
+        &lim,
+    )
+    .unwrap();
+    let evd = make_evidence(
+        EvidenceKind::new("production_record"),
+        HashRef::new(HashAlgorithm::Sha256, vec![0xABu8; 32]).unwrap(),
+        Some(att.id.clone()),
+        None,
+        &lim,
+    )
+    .unwrap();
+    let mk = |from: &str, to: &str| {
+        make_relationship(
+            Relationship {
+                v: 1,
+                from: from.into(),
+                rel_type: RelType::new("ACME_APPROVES"),
+                to: to.into(),
+                evidence_ref: None,
+                attestation_ref: None,
+            },
+            &lim,
+        )
+        .unwrap()
+    };
+    let mut bld = ProofBuilder::new(proposition(), 1_700_000_200);
+    bld.add_event(a.clone());
+    bld.add_event(b.clone());
+    bld.add_attestation(att);
+    bld.add_evidence(evd);
+    bld.add_relationship(mk(&a.id, &b.id));
+    bld.add_relationship(mk(&b.id, &a.id));
+    let built = bld.build(&lim).unwrap();
+    let r = verify_proof(&built.canonical, &ctx()).unwrap();
+    assert_eq!(r.evidence_validity, Validity::Invalid);
+    assert!(r
+        .checks
+        .iter()
+        .any(|c| !c.ok && c.stage == "GRAPH" && c.code == Some(ErrorCode::CycleDetected)));
 }

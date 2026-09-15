@@ -69,6 +69,19 @@ fn list(cli: &Cli, name: &str) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// Optional comma/colon-separated list flag → owned strings.
+/// Unlike [`list`], a missing flag means "no members" (no error): `build`
+/// accepts omitted `--evidence` / `--relationships` exactly like an explicit
+/// `--evidence ""`. Events, attestations, and `--proofs` stay required via
+/// [`list`] so a forgotten input file still fails fast instead of silently
+/// building an empty proof.
+fn opt_list(cli: &Cli, name: &str) -> Result<Vec<String>, String> {
+    if cli.many(name).is_empty() {
+        return Ok(vec![]);
+    }
+    list(cli, name)
+}
+
 fn req_str(v: &serde_json::Value, file: &str, key: &str) -> Result<String, String> {
     v.get(key)
         .and_then(|x| x.as_str())
@@ -141,13 +154,59 @@ pub fn write_event(cli: &Cli) -> Result<String, String> {
 /// `attest`: bind issuer to the signing key, sign, write attestation artifact.
 pub fn write_attestation(cli: &Cli) -> Result<String, String> {
     let key = crate::load_key_opt(cli)?;
+    if let Some(r) = cli.opt("evidence-ref") {
+        if !r.starts_with("evd:v1:") {
+            return Err(format!(
+                "`--evidence-ref {r}` must start with evd:v1: (typed reference; wrong-typed ids fail closed)"
+            ));
+        }
+    }
+    let fields = crate::parse_fields(cli.opt("claim"))?;
+    // Fail-fast for opt-in semantic binding (Fix 5): a malformed
+    // `evidence_digest` claim field or a digest without `--evidence-ref`
+    // is guaranteed to fail later at verify with EVIDENCE
+    // (SCHEMA_VIOLATION/DANGLING_REFERENCE) — catch the typo now with the
+    // slot named. Non-text values cannot encode hex by construction
+    // (parse_fields types bare numbers/bools), so reject those here too.
+    for (k, v) in &fields {
+        if k == "evidence_digest" {
+            match v {
+                proof_core::model::MetaValue::Text(s) => {
+                    let norm = s
+                        .strip_prefix("0x")
+                        .or_else(|| s.strip_prefix("0X"))
+                        .unwrap_or(s)
+                        .to_lowercase();
+                    if !((norm.len() == 64 || norm.len() == 96)
+                        && norm.bytes().all(|b| b.is_ascii_hexdigit()))
+                    {
+                        return Err(format!(
+                            "`--claim evidence_digest={s}` must be 64 (sha-256) or 96 (sha-384) hex chars (optional 0x); mismatched/malformed digests fail EVIDENCE closed at verify"
+                        ));
+                    }
+                    if cli.opt("evidence-ref").is_none() {
+                        return Err(
+                            "`--claim evidence_digest=…` requires `--evidence-ref <evd:v1:…>` to bind it to (digest without a bound evidence fails EVIDENCE closed at verify)"
+                                .to_string(),
+                        );
+                    }
+                }
+                _ => {
+                    return Err(
+                        "`--claim evidence_digest=…` must be text hex (numbers/bools cannot encode a digest; non-text fails EVIDENCE closed at verify)"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
     let content = AttestationContent {
         v: 1,
         issuer: key.key_ref(),
         subject: cli.req("subject")?,
         claim: proof_core::model::Claim {
             claim_type: cli.req("claim-type")?,
-            fields: crate::parse_fields(cli.opt("claim"))?,
+            fields,
         },
         issued_at: cli.req_u64("issued-at")?,
         expires_at: cli.opt_u64("expires-at")?,
@@ -179,15 +238,39 @@ pub fn write_attestation(cli: &Cli) -> Result<String, String> {
             created.id
         );
         eprintln!(
-            "  next: proof-cli init-policy --attestation {out} --out policy.json  (no manual issuer plumbing)"
+            "  next: proof-cli init-policy --attestation {out} --proof proof.json --out policy.json  (after build; kinds inferred)"
         );
     }
     Ok(created.id)
 }
 
 /// `add-evidence`: evidence is id-bound only (no signature of its own).
+/// DX: `--digest-hex <64|96 hex>` OR `--digest-file <path|->` (file bytes are
+/// hashed with SHA-256; mirrors `create-event --payload-file`, no manual
+/// hashlib plumbing). `--digest-file -` reads stdin.
 pub fn write_evidence(cli: &Cli) -> Result<String, String> {
-    let digest = hash_ref_from_hex(&cli.req("digest-hex")?)?;
+    let digest = if let Some(path) = cli.opt("digest-file") {
+        let bytes =
+            crate::read_input_bytes(&path).map_err(|e| format!("add-evidence digest-file: {e}"))?;
+        // SHA-256 over file bytes; SHA-384 via --digest-hex for the 48B case.
+        let d = {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(&bytes).to_vec()
+        };
+        proof_core::HashRef::new(proof_core::HashAlgorithm::Sha256, d).map_err(|e| e.to_string())?
+    } else {
+        hash_ref_from_hex(&cli.req("digest-hex").map_err(|_| {
+            "missing required flag --digest-hex (or --digest-file <path> to hash a file)"
+                .to_string()
+        })?)?
+    };
+    if let Some(r) = cli.opt("attestation-ref") {
+        if !r.starts_with("att:v1:") {
+            return Err(format!(
+                "`--attestation-ref {r}` must start with att:v1: (typed reference; wrong-typed ids fail closed)"
+            ));
+        }
+    }
     let created = proof_crypto::build::make_evidence(
         proof_core::model::EvidenceKind::new(cli.req("kind")?),
         digest,
@@ -215,17 +298,18 @@ pub fn write_evidence(cli: &Cli) -> Result<String, String> {
     Ok(created.id)
 }
 
-/// `relate`: bind a relationship edge to its id (grounding is checked later,
-/// at proof build time, by proof-graph).
-/// Endpoints (and refs) must be full artifact ids (`evt:…`, `att:…`,
-/// `evd:…`) that will be members of the proof — NOT bare labels like
-/// `invoice:i9`. Bare labels always fail later at `verify` with
-/// DANGLING_REFERENCE, so fail fast here with a hint.
+/// `relate`: bind a relationship edge to its id.
+/// Fix 8: trust-relevant edges fail fast here when ungrounded (previously
+/// they built successfully and only failed later at `verify` with
+/// RELATIONSHIP_UNGROUNDED). Endpoints must be full artifact ids; grounding
+/// (--evidence-ref and/or --attestation-ref) is required now for
+/// OWNS/CREATED/SETTLES/EXECUTED/EQUIVALENT/CONTRADICTS. Non-trust types
+/// (REFERENCES/CONTAINS/ISSUED/PRODUCED/...) may stay bare as linkage.
+/// Use --allow-ungrounded to intentionally create a negative-test vector
+/// (verify will still fail closed).
 /// Exception (V1.1 F3 fix): `EQUIVALENT` endpoints may name external identity
 /// refs (e.g. `did:org:acme`) as asserted — the backing attestation (required
 /// grounding) is where trust lives, mirroring `proof-graph` semantics.
-/// Shaped ids (`xxx:vN:…`) must still resolve; only free strings ride as
-/// asserted.
 pub fn write_relationship(cli: &Cli) -> Result<String, String> {
     let rel_type = cli.req("type")?;
     let is_equivalent = rel_type == proof_core::model::RelType::EQUIVALENT;
@@ -258,6 +342,18 @@ pub fn write_relationship(cli: &Cli) -> Result<String, String> {
                     "`--{flag} {v}` is not an artifact id (want `evd:…` / `att:…`); use the id from the artifact file"
                 ));
             }
+            // F4/F5: typed refs fail fast (schema would reject later with the
+            // same message, but creation-time guidance names the slot).
+            let want = if flag == "evidence-ref" {
+                "evd:v1:"
+            } else {
+                "att:v1:"
+            };
+            if !v.starts_with(want) {
+                return Err(format!(
+                    "`--{flag} {v}` must start with {want} (typed reference; wrong-typed ids fail closed)"
+                ));
+            }
         }
     }
     let content = Relationship {
@@ -268,6 +364,21 @@ pub fn write_relationship(cli: &Cli) -> Result<String, String> {
         evidence_ref: cli.opt("evidence-ref"),
         attestation_ref: cli.opt("attestation-ref"),
     };
+    // Fix 8: fail fast on ungrounded trust-relevant edges (verify would fail
+    // closed later with RELATIONSHIP_UNGROUNDED; creating them is almost
+    // always a CLI plumbing mistake). --allow-ungrounded keeps the old
+    // verify-time failure for negative tests.
+    if !cli.has("allow-ungrounded")
+        && content.rel_type.requires_grounding()
+        && content.evidence_ref.is_none()
+        && content.attestation_ref.is_none()
+    {
+        return Err(format!(
+            "`--type {}` is trust-relevant and requires grounding (--evidence-ref <evd:v1:…> and/or --attestation-ref <att:v1:…>); bare {} edges always fail at verify with RELATIONSHIP_UNGROUNDED — add backing or pass --allow-ungrounded for an intentional negative-test vector",
+            content.rel_type.as_str(),
+            content.rel_type.as_str()
+        ));
+    }
     let created = proof_crypto::build::make_relationship(content, &crate::limits())
         .map_err(|e| format!("relate: {e}"))?;
     let out = cli.req("out")?;
@@ -319,13 +430,19 @@ pub fn write_status_object(cli: &Cli, kind: &str) -> Result<String, String> {
             &crate::limits(),
         )
     } else {
-        proof_crypto::build::supersede_attestation(
-            &cli.req("old")?,
-            &cli.req("new")?,
-            &key,
-            at,
-            &crate::limits(),
-        )
+        // Accepts --old/--new; --target/--successor are aliases (external
+        // review: revoke uses --target, so supersede accepts it too).
+        let old = cli
+            .opt("old")
+            .or_else(|| cli.opt("target"))
+            .ok_or_else(|| "supersede: missing required flag --old (alias --target)".to_string())?;
+        let new = cli
+            .opt("new")
+            .or_else(|| cli.opt("successor"))
+            .ok_or_else(|| {
+                "supersede: missing required flag --new (alias --successor)".to_string()
+            })?;
+        proof_crypto::build::supersede_attestation(&old, &new, &key, at, &crate::limits())
     }
     .map_err(|e| format!("{kind}: {e}"))?;
     let out = cli.req("out")?;
@@ -551,7 +668,12 @@ pub fn load_status(
     )
     .map_err(|e: ProofError| format!("{path}: {e}"))?;
     if !quiet {
-        eprintln!("loaded status {} ({path})", content.subject);
+        // subject is attacker-controlled text; sanitize before the terminal
+        // (external-review unsafe-logging finding).
+        eprintln!(
+            "loaded status {} ({path})",
+            crate::sanitize(&content.subject)
+        );
     }
     Ok(proof_crypto::SignedStatus { content, sign1 })
 }
@@ -559,4 +681,11 @@ pub fn load_status(
 /// Comma/colon list helper for `build` inputs.
 pub fn input_list(cli: &Cli, name: &str) -> Result<Vec<String>, String> {
     list(cli, name)
+}
+
+/// Optional list helper for `build --evidence` / `--relationships`.
+/// Omitted flags mean zero members (no `--evidence ""` incantation needed;
+/// the explicit empty string keeps working for scripts that already use it).
+pub fn opt_input_list(cli: &Cli, name: &str) -> Result<Vec<String>, String> {
+    opt_list(cli, name)
 }

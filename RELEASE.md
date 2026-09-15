@@ -9,6 +9,13 @@ No release cut yet. When V1 is ready, this file gates the cut.
 - [ ] `make demo` reproduces `demo/out/` byte-for-byte.
 - [ ] `make trace`, `make neutrality`, `make web-check`, `make cddl-validate` green.
 - [ ] `make domain-tests` green.
+- [ ] `make interop` (Python + TypeScript differentials) and `make conformance`
+  (full-verdict golden replay, 22+ checks) green — no release ships without
+  independent-verifier and verdict-agreement evidence.
+- [ ] `make freeze-guard` green (covers tracked AND untracked frozen-path
+  files); every CORE-class change since the pin names its
+  `docs/ARCHITECTURE-CHANGE-PROPOSAL-*.md` decision in
+  `docs/freeze-manifest.json`.
 - [ ] Record the release commit, `Cargo.lock` hash, and test counts in the
   release notes; tag the commit.
 

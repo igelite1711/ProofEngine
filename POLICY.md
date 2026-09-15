@@ -32,7 +32,7 @@ versions are rejected with `POLICY_INVALID` before any evaluation. The
 | `issuer_excluded` | `issuer` | no signature-verified attestation by this issuer exists in the proof (deny-list screening) |
 | `relationship_exists` | `relationship` | a validated edge of that type exists in the proof graph |
 | `not_expired` | — | every signature-verified attestation satisfies issued/expires vs. the verifier clock (± skew leeway); attestations without `expires_at` impose no expiry |
-| `not_revoked` | — | no signature-verified attestation id appears in the caller-supplied revocation set |
+| `not_revoked` | — | no signature-verified attestation id appears in the caller-supplied denylist (`--revoked` / `RevocationSet`). Unsigned local blocklist only — it does NOT read the signed lifecycle feed (`--status` REVOKED/COMPROMISED, which flip `evidence_validity` in the pipeline and make policy INDETERMINATE). Use both: signed feed for authenticated lifecycle, denylist for operator/sanctions overrides |
 | `not_superseded` | — | no signature-verified attestation in this proof is SUPERSEDED by a valid signed supersession. Without this requirement a superseded (stale but historical) attestation still satisfies the other requirements — PASS then means "valid", not "current" |
 | `evidence_present` | `kind` | evidence of that kind is present (digest-bound) |
 | `transparency_present` | — | a `transparency_receipt` evidence item is present |
@@ -58,6 +58,14 @@ change.
 - **INDETERMINATE** — the proof itself is not valid (crypto or evidence), or
   the report and proof do not belong together. The policy was not evaluated;
   its requirements were neither satisfied nor refuted.
+
+Currency overlay (CLI `--strict-current`/`--production`): `evaluate` fails
+closed (exit 1) when the pipeline is VALID-but-not-current (SUPERSEDED
+history or unverified provenance hints), even when the policy itself would
+pass. Policy decides trust; currency decides whether "valid" means
+"acceptable now". Without the overlay, PASS means "valid" (use
+`not_superseded` / v2 `evidence_usable` / `no_conflicting_evidence` for
+currency inside policy); with it, PASS means "valid and current".
 
 Embed status attestations (revoke/supersede/withdraw/compromise) can never
 satisfy `issuer_trusted` and never contribute validity intervals: a status
@@ -94,7 +102,8 @@ different decisions — that is the point of separating evidence from policy.
 `results[{requirement, passed, message}]`) to stdout,
 together with the pipeline `report` JSON — one flat, script-parsable document.
 Exit codes are unchanged by `--json`. Plain prose stays the default;
-`explain` never mixes JSON with prose (PE-CLI-006).
+`explain --json` adds the human explanation as an `explanation` string field
+instead of printing prose (PE-CLI-006).
 
 ## V1 boundary and the extension story (current contract — in development)
 
@@ -157,8 +166,10 @@ Adjudication leaves (v2-only; rejected under v1):
 | `no_conflicting_evidence` | — | no conflict groups recorded |
 | `vocabulary_accepted` | `ns`, `max_version` | every declaration of `ns` has version ≤ max AND `ns` is not used-while-undeclared-or-over-max (unused passes vacuously) |
 | `evidence_usable` | `kind` | some evidence of kind has status AVAILABLE (strict counterpart to `evidence_present`) |
+| `evidence_bound` | `kind` | some AVAILABLE evidence of kind is cryptographically bound: named by a verified ACTIVE attestation's `evidence_ref` whose claim `evidence_digest` equals the evidence digest (lets policy *require* the opt-in binding; unbound-but-usable evidence fails this leaf) |
 | `requires_reference` | `id` (`prf:v1:`, shape-checked at parse) | the direct composition linkage names `id` (what `proof_id` binds; transitive closure is the bundle layer) |
 | `forbids_reference` | `id` (`prf:v1:`, shape-checked at parse) | the direct composition linkage omits `id` |
+| `claim_field` | `field`, `op` (`eq/ne/gt/gte/lt/lte`), `value` (text/uint/bool), optional `claim_type`, `subject` | some lifecycle-ACTIVE verified claim in scope carries `field` satisfying `op` vs `value`. Type-strict: uint allows all six ops; text/bool allow `eq`/`ne` only (byte equality, no normalization). Missing field, type mismatch, or no in-scope ACTIVE claim → FAIL. Revoked/expired/superseded/compromised claims never satisfy. `field:"type"` rejected (use `claim_type`). Example: `{"type":"claim_field","claim_type":"payment.settled","field":"amount","op":"gte","value":100}` |
 
 INDETERMINATE stays reserved for unevaluated policy (broken proof
 preconditions), exactly like v1 — leaves evaluate boolean once the guard

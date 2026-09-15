@@ -90,6 +90,11 @@ pub fn validate_graph(
 /// REFERENCES cycles remain linkage-valid unless the caller asks for DAG.
 /// Runs after `validate_graph_with_grounding` succeeds; fails closed with
 /// `CYCLE_DETECTED` on any directed cycle.
+/// Fix 2 (fail-closed derivation): derivation cycles ALWAYS fail, even
+/// without the opt-in profile. `check_derivation_acyclic` (below) excludes
+/// REFERENCES (linkage/citations) and EQUIVALENT (identity assertions);
+/// every other edge type is derivation and must be acyclic. The opt-in
+/// profile additionally rejects REFERENCES cycles for full-DAG assurance.
 pub fn check_acyclic_provenance(edges: &[EdgeRecord], nodes: &NodeSet) -> Result<(), ProofError> {
     use std::collections::{HashMap, HashSet};
     // Member-only adjacency: EQUIVALENT free refs are not derivation.
@@ -142,6 +147,74 @@ pub fn check_acyclic_provenance(edges: &[EdgeRecord], nodes: &NodeSet) -> Result
                         GRAY => {
                             return Err(ErrorCode::CycleDetected.err(format!(
                                 "cycle detected in provenance graph at {m} (DAG profile)"
+                            )));
+                        }
+                        _ => stack.push((m, false)),
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fix 2: derivation subgraph must ALWAYS be acyclic (fail-closed default).
+/// REFERENCES (linkage/citations/see-also) and EQUIVALENT (identity
+/// assertions) are excluded - they may cycle as linkage. Every other edge
+/// type (PRODUCED/CREATED/EXECUTED/OWNS/SETTLES/ISSUED/CONTAINS/SUPERSEDES/
+/// REVOKES/CONTRADICTS + custom) is derivation and must not cycle: a
+/// supply-chain loop (A produced B produced A) is a forgery signal, not
+/// linkage. Called unconditionally by the pipeline GRAPH stage; the opt-in
+/// `check_acyclic_provenance` additionally rejects REFERENCES cycles.
+pub fn check_derivation_acyclic(edges: &[EdgeRecord], nodes: &NodeSet) -> Result<(), ProofError> {
+    use std::collections::{HashMap, HashSet};
+    let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut all: HashSet<&str> = HashSet::new();
+    for e in edges {
+        let t = e.content.rel_type.as_str();
+        if t == RelType::REFERENCES || t == RelType::EQUIVALENT {
+            continue;
+        }
+        if !nodes.contains(&e.content.from) || !nodes.contains(&e.content.to) {
+            continue;
+        }
+        adj.entry(e.content.from.as_str())
+            .or_default()
+            .push(e.content.to.as_str());
+        all.insert(e.content.from.as_str());
+        all.insert(e.content.to.as_str());
+    }
+    const WHITE: u8 = 0;
+    const GRAY: u8 = 1;
+    const BLACK: u8 = 2;
+    let mut color: HashMap<&str, u8> = all.iter().map(|n| (*n, WHITE)).collect();
+    for start in all.clone() {
+        if color[&start] != WHITE {
+            continue;
+        }
+        let mut stack: Vec<(&str, bool)> = vec![(start, false)];
+        while let Some((n, processed)) = stack.pop() {
+            if processed {
+                color.insert(n, BLACK);
+                continue;
+            }
+            if color[&n] == BLACK {
+                continue;
+            }
+            if color[&n] == GRAY {
+                return Err(ErrorCode::CycleDetected.err(format!(
+                    "cycle detected in derivation graph at {n} (derivation must be acyclic; REFERENCES/EQUIVALENT linkage excluded)"
+                )));
+            }
+            color.insert(n, GRAY);
+            stack.push((n, true));
+            if let Some(nexts) = adj.get(n) {
+                for m in nexts {
+                    match color.get(m).copied().unwrap_or(WHITE) {
+                        BLACK => {}
+                        GRAY => {
+                            return Err(ErrorCode::CycleDetected.err(format!(
+                                "cycle detected in derivation graph at {m} (derivation must be acyclic; REFERENCES/EQUIVALENT linkage excluded)"
                             )));
                         }
                         _ => stack.push((m, false)),
@@ -558,17 +631,56 @@ mod tests {
 
     #[test]
     fn non_supersedes_cycles_allowed() {
-        // REFERENCES cycles are not forbidden by default (only SUPERSEDES
-        // is); the provenance DAG profile (`check_acyclic_provenance`) is
-        // opt-in for derivation chains.
+        // REFERENCES cycles are not forbidden by validate_graph (only
+        // SUPERSEDES is); derivation cycles fail via check_derivation_acyclic
+        // (Fix 2, always enforced), full cycles via check_acyclic_provenance
+        // (opt-in --require-acyclic/--production).
         let n = nodes(&["a", "b"]);
         let edges = vec![
             edge("a", RelType::new(RelType::REFERENCES), "b", false),
             edge("b", RelType::new(RelType::REFERENCES), "a", false),
         ];
         validate_graph(&edges, &n, &lim()).unwrap();
+        // REFERENCES cycles are linkage-valid: derivation check passes.
+        check_derivation_acyclic(&edges, &n).unwrap();
         let err = check_acyclic_provenance(&edges, &n).unwrap_err();
         assert_eq!(err.code, ErrorCode::CycleDetected);
+    }
+
+    #[test]
+    fn derivation_cycles_fail_closed_by_default() {
+        // Fix 2: PRODUCED/CREATED/... cycles fail even without opt-in.
+        for t in [
+            RelType::PRODUCED,
+            RelType::CREATED,
+            RelType::SETTLES,
+            RelType::OWNS,
+            RelType::EXECUTED,
+        ] {
+            let n = nodes(&["a", "b"]);
+            let edges = vec![
+                edge("a", RelType::new(t), "b", true),
+                edge("b", RelType::new(t), "a", true),
+            ];
+            let err = check_derivation_acyclic(&edges, &n).unwrap_err();
+            assert_eq!(err.code, ErrorCode::CycleDetected, "type {t}");
+        }
+        // Linear derivation chain passes.
+        let n = nodes(&["a", "b", "c"]);
+        let chain = vec![
+            edge("a", RelType::new(RelType::PRODUCED), "b", true),
+            edge("b", RelType::new(RelType::PRODUCED), "c", true),
+        ];
+        check_derivation_acyclic(&chain, &n).unwrap();
+        // EQUIVALENT cycles are identity linkage, excluded like REFERENCES.
+        let n = nodes(&["a"]);
+        let equiv = vec![edge(
+            "did:ex:a",
+            RelType::new(RelType::EQUIVALENT),
+            "did:ex:b",
+            true,
+        )];
+        check_derivation_acyclic(&equiv, &n).unwrap();
     }
 
     #[test]

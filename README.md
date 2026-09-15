@@ -22,6 +22,13 @@ It is **not** a payment system, identity system, blockchain, database, or applic
 
 It is a **protocol-level foundation** that applications and industries can build upon.
 
+> **New here? Five minutes:** `make quick-proof` builds a proof and verifies
+> it end-to-end (payment domain). Then read [Quick Start](#quick-start) for
+> the same steps explained, and
+> [`docs/OPERATOR-RUNBOOK.md`](docs/OPERATOR-RUNBOOK.md) before trusting any
+> verdict in production — bare `verify` PASS means *historically valid*;
+> `--production` means *acceptable now*.
+
 ---
 
 ## Contents
@@ -211,13 +218,13 @@ A verifier should be able to take a Proof and determine, according to the applic
 5  SIGNATURES    — Are signatures valid? (COSE_Sign1, alg policy, payload agreement)
 6  KEYS          — Are keys well-formed and bound? (kid shape, alg match, issuer==key)
 7  TIME          — Is it timely? (issued/expires vs verified_at ± skew; 0 clock fails)
-8  REVOCATION    — Are lifecycle rules satisfied? (signed revoke/supersede/withdraw/compromise + authority + freshness; ACTIVE/EXPIRED/REVOKED/SUPERSEDED/COMPROMISED/UNKNOWN)
-9  EVIDENCE      — Is the evidence valid? (digest binding, refs resolve, per-evidence status)
-10 RELATIONSHIPS — Are endpoints grounded? (resolve, trust-relevant need backing)
-11 GRAPH         — Is the graph consistent? (limits, SUPERSEDES linear-acyclic; --require-acyclic for full DAG)
+8  REVOCATION    — Are lifecycle rules satisfied? (signed revoke/supersede/withdraw/compromise + authority + freshness; status issued after clock never applies; ACTIVE/EXPIRED/REVOKED/SUPERSEDED/COMPROMISED/UNKNOWN)
+9  EVIDENCE      — Is the evidence valid? (digest binding, refs resolve, per-evidence status; opt-in claim evidence_digest binding)
+10 RELATIONSHIPS — Are endpoints grounded? (resolve, trust-relevant need backing; ungrounded rejected at relate)
+11 GRAPH         — Is the graph consistent? (limits, SUPERSEDES linear-acyclic, derivation always acyclic; --require-acyclic/--production for full DAG incl. REFERENCES)
 11b STATUS       — Is the caller feed healthy? (malformed/unauthorized/future-dated status; never flips validity; status_inputs_valid)
 12 POLICY        — Does the supplied policy accept it? (caller-evaluated, pipeline reports INDETERMINATE)
-13 FINAL         — Emit triple {cryptographic_validity, evidence_validity, policy_decision} + lifecycle + conflicts + explanation
+13 FINAL         — Emit triple {cryptographic_validity, evidence_validity, policy_decision} + currently_acceptable + lifecycle + conflicts + explanation
 ```
 
 Verification results are explicit.
@@ -631,6 +638,7 @@ No manual digest/issuer plumbing needed anymore:
 - `proof-cli init-policy --attestation att.json --out policy.json` (no python issuer substitution).
 - Every create command prints `next:` hints on stderr.
 Production keys: prefer `--seed-file` over `--seed` (argv is visible).
+Strict verification: `verify/evaluate --production` (implies `--require-acyclic`+`--require-status`+`--strict-current`; bare `VALID` means historically valid — check `currently_acceptable` or use `--production` for verify==acceptable).
 Minimal build (stable core only): `cargo build --locked` (7 crates; perimeter needs `--workspace`).
 Operator checklist: `docs/OPERATOR-RUNBOOK.md` (clocks, freshness, feeds, rotation, replay, provenance, exits).
 Confidentiality scope: `docs/CONFIDENTIALITY.md`.
@@ -656,8 +664,8 @@ Run `make help` to see all available commands.
 
 | Command | What it does |
 |---------|-------------|
-| `proof-cli verify` | Verify a proof (positional path or stdin with `-`; `--strict-current` for verify==acceptable; malformed emits JSON FAIL exit 1) |
-| `proof-cli evaluate` | Verify a proof and evaluate a policy |
+| `proof-cli verify` | Verify a proof (positional path or stdin with `-`; `--production` for verify==acceptable (implies `--require-acyclic`+`--require-status`+`--strict-current`); `--strict-current` for currency only; JSON `currently_acceptable` for automation; malformed emits JSON FAIL exit 1) |
+| `proof-cli evaluate` | Verify a proof and evaluate a policy (prose stdout by default; `--json` merged `{policy_outcome,report}`; `--production`/`--strict-current` overlays currency on policy) |
 | `proof-cli explain` | Explain a verification result (requires `--policy`) |
 | `proof-cli init-policy` | Generate policy from template + issuer (no manual JSON; `--attestation att.json` reads issuer) |
 | `proof-cli inspect` | Inspect a proof or single artifact (read-only, no trust decisions) |
@@ -694,33 +702,35 @@ automatically — `--claim b=1,a=2` and `--claim a=2,b=1` produce identical
 bytes.
 
 **Manual flow** (the same steps `tools/quick_proof.sh` automates — read this
-to understand each artifact; run the script to skip the plumbing):
+to understand each artifact; run the script to skip the plumbing).
+Payloads live in files (`--payload-file` hashes bytes; `--digest-file` does
+the same for evidence) — no hex math, no manual digest plumbing:
 
 ```bash
 # After make install, or use: cargo run -p proof-cli --
-PAYLOAD=$(python3 -c "print('ab'*32)")
+printf 'payment-p1-bytes' > payment.bin
+printf 'invoice-i9-bytes' > invoice.bin
 
 proof-cli create-event --type payment.created --subject payment:p1 \
-    --effective-at 1700000000 --payload-hex $PAYLOAD --out ev1.json
+    --effective-at 1700000000 --payload-file payment.bin --out ev1.json
 # → event evt:v1:… -> ev1.json (use this id below, not the bare label)
 
 proof-cli attest --seed test --subject payment:p1 --claim-type payment.settled \
     --claim amount=4200 --issued-at 1700000150 --out att.json
-# → attest att:v1:… (issuer key:ed25519:…) -> att.json (copy the issuer!)
+# → attest att:v1:… (issuer key:ed25519:…) -> att.json
 
-# Grounding evidence (digest of the payload above) + invoice event, so the
+# Grounding evidence (digest of payment.bin) + invoice event, so the
 # SETTLES edge below resolves to proof members (bare labels never resolve).
-DIGEST=$(python3 -c "import hashlib; print(hashlib.sha256(bytes.fromhex('$PAYLOAD')).hexdigest())")
-ATT=$(python3 -c "import json; print(json.load(open('att.json'))['id'])")
-proof-cli add-evidence --kind transaction_record --digest-hex $DIGEST \
+ATT=$(proof-cli id --artifact att.json)
+proof-cli add-evidence --kind transaction_record --digest-file payment.bin \
     --attestation-ref $ATT --out evd.json
 proof-cli create-event --type invoice.issued --subject invoice:i9 \
-    --effective-at 1700000000 --payload-hex $(python3 -c "print('cd'*32)") --out inv1.json
+    --effective-at 1700000000 --payload-file invoice.bin --out inv1.json
 
 # --from/--to/--object take artifact ids (evt:v1:…), NOT bare labels.
-EVT=$(python3 -c "import json; print(json.load(open('ev1.json'))['id'])")
-INV=$(python3 -c "import json; print(json.load(open('inv1.json'))['id'])")
-EVD=$(python3 -c "import json; print(json.load(open('evd.json'))['id'])")
+EVT=$(proof-cli id --artifact ev1.json)
+INV=$(proof-cli id --artifact inv1.json)
+EVD=$(proof-cli id --artifact evd.json)
 proof-cli relate --from $EVT --type SETTLES --to $INV \
     --evidence-ref $EVD --attestation-ref $ATT --out rel.json
 
@@ -731,16 +741,26 @@ proof-cli build --kind payment.settles-invoice --subject $EVT \
 
 # --revocations-known-at is required for a PASS: without it lifecycle is
 # UNKNOWN and verify fails closed (exit 1) with a hint.
-proof-cli verify --proof proof.json --clock 1700000300 --revocations-known-at 1700000300
+# Genesis step (no revocations exist yet): assert absence explicitly with
+# --no-require-status. Without it the fail-closed default rejects the empty
+# feed (REVOCATION_UNKNOWN) — supply --status feed files in production.
+proof-cli verify --proof proof.json --clock 1700000300 --revocations-known-at 1700000300 --no-require-status
 
-# Policy: copy examples/policies/settlement.json, replace ONLY the suffix
-# after `key:ed25519:` with the issuer from `attest` above (prefix exactly once).
-ISSUER=$(python3 -c "import json; print(json.load(open('att.json'))['issuer'])")
-python3 -c "import json; p=json.load(open('examples/policies/settlement.json')); [r.__setitem__('issuer','$ISSUER') for r in p['requirements'] if r.get('type')=='issuer_trusted']; json.dump(p, open('policy.json','w'), indent=2)"
+# Policy from the attestation + proof (kinds inferred — no manual JSON, no
+# issuer copy-paste; `--template minimal` for a domain-agnostic starter).
+proof-cli init-policy --attestation att.json --proof proof.json --out policy.json
+ISSUER=$(proof-cli id --artifact att.json --field issuer)
 proof-cli evaluate --proof proof.json --policy policy.json --clock 1700000300 \
-    --revocations-known-at 1700000300 --trusted $ISSUER
+    --revocations-known-at 1700000300 --no-require-status --trusted $ISSUER
 proof-cli explain --proof proof.json --policy policy.json --clock 1700000300 \
-    --revocations-known-at 1700000300 --trusted $ISSUER
+    --revocations-known-at 1700000300 --no-require-status --trusted $ISSUER
+
+# Strict mode: --no-require-status PASS means historically valid.
+# High-assurance callers verify WITHOUT it (or with --production) — both
+# fail closed on the empty status feed (supply --status feed files in
+# production; see docs/OPERATOR-RUNBOOK.md).
+proof-cli verify --proof proof.json --clock 1700000300 --revocations-known-at 1700000300
+proof-cli verify --proof proof.json --clock 1700000300 --revocations-known-at 1700000300 --production
 
 # New in V1.1: DX improvements
 proof-cli version                          # Show version information
@@ -769,29 +789,29 @@ proof-verify = "1.0"
 proof-policy = "1.0"
 ```
 
-Then verify a proof in your code:
+Then verify a proof in your code (one call — pipeline and policy can never
+diverge on clock, trust list, or bounds):
 
 ```rust,ignore
-use proof_verify::{verify_proof, VerifyCtx};
-use proof_policy::{evaluate_policy, parse_policy, EvalInputs, state_from_report_and_proof};
+use proof_policy::{verify_and_evaluate, RevocationSet};
+use proof_verify::VerificationContext;
 
-// Step 1: Check the proof (signatures, structure, timing)
-let report = verify_proof(&proof_bytes, &VerifyCtx {
-    verified_at: 1_700_000_300,
-    ..VerifyCtx::default()
-})?;
+let mut ctx = VerificationContext::default();
+ctx.verified_at = 1_700_000_300;                 // 0 fails closed
+ctx.revocations_known_at = Some(1_700_000_300);  // when your feed synced
+ctx.trusted_issuers = vec![issuer_keyref];       // caller-supplied trust
+ctx.require_status_feed = true;                  // production: empty feed fails closed
+ctx.require_acyclic_provenance = true;           // production: full-DAG cycles fail
 
-// Step 2: Apply your rules
-let policy = parse_policy(&your_rules_json, &limits)?;
-let state = state_from_report_and_proof(&report, &proof)?;
-let outcome = evaluate_policy(&state, &policy, &EvalInputs {
-    trusted_issuers: vec![issuer_keyref],
-    ..EvalInputs::default()
-});
-
-// Step 3: Get a clear answer
-println!("{}", proof_policy::explain_full(&report, &outcome));
+let policy = proof_policy::parse_policy(&your_rules_json, &limits)?;
+let d = verify_and_evaluate(&proof_bytes, &ctx, &policy, RevocationSet::empty())?;
+println!("{:?} / {}", d.report.cryptographic_validity, d.outcome.decision.as_str());
 ```
+
+The manual three-step form (`verify_proof` → `state_from_report_and_proof` →
+`evaluate_policy`) exists for callers that verify once and decide many times.
+Full wiring (feeds, rotation, replay, blobs, keys, PII, HTTP, conformance):
+[`docs/INTEGRATION.md`](docs/INTEGRATION.md).
 
 ### Available Crates
 
@@ -807,17 +827,10 @@ println!("{}", proof_policy::explain_full(&report, &outcome));
 
 ### Creating a Proof
 
-Newcomers: run `make quick-proof` (verify + evaluate + explain in one
-command; `tools/quick_proof.sh --keep` to keep the artifacts). The manual
-equivalent is the annotated flow under [Quick Start](#quick-start) — start
-there; the commands below assume you already walked it once.
-
-```bash
-# After the Quick Start flow: inspect, visualize, and stream.
-proof-cli inspect --proof proof.json       # read-only, no trust decisions
-proof-cli graph --proof proof.json         # text diagram of relationships
-proof-cli verify --proof proof.json --clock 1700000300 --revocations-known-at 1700000300
-```
+Newcomers: run `make quick-proof`, then walk the annotated flow under
+[Quick Start](#quick-start) once. After that: `inspect` (read-only),
+`graph` (visualize), `id` (shell plumbing for ids/issuers) — all under
+`proof-cli help`.
 
 ---
 

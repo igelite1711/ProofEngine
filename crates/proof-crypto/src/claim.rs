@@ -19,6 +19,14 @@
 //! - `identity.bind`: `{ "type": "identity.bind", "equivalent": <text> }`,
 //!   subject = canonical identity. Asserts subject ≡ equivalent *as far as
 //!   this issuer is concerned*; honored only from trusted asserters.
+//! - `evidence_digest`: reserved claim FIELD (not type) for opt-in semantic
+//!   binding (Fix 5). When a statement claim carries
+//!   `evidence_digest: <64|96 hex>` alongside the attestation's `evidence_ref`,
+//!   the pipeline verifies the hex equals the bound evidence digest;
+//!   mismatch/missing-ref/malformed-hex fails EVIDENCE closed
+//!   (`ID_MISMATCH`/`DANGLING_REFERENCE`/`SCHEMA_VIOLATION`). Absent field =
+//!   no check (backward compatible). Use to cryptographically tie an attested
+//!   value (e.g. `value=23`) to the dataset digest supporting it.
 //! - `transparency.checkpoint`: `{ "type": "transparency.checkpoint",
 //!   "log": <text>, "sequence": <uint>?, ... }`, issuer = log identity.
 //! - `denies`: any statement claim may carry a `denies: <attestation-id>`
@@ -55,6 +63,53 @@ pub const CLAIM_IDENTITY_BIND: &str = "identity.bind";
 pub const CLAIM_TRANSPARENCY_CHECKPOINT: &str = "transparency.checkpoint";
 /// Reserved claim field asserting opposition to an attestation id.
 pub const CLAIM_FIELD_DENIES: &str = "denies";
+/// Reserved claim field for opt-in semantic binding: when a statement claim
+/// carries `evidence_digest` (hex) alongside the attestation's `evidence_ref`,
+/// verifiers check the hex equals the bound evidence digest (EVIDENCE stage,
+/// fail-closed). Absent field = no check (backward compatible).
+pub const CLAIM_FIELD_EVIDENCE_DIGEST: &str = "evidence_digest";
+
+/// Why an asserted `evidence_digest` field is unusable (never silently
+/// ignored — present-but-malformed fails closed at EVIDENCE).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DigestClaimError {
+    /// Field value is not text (numbers/bools cannot encode hex).
+    NonText,
+    /// Text value is not 64 (sha-256) or 96 (sha-384) hex chars.
+    Malformed { len: usize },
+}
+
+/// Normalized `evidence_digest` hex from a claim, if asserted.
+/// `None` = absent (no binding asserted). `Some(Ok)` = well-formed lowercase
+/// hex (`0x`-prefixed spellings accepted, like everywhere digests are read).
+/// `Some(Err)` = present but unusable — fail closed, never skip.
+/// Single home for the normalization so the pipeline EVIDENCE stage and the
+/// policy-state projection cannot drift apart.
+pub fn evidence_digest_hex(claim: &Claim) -> Option<Result<String, DigestClaimError>> {
+    for (k, v) in &claim.fields {
+        if k != CLAIM_FIELD_EVIDENCE_DIGEST {
+            continue;
+        }
+        let s = match v {
+            MetaValue::Text(s) => s,
+            _ => return Some(Err(DigestClaimError::NonText)),
+        };
+        let normalized = s
+            .strip_prefix("0x")
+            .or_else(|| s.strip_prefix("0X"))
+            .unwrap_or(s)
+            .to_lowercase();
+        if !((normalized.len() == 64 || normalized.len() == 96)
+            && normalized.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
+            return Some(Err(DigestClaimError::Malformed {
+                len: normalized.len(),
+            }));
+        }
+        return Some(Ok(normalized));
+    }
+    None
+}
 
 impl ClaimKind {
     /// True for claims consumed by lifecycle stages (never an issuer statement).
@@ -94,7 +149,9 @@ fn claim_text<'a>(claim: &'a Claim, key: &str) -> Option<&'a str> {
 }
 
 /// Extract the target id of a revoke claim. Fails if the claim is not a
-/// revoke or lacks a non-empty text `target`.
+/// revoke or lacks a non-empty text `target`. Target must be an attestation
+/// id (`att:v1:`) — revocation ends currency of attestations (F10: shape
+/// validated here so garbage targets fail closed at STATUS, not silently).
 pub fn revocation_target(content: &AttestationContent) -> Result<&str, ProofError> {
     if claim_kind(content) != ClaimKind::Revoke {
         return Err(ErrorCode::SchemaViolation.err("revoke claim expected (claim.type=\"revoke\")"));
@@ -104,11 +161,17 @@ pub fn revocation_target(content: &AttestationContent) -> Result<&str, ProofErro
     if t.is_empty() {
         return Err(ErrorCode::SchemaViolation.err("revoke claim target must not be empty"));
     }
+    if !t.starts_with("att:v1:") {
+        return Err(
+            ErrorCode::SchemaViolation.err(format!("revoke target {t} must start with att:v1:"))
+        );
+    }
     Ok(t)
 }
 
 /// Extract the target id of a withdraw claim (any artifact id: evidence,
-/// attestation, event, or relationship).
+/// attestation, event, or relationship). Must be a shaped artifact id
+/// (`evt:/att:/evd:/rel:/prf:` with version) — bare labels fail closed.
 pub fn withdrawal_target(content: &AttestationContent) -> Result<&str, ProofError> {
     if claim_kind(content) != ClaimKind::Withdraw {
         return Err(
@@ -120,6 +183,16 @@ pub fn withdrawal_target(content: &AttestationContent) -> Result<&str, ProofErro
     })?;
     if t.is_empty() {
         return Err(ErrorCode::SchemaViolation.err("withdraw claim target must not be empty"));
+    }
+    let shaped = t.starts_with("evt:v")
+        || t.starts_with("att:v")
+        || t.starts_with("evd:v")
+        || t.starts_with("rel:v")
+        || t.starts_with("prf:v");
+    if !shaped || !t.contains(':') {
+        return Err(ErrorCode::SchemaViolation.err(format!(
+            "withdraw target {t} must be a shaped artifact id (evt:/att:/evd:/rel:/prf:)"
+        )));
     }
     Ok(t)
 }
@@ -139,6 +212,19 @@ pub fn compromise_mark(content: &AttestationContent) -> Result<(&str, u64), Proo
     })?;
     if target.is_empty() {
         return Err(ErrorCode::SchemaViolation.err("compromise claim target must not be empty"));
+    }
+    // Target is an identity: a keyref (`key:ed25519:/key:p256:`) or an
+    // attestation/artifact id under compromise. Bare labels fail closed.
+    let ok = target.starts_with("key:")
+        || target.starts_with("att:v")
+        || target.starts_with("evt:v")
+        || target.starts_with("evd:v")
+        || target.starts_with("rel:v")
+        || target.starts_with("did:");
+    if !ok {
+        return Err(ErrorCode::SchemaViolation.err(format!(
+            "compromise target {target} must be a keyref or shaped id"
+        )));
     }
     let at_time = content
         .claim
@@ -165,7 +251,11 @@ pub fn denial_target(content: &AttestationContent) -> Option<&str> {
     claim_text(&content.claim, CLAIM_FIELD_DENIES)
 }
 
-/// Extract the (old, new) id pair of a supersede claim.
+/// Extract the (old, new) id pair of a supersede claim. Both must be
+/// attestation ids (`att:v1:`); garbage `new` values fail closed here (F10)
+/// instead of silently marking `old` historical with misleading lineage.
+/// Existence of `new` is NOT required (it may live outside this proof) —
+/// shape is authenticated, content resolution is the bundle layer's job.
 pub fn supersession_pair(content: &AttestationContent) -> Result<(&str, &str), ProofError> {
     if claim_kind(content) != ClaimKind::Supersede {
         return Err(
@@ -181,6 +271,12 @@ pub fn supersession_pair(content: &AttestationContent) -> Result<(&str, &str), P
     }
     if old == new {
         return Err(ErrorCode::SchemaViolation.err("supersede old == new"));
+    }
+    for (label, v) in [("old", old), ("new", new)] {
+        if !v.starts_with("att:v1:") {
+            return Err(ErrorCode::SchemaViolation
+                .err(format!("supersede {label} {v} must start with att:v1:")));
+        }
     }
     Ok((old, new))
 }

@@ -49,6 +49,9 @@ pub struct VerificationContext {
     /// Provenance DAG profile (V1.1 F4, default false). When true the full
     /// member graph must be acyclic, not just SUPERSEDES.
     pub require_acyclic_provenance: bool,
+    /// Fail-closed empty-feed gate (default true since pre-launch core
+    /// audit). False only for explicit caller-asserted absence.
+    pub require_status_feed: bool,
 }
 
 impl Default for VerificationContext {
@@ -67,6 +70,7 @@ impl Default for VerificationContext {
             accepted_vocabularies: vec![],
             extra_grounded: vec![],
             require_acyclic_provenance: false,
+            require_status_feed: true,
         }
     }
 }
@@ -88,6 +92,7 @@ impl VerificationContext {
             accepted_vocabularies: self.accepted_vocabularies.clone(),
             extra_grounded: self.extra_grounded.clone(),
             require_acyclic_provenance: self.require_acyclic_provenance,
+            require_status_feed: self.require_status_feed,
         }
     }
 

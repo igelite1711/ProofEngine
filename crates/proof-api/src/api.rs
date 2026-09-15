@@ -155,7 +155,46 @@ fn parse_statuses(
     Ok(out)
 }
 
+fn bool_field(v: &serde_json::Value, name: &str) -> bool {
+    v.get(name).and_then(|x| x.as_bool()).unwrap_or(false)
+}
+
 fn context_from(v: &serde_json::Value, limits: &Limits) -> Result<proof_verify::VerifyCtx, String> {
+    // Strict operator profile (mirrors CLI --production): implies
+    // require_acyclic + strict currency overlay in responses. The feed gate
+    // is default-on; `no_require_status: true` opts out explicitly.
+    let production = bool_field(v, "production");
+    let mut allowed = proof_crypto::AllowedAlgs::strict();
+    if bool_field(v, "esp256") {
+        allowed = allowed.with_esp256();
+    }
+    if bool_field(v, "historical") || bool_field(v, "allow_deprecated") {
+        allowed = allowed.with_deprecated();
+    }
+    let mut accepted_vocabularies = vec![];
+    if let Some(serde_json::Value::Array(items)) = v.get("accepted_vocab") {
+        for entry in items {
+            let s = entry
+                .as_str()
+                .ok_or("`accepted_vocab` must be a string array of `ns:max`")?;
+            let (ns, max) = s
+                .split_once(':')
+                .ok_or_else(|| format!("`accepted_vocab` entry must be ns:max, got `{s}`"))?;
+            if ns.is_empty() {
+                return Err("`accepted_vocab` namespace must not be empty".to_string());
+            }
+            let max_version: u64 = max
+                .trim()
+                .parse()
+                .map_err(|_| format!("`accepted_vocab` max_version must be u64, got `{max}`"))?;
+            accepted_vocabularies.push(proof_core::model::VocabularyAccept {
+                ns: ns.to_string(),
+                max_version,
+            });
+        }
+    } else if v.get("accepted_vocab").is_some() {
+        return Err("`accepted_vocab` must be a string array".to_string());
+    }
     Ok(proof_verify::VerifyCtx {
         verified_at: u64_field(v, "clock", true)?.unwrap_or(0),
         clock_skew_leeway: u64_field(v, "skew", false)?.unwrap_or(300),
@@ -163,23 +202,77 @@ fn context_from(v: &serde_json::Value, limits: &Limits) -> Result<proof_verify::
         status_objects: parse_statuses(v, limits)?,
         revocation_authorities: str_list(v, "authority")?,
         revocations_known_at: u64_field(v, "revocations_known_at", false)?,
+        allowed_algs: allowed,
+        report_all_failures: bool_field(v, "report_all"),
+        accepted_vocabularies,
+        extra_grounded: str_list(v, "extra_grounded")?,
+        require_acyclic_provenance: bool_field(v, "require_acyclic") || production,
+        // Fail-closed default: `require_status` is a compat no-op, only
+        // explicit `no_require_status: true` opts out.
+        require_status_feed: !bool_field(v, "no_require_status"),
         ..Default::default()
     })
 }
 
+/// Currency split (mirrors `proof-cli::check::is_currently_acceptable`):
+/// VALID-but-not-current (SUPERSEDED history, UNKNOWN lifecycle, or
+/// unverified provenance hints) is historically valid, not currently
+/// acceptable. WITHDRAWN/COMPROMISED/REVOKED/EXPIRED flip evidence INVALID
+/// and stay currency-true (orthogonal signals). Kept in sync by test
+/// below; the CLI canonical lives in `proof-cli/src/check.rs`.
+fn currently_acceptable(report: &proof_verify::VerifyReport) -> bool {
+    use proof_core::model::EvidenceStatus;
+    use proof_core::LifecycleStatus;
+    if report
+        .lifecycle
+        .iter()
+        .any(|l| l.status == LifecycleStatus::Superseded || l.status == LifecycleStatus::Unknown)
+    {
+        return false;
+    }
+    if report.evidence_status.iter().any(|e| {
+        e.status == EvidenceStatus::Superseded
+            || (e.status == EvidenceStatus::Unknown
+                && e.message.contains("provenance hint unverified"))
+    }) {
+        return false;
+    }
+    true
+}
+
+fn validity_str(v: proof_verify::Validity) -> &'static str {
+    if v == proof_verify::Validity::Valid {
+        "valid"
+    } else {
+        "invalid"
+    }
+}
+
 fn report_json(report: &proof_verify::VerifyReport) -> serde_json::Value {
     serde_json::json!({
+        // Aligned to CLI `proof-cli::check::report_json` wire strings
+        // (lowercase validities, UPPER lifecycle/status): API/CLI parity.
         "proof_id": report.proof_id,
-        "cryptographic_validity": format!("{:?}", report.cryptographic_validity),
-        "evidence_validity": format!("{:?}", report.evidence_validity),
+        "cryptographic_validity": validity_str(report.cryptographic_validity),
+        "evidence_validity": validity_str(report.evidence_validity),
+        "policy_decision": report.policy_decision.as_str(),
+        "currently_acceptable": currently_acceptable(report),
+        "lifecycle_checked": report.lifecycle_checked,
         "status_inputs_valid": report.status_inputs_valid,
-        "policy_decision": format!("{:?}", report.policy_decision),
-        "codes": report.failure_codes().iter().map(|c| format!("{c:?}")).collect::<Vec<_>>(),
+        "codes": report.failure_codes().iter().map(|c| c.as_str()).collect::<Vec<_>>(),
         "lifecycle": report.lifecycle.iter().map(|l| serde_json::json!({
-            "object": l.object, "status": format!("{:?}", l.status),
+            "object": l.object, "status": l.status.as_str(),
+            "code": l.code.map(|c| c.as_str()), "message": l.message,
+        })).collect::<Vec<_>>(),
+        "evidence_status": report.evidence_status.iter().map(|e| serde_json::json!({
+            "object": e.object, "status": e.status.as_str(),
+            "code": e.code.map(|c| c.as_str()), "message": e.message,
         })).collect::<Vec<_>>(),
         "referenced_proofs": report.referenced_proofs,
-        "conflicts": report.conflicts.len(),
+        "conflicts": report.conflicts.iter().map(|c| serde_json::json!({
+            "kind": c.kind.as_str(), "claim_type": c.claim_type,
+            "subject": c.subject, "attestation_ids": c.attestation_ids,
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -385,11 +478,18 @@ fn evaluate_route(path: &str, v: &serde_json::Value, limits: &proof_core::Limits
             skew_leeway: ctx.clock_skew_leeway,
         };
         let outcome = proof_policy::evaluate_policy(&state, &policy, &inputs);
+        // Currency overlay (mirrors CLI --strict-current/--production):
+        // policy decides trust, currency decides whether "valid" means
+        // "acceptable now". The policy outcome is preserved verbatim;
+        // strict callers fail on currency_fail even when decision is pass.
+        let strict = bool_field(v, "strict_current") || bool_field(v, "production");
+        let acceptable = currently_acceptable(&report);
+        let currency_fail = strict && !acceptable;
         let mut out = serde_json::json!({
             "report": report_json(&report),
             "outcome": {
                 "policy_id": outcome.policy_id,
-                "decision": format!("{:?}", outcome.decision),
+                "decision": outcome.decision.as_str(),
                 "note": outcome.note,
                 "results": outcome.results.iter().map(|r| serde_json::json!({
                     "requirement": r.requirement,
@@ -397,6 +497,8 @@ fn evaluate_route(path: &str, v: &serde_json::Value, limits: &proof_core::Limits
                     "message": r.message,
                 })).collect::<Vec<_>>(),
             },
+            "currently_acceptable": acceptable,
+            "currency_fail": currency_fail,
         });
         if path == "/v1/explain" {
             out["explanation"] =

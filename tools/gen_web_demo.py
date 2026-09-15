@@ -104,7 +104,8 @@ def build_payment(w: Path):
 
     code, out, _ = run(
         ["verify", "--proof", "proof.json", "--clock", str(T + 300),
-         "--revocations-known-at", str(T + 300), "--quiet"], w, check=False)
+         "--revocations-known-at", str(T + 300),
+         "--no-require-status", "--quiet"], w, check=False)
     assert code == 0, "fresh payment proof must verify"
     fresh = {"exit": code, "report": json.loads(out)}
 
@@ -117,7 +118,8 @@ def build_payment(w: Path):
     (w / "proof-tampered.json").write_text(json.dumps(v))
     code, out, _ = run(
         ["verify", "--proof", "proof-tampered.json", "--clock", str(T + 300),
-         "--revocations-known-at", str(T + 300), "--quiet"], w, check=False)
+         "--revocations-known-at", str(T + 300),
+         "--no-require-status", "--quiet"], w, check=False)
     assert code == 1, "tampered proof must fail"
     tampered = {
         "proof": v,
@@ -147,7 +149,8 @@ def build_payment(w: Path):
     exp_proof = json.loads((w / "proof-exp.json").read_text())
     code, out, _ = run(
         ["verify", "--proof", "proof-exp.json", "--clock", str(T + 800),
-         "--revocations-known-at", str(T + 800), "--quiet"], w, check=False)
+         "--revocations-known-at", str(T + 800),
+         "--no-require-status", "--quiet"], w, check=False)
     assert code == 1, "expired proof must fail"
     expired = {"proof": exp_proof, "report": json.loads(out), "exit": code}
     assert any(l["status"] == "EXPIRED"
@@ -208,7 +211,8 @@ def build_payment(w: Path):
         pf = policy_doc(f"tour-c-{int(trusted)}{int(transp)}", reqs)
         args = ["evaluate", "--proof", "proof.json", "--policy", pf,
                 "--clock", str(T + 300),
-                "--revocations-known-at", str(T + 300), "--json", "--quiet"]
+                "--revocations-known-at", str(T + 300),
+                "--no-require-status", "--json", "--quiet"]
         if trusted:
             args += ["--trusted", issuer]
         code, out, _ = run(args, w, check=False)
@@ -222,12 +226,14 @@ def build_payment(w: Path):
     code, out, _ = run(
         ["evaluate", "--proof", "proof.json", "--policy", base_pf,
          "--clock", str(T + 300), "--revocations-known-at", str(T + 300),
+         "--no-require-status",
          "--trusted", issuer, "--json", "--quiet"], w, check=False)
     base = {"policy": json.loads((w / base_pf).read_text()),
             "outcome": json.loads(out)["policy_outcome"], "exit": code}
     _, explain_out, _ = run(
         ["explain", "--proof", "proof.json", "--policy", base_pf,
          "--clock", str(T + 300), "--revocations-known-at", str(T + 300),
+         "--no-require-status",
          "--trusted", issuer, "--quiet"], w)
 
     _, inspect_out, _ = run(["inspect", "proof.json", "--json", "--quiet"], w)
@@ -281,7 +287,8 @@ def build_software(w: Path):
     proof = json.loads((w / "s-proof.json").read_text())
     code, out, _ = run(
         ["verify", "--proof", "s-proof.json", "--clock", str(T + 300),
-         "--revocations-known-at", str(T + 300), "--quiet"], w, check=False)
+         "--revocations-known-at", str(T + 300),
+         "--no-require-status", "--quiet"], w, check=False)
     assert code == 0, "software proof must verify"
     _, inspect_out, _ = run(["inspect", "s-proof.json", "--json", "--quiet"], w)
     pol = {"policy_version": 1, "policy_id": "tour-software",
@@ -290,7 +297,7 @@ def build_software(w: Path):
     code, out, _ = run(
         ["evaluate", "--proof", "s-proof.json", "--policy", "s-pol.json",
          "--clock", str(T + 300), "--revocations-known-at", str(T + 300),
-         "--json", "--quiet"], w, check=False)
+         "--no-require-status", "--json", "--quiet"], w, check=False)
     return {
         "label": "Software artifact",
         "tagline": "Was artifact:svc-2.1.0 released by this build?",

@@ -46,8 +46,10 @@ fn check_invariants(text: &str) {
                     | Requirement::NoConflictingEvidence
                     | Requirement::VocabularyAccepted { .. }
                     | Requirement::EvidenceUsable { .. }
+                    | Requirement::EvidenceBound { .. }
                     | Requirement::RequiresReference { .. }
-                    | Requirement::ForbidsReference { .. } => {}
+                    | Requirement::ForbidsReference { .. }
+                    | Requirement::ClaimField { .. } => {}
                 }
             }
             let reparsed = parse_policy(&v, &limits).expect("same input, same result");

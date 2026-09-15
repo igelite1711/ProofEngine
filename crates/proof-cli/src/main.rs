@@ -73,6 +73,10 @@ fn run(args: &[String]) -> i32 {
         "evaluate" => proof_cli::make::evaluate(&cli, false),
         "explain" => proof_cli::make::evaluate(&cli, true),
         "inspect" => proof_cli::inspect::inspect(&cli).map(|_| EXIT_OK),
+        "id" => proof_cli::id::value(&cli).map(|v| {
+            println!("{v}");
+            EXIT_OK
+        }),
         "graph" => proof_cli::graph::graph(&cli).map(|_| EXIT_OK),
         "export" => proof_cli::port::export(&cli).map(|_| EXIT_OK),
         "import" => proof_cli::port::import(&cli).map(|_| EXIT_OK),
@@ -310,14 +314,52 @@ mod tests {
         assert_eq!(code, proof_cli::EXIT_ERR);
     }
 
-    /// Friction fix: `build` without `--evidence` names the
-    /// `--evidence ""` escape hatch; `--evidence ""` means zero evidence.
+    /// Friction fix: `build` without `--evidence`/`--relationships` means zero
+    /// members (no `--evidence ""` incantation needed; explicit "" keeps
+    /// working). Events/attestations stay required so forgotten inputs still
+    /// fail fast.
     #[test]
-    fn build_evidence_empty_string_means_no_members() {
-        // Unit-cover the list helper via build: missing --evidence errors
-        // with the hint (message asserted in e2e below); empty string parses
-        // to an empty member list (no io attempted beyond flag parsing —
-        // the build will proceed to its next required flag).
+    fn build_evidence_flag_may_be_omitted() {
+        let w = tmpdir("build-omitted-flags");
+        let (ev, att) = (format!("{w}/ev.json"), format!("{w}/att.json"));
+        let out = format!("{w}/proof.json");
+        assert_eq!(
+            run(&args(&[
+                "create-event",
+                "--type",
+                "x.y",
+                "--subject",
+                "s:1",
+                "--effective-at",
+                "1700000000",
+                "--payload-hex",
+                "abababababababababababababababababababababababababababababababab",
+                "--out",
+                &ev,
+            ])),
+            proof_cli::EXIT_OK
+        );
+        assert_eq!(
+            run(&args(&[
+                "attest",
+                "--seed",
+                "test",
+                "--subject",
+                "s:1",
+                "--claim-type",
+                "t",
+                "--claim",
+                "k=v",
+                "--issued-at",
+                "1700000150",
+                "--out",
+                &att,
+            ])),
+            proof_cli::EXIT_OK
+        );
+        let eid = std::fs::read_to_string(&ev).unwrap().contains("evt:v1:");
+        assert!(eid, "event artifact must carry an id");
+        // Omit --evidence and --relationships entirely: must succeed.
         let code = run(&args(&[
             "build",
             "--kind",
@@ -329,20 +371,16 @@ mod tests {
             "--created-at",
             "1700000200",
             "--events",
-            "nope.json",
+            &ev,
             "--attestations",
-            "nope.json",
-            "--relationships",
-            "nope.json",
+            &att,
             "--out",
-            "/tmp/proof-cli-must-not-write.json",
+            &out,
         ]));
-        // Missing --evidence entirely (not empty string): usage error, and
-        // the file must not exist.
-        assert_eq!(code, proof_cli::EXIT_ERR);
+        assert_eq!(code, proof_cli::EXIT_OK);
         assert!(
-            !std::path::Path::new("/tmp/proof-cli-must-not-write.json").exists(),
-            "no proof may be written when --evidence is missing"
+            std::path::Path::new(&out).exists(),
+            "proof must be written when --evidence/--relationships are omitted"
         );
     }
 

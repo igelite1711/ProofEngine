@@ -360,6 +360,10 @@ pub fn make_evidence(
         if r.is_empty() || r.len() > 1024 {
             return Err(ErrorCode::SchemaViolation.err("bad attestation_ref"));
         }
+        if !r.starts_with("att:v1:") {
+            return Err(ErrorCode::SchemaViolation
+                .err(format!("attestation_ref {r} must start with att:v1:")));
+        }
     }
     let content = Evidence {
         v: 1,

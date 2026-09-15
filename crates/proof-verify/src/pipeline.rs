@@ -87,6 +87,16 @@ pub struct VerifyCtx {
     /// linkage users (citations, see-also) SHOULD leave it off. Opt-in, so
     /// existing proofs keep byte-identical verdicts unless the caller asks.
     pub require_acyclic_provenance: bool,
+    /// High-assurance feed requirement (fail-closed default since pre-launch
+    /// core audit: an empty status feed with asserted freshness means the
+    /// verifier was never shown revocations, so lifecycle is UNKNOWN).
+    /// True (default): empty feed fails closed (UNKNOWN) even when freshness
+    /// is asserted — the verifier must prove it consulted a feed. False:
+    /// explicit caller-asserted absence ("genesis / no revocations exist as
+    /// of this time"), recorded with an empty-feed note. CLI:
+    /// `--no-require-status` opts out; `--require-status` (kept for
+    /// compatibility) is now a no-op affirming the default.
+    pub require_status_feed: bool,
 }
 
 impl Default for VerifyCtx {
@@ -105,6 +115,7 @@ impl Default for VerifyCtx {
             accepted_vocabularies: vec![],
             extra_grounded: vec![],
             require_acyclic_provenance: false,
+            require_status_feed: true,
         }
     }
 }
@@ -741,6 +752,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
             ClaimKind::Supersede => {
                 status_objects.push(att_id.clone());
                 match supersession_pair(content) {
+                    // F10: `new` shape validated inside supersession_pair (garbage fails at STATUS); lineage recorded via target=old, new carried in effect for future provenance.
                     Ok((old, _new)) => effects.push(StatusEffect {
                         target: old.to_string(),
                         kind: ClaimKind::Supersede,
@@ -827,6 +839,7 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                     )),
                 },
                 ClaimKind::Supersede => match supersession_pair(&content) {
+                    // F10: see above — new validated, lineage via old.
                     Ok((old, _new)) => effects.push(StatusEffect {
                         target: old.to_string(),
                         kind: ClaimKind::Supersede,
@@ -959,14 +972,23 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                 ),
             ));
         }
-        let timely = ctx.verified_at != 0
-            && eff.issued_at <= ctx.verified_at.saturating_add(ctx.clock_skew_leeway);
+        // Fix 4: status knowledge cutoff is strict — a status issued AFTER the
+        // verifier clock cannot apply to that historical verification, even
+        // within skew. Skew absorbs honest clock drift for attestation
+        // validity windows (TIME stage), not future knowledge time-travel.
+        // `issued_at <= verified_at` (no +skew grace) answers "was valid
+        // then?" correctly; future statuses are recorded as feed hygiene and
+        // never applied.
+        let timely = ctx.verified_at != 0 && eff.issued_at <= ctx.verified_at;
         if !timely {
             checks.push(CheckRecord::fail(
                 STATUS_STAGE,
                 eff.object.clone(),
                 ErrorCode::Expired,
-                "status object is not valid yet at the verifier clock",
+                format!(
+                    "status object issued at {} is after verifier clock {} (future status cannot apply to historical verification; skew covers drift, not time-travel)",
+                    eff.issued_at, ctx.verified_at
+                ),
             ));
         }
         if empowered && timely {
@@ -983,11 +1005,15 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
     }
 
     // Revocation info freshness: missing or stale → UNKNOWN → fail closed.
+    // Empty feed with asserted freshness also fails closed unless the caller
+    // explicitly allows it (`require_status_feed == false`).
+    let total_status_inputs = status_objects.len() + ctx.status_objects.len();
     let revocation_stale = ctx.revocations_known_at.is_none()
         || ctx
             .verified_at
             .saturating_sub(ctx.revocations_known_at.unwrap_or(0))
-            > ctx.clock_skew_leeway;
+            > ctx.clock_skew_leeway
+        || (ctx.require_status_feed && total_status_inputs == 0);
 
     let mut lifecycle: Vec<LifecycleRecord> = vec![];
     for (att_id, content) in &verified {
@@ -1085,6 +1111,28 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
             ),
         ),
     ));
+    // Empty-feed note: when the caller explicitly allows the empty feed
+    // (`require_status_feed == false`) and freshness is asserted, ACTIVE
+    // means "no known revocations as asserted by caller", not "feed proved
+    // absence". The default (`require_status_feed == true`) fails closed
+    // above instead of reaching this note.
+    if total_status_inputs == 0 && ctx.revocations_known_at.is_some() && !revocation_stale {
+        checks.push(CheckRecord::note(
+            "REVOCATION",
+            format!("proof:{stored_id}"),
+            format!(
+                "empty status feed explicitly allowed: 0 status objects with revocations known as of {}; lifecycle ACTIVE asserts caller-checked absence, not feed-proved absence",
+                ctx.revocations_known_at.unwrap_or(0)
+            ),
+        ));
+    }
+    if ctx.require_status_feed && total_status_inputs == 0 {
+        checks.push(CheckRecord::note(
+            "REVOCATION",
+            format!("proof:{stored_id}"),
+            "require_status_feed: empty feed fails closed (UNKNOWN) even though freshness was asserted".to_string(),
+        ));
+    }
 
     // ---- 9. EVIDENCE ----  PE-VERIFY-009 PE-EVID-002
     // Digest bindings were recomputed above (ids). Here: attestation→evidence
@@ -1121,6 +1169,111 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                     format!("attestation evidence_ref {r} not in proof"),
                 ));
                 evidence_bad = true;
+            }
+        }
+    }
+    // Fix 5: opt-in semantic binding — reserved claim field `evidence_digest`
+    // (lower/upper hex, 64 chars sha-256 or 96 chars sha-384, optional 0x).
+    // When a verified STATEMENT carries it, it MUST match the digest of the
+    // evidence named by its `evidence_ref`. Absent field = no check (backward
+    // compatible, open vocabulary preserved); present-but-unverifiable
+    // (no ref, dangling ref, malformed hex, mismatch) = EVIDENCE fail-closed.
+    // This turns "evidence supports claim by assertion" into "by cryptography"
+    // for issuers who opt in, without forcing every domain to adopt it.
+    {
+        use std::collections::HashMap as DigestMap;
+        fn lower_hex(bytes: &[u8]) -> String {
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            let mut s = String::with_capacity(bytes.len() * 2);
+            for b in bytes {
+                s.push(HEX[(b >> 4) as usize] as char);
+                s.push(HEX[(b & 0x0f) as usize] as char);
+            }
+            s
+        }
+        let mut digest_by_evd: DigestMap<&str, String> = DigestMap::new();
+        for (ev, eid) in proof.evidence.iter().zip(evd_ids.iter()) {
+            digest_by_evd.insert(eid.as_str(), lower_hex(&ev.digest.digest));
+        }
+        for (att_id, content) in &verified {
+            if claim_kind(content) != ClaimKind::Statement {
+                continue;
+            }
+            // Shared normalization with the policy-state projection
+            // (proof-crypto::claim::evidence_digest_hex): absent = no check;
+            // present-but-unusable fails closed with identical messages.
+            let claimed_hex = match proof_crypto::claim::evidence_digest_hex(&content.claim) {
+                None => continue,
+                Some(Ok(hex)) => hex,
+                Some(Err(proof_crypto::claim::DigestClaimError::NonText)) => {
+                    checks.push(CheckRecord::fail(
+                        "EVIDENCE",
+                        format!("att:{att_id}"),
+                        ErrorCode::SchemaViolation,
+                        "claim field evidence_digest must be text hex (64 sha-256 or 96 sha-384 chars)",
+                    ));
+                    evidence_bad = true;
+                    continue;
+                }
+                Some(Err(proof_crypto::claim::DigestClaimError::Malformed { len })) => {
+                    checks.push(CheckRecord::fail(
+                        "EVIDENCE",
+                        format!("att:{att_id}"),
+                        ErrorCode::SchemaViolation,
+                        format!(
+                            "claim field evidence_digest must be 64 (sha-256) or 96 (sha-384) hex chars, got {} chars",
+                            len
+                        ),
+                    ));
+                    evidence_bad = true;
+                    continue;
+                }
+            };
+            let normalized = claimed_hex;
+            match content.evidence_ref.as_deref() {
+                None => {
+                    checks.push(CheckRecord::fail(
+                        "EVIDENCE",
+                        format!("att:{att_id}"),
+                        ErrorCode::DanglingReference,
+                        "claim carries evidence_digest but attestation has no evidence_ref to bind it to",
+                    ));
+                    evidence_bad = true;
+                }
+                Some(eref) => match digest_by_evd.get(eref) {
+                    None => {
+                        checks.push(CheckRecord::fail(
+                            "EVIDENCE",
+                            format!("att:{att_id}"),
+                            ErrorCode::DanglingReference,
+                            format!(
+                                "claim carries evidence_digest but evidence_ref {eref} is not in this proof"
+                            ),
+                        ));
+                        evidence_bad = true;
+                    }
+                    Some(actual) => {
+                        if actual.to_lowercase() != normalized {
+                            checks.push(CheckRecord::fail(
+                                "EVIDENCE",
+                                format!("att:{att_id}"),
+                                ErrorCode::IdMismatch,
+                                format!(
+                                    "claim evidence_digest does not match bound evidence {eref} digest (semantic binding failed; issuer attested a value the digest does not support)"
+                                ),
+                            ));
+                            evidence_bad = true;
+                        } else {
+                            checks.push(CheckRecord::ok(
+                                "EVIDENCE",
+                                format!("att:{att_id}"),
+                                format!(
+                                    "claim evidence_digest matches bound evidence {eref} (semantic binding holds)"
+                                ),
+                            ));
+                        }
+                    }
+                },
             }
         }
     }
@@ -1268,16 +1421,33 @@ pub fn verify_proof(bytes: &[u8], ctx: &VerifyCtx) -> Result<VerifyReport, Proof
                     g.node_count, g.edge_count, g.longest_supersedes_chain
                 ),
             ));
-            // Provenance DAG profile (V1.1 F4, opt-in): REFERENCES and other
-            // derivation edges must additionally be acyclic. Off by default
-            // (V1 linkage semantics); enable via
-            // `VerifyCtx::require_acyclic_provenance` / `--require-acyclic`.
+            // Fix 2: derivation subgraph ALWAYS acyclic (fail-closed default).
+            // REFERENCES/EQUIVALENT cycles remain linkage-valid; every other
+            // edge type cycling fails here with CYCLE_DETECTED, even without
+            // the opt-in profile.
+            match proof_graph::check_derivation_acyclic(&edges, &node_set) {
+                Ok(()) => checks.push(CheckRecord::ok(
+                    "GRAPH",
+                    format!("proof:{stored_id}"),
+                    "derivation subgraph acyclic (REFERENCES/EQUIVALENT linkage excluded)",
+                )),
+                Err(e) => checks.push(CheckRecord::fail(
+                    "GRAPH",
+                    format!("proof:{stored_id}"),
+                    e.code,
+                    e.message,
+                )),
+            }
+            // Provenance DAG profile (opt-in full assurance): REFERENCES
+            // cycles additionally rejected. Enable via
+            // `VerifyCtx::require_acyclic_provenance` / `--require-acyclic` /
+            // `--production`.
             if ctx.require_acyclic_provenance {
                 match proof_graph::check_acyclic_provenance(&edges, &node_set) {
                     Ok(()) => checks.push(CheckRecord::ok(
                         "GRAPH",
                         format!("proof:{stored_id}"),
-                        "provenance DAG profile: no cycles (opt-in)",
+                        "provenance DAG profile: no cycles (opt-in full-DAG)",
                     )),
                     Err(e) => checks.push(CheckRecord::fail(
                         "GRAPH",

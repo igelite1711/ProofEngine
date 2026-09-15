@@ -44,6 +44,8 @@ fn ctx() -> VerifyCtx {
         verified_at: CLOCK,
         clock_skew_leeway: 300,
         revocations_known_at: Some(CLOCK),
+        // Benchmarks measure pipeline throughput, not feed behavior.
+        require_status_feed: false,
         ..Default::default()
     }
 }

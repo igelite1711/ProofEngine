@@ -15,14 +15,22 @@ use crate::id::b64u_decode;
 /// policy acceptance — never a redesign. Anything else is not a keyref.
 pub const KEYREF_PREFIXES: &[&str] = &["key:ed25519:", "key:p256:"];
 
-/// True iff `s` carries a supported `key:*` prefix (shape only; cryptographic
-/// binding is checked separately by the parse/verify path).
+/// True iff `s` carries a supported `key:*` prefix AND a non-empty body
+/// (shape pre-filter; cryptographic binding is checked separately by the
+/// parse/verify path). F12: empty bodies (`key:ed25519:`) now fail here —
+/// they are never valid keyrefs, and callers gating trust on this function
+/// alone previously got a wider pre-filter than expected.
 pub fn is_supported_keyref(s: &str) -> bool {
-    KEYREF_PREFIXES.iter().any(|p| s.starts_with(p))
+    KEYREF_PREFIXES
+        .iter()
+        .any(|p| s.starts_with(p) && s.len() > p.len())
 }
 
 /// Deterministic Ed25519 key from a 32-byte seed (test vectors use fixed seeds).
 /// Debug is redacted: secret key material must never hit logs (audit P2).
+/// Note (F12): in-memory signing keys are demo-grade — production deployments
+/// must use HSM/KMS-backed signers and `--seed-file` (never `--seed` in argv;
+/// see SECURITY.md). CLI stack seed copies are scrubbed after use.
 #[derive(Clone)]
 pub struct Ed25519Key {
     signing: SigningKey,
@@ -81,6 +89,11 @@ pub fn parse_ed25519_keyref(key_ref: &str) -> Result<[u8; 32], ProofError> {
 
 /// P-256 key (ESP256, optional). Raw pubkey form is 64B X||Y big-endian.
 /// Debug is redacted: secret key material must never hit logs (audit P2).
+/// Note (F12): `p256::ecdsa::SigningKey` has no `Zeroize` impl in the pinned
+/// 0.13 feature set, so Drop cannot scrub it here — demo-grade keys only.
+/// Production deployments must use HSM/KMS-backed signers (see SECURITY.md);
+/// the Ed25519 path above does scrub on Drop, and CLI stack seeds are scrubbed
+/// in `load_key_material`.
 #[derive(Clone)]
 pub struct P256Key {
     signing: p256::ecdsa::SigningKey,
@@ -157,9 +170,10 @@ mod tests {
             "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
         ));
         assert!(!is_supported_keyref("key:ml-dsa:AAAA"));
-        // Prefix-shape only: an empty body passes here and fails later at
-        // length/canonical checks in the parse path (fail closed, layered).
-        assert!(is_supported_keyref("key:ed25519:"));
+        // F12: empty body fails here (never a valid keyref); full
+        // length/canonical checks still live in the parse path (layered).
+        assert!(!is_supported_keyref("key:ed25519:"));
+        assert!(!is_supported_keyref("key:p256:"));
         assert!(!is_supported_keyref("mallory"));
         assert!(!is_supported_keyref(""));
         assert_eq!(KEYREF_PREFIXES.len(), 2);

@@ -220,6 +220,8 @@ fn adapter_artifacts_drive_transparency_decision() {
         verified_at: 1_700_000_200,
         clock_skew_leeway: 300,
         revocations_known_at: Some(1_700_000_200),
+        // Transparency-decision test, not feed test: explicit absence.
+        require_status_feed: false,
         ..Default::default()
     };
     let report = verify_proof(&built.canonical, &ctx).unwrap();

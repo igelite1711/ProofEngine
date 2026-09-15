@@ -241,6 +241,18 @@ export interface ProofReport {
   issuers: string[];
 }
 
+function checkRef(
+  v: unknown,
+  what: string,
+  prefix: string
+): void {
+  // Typed-reference parity (F4/F5): wrong-typed ids reject at schema.
+  if (v === null || v === undefined) return;
+  if (typeof v !== "string" || !v.startsWith(prefix)) {
+    throw new InteropFail(`${what} must start with ${prefix}`);
+  }
+}
+
 export function verifyProof(proofRaw: Uint8Array): ProofReport {
   const outer = asMap(checkCanonical(proofRaw), "proof");
   for (const [k] of outer.pairs) {
@@ -274,12 +286,13 @@ export function verifyProof(proofRaw: Uint8Array): ProofReport {
     }
     const contentRaw = encAny(mapGet(ed, "content"));
     closed(decodeStrict(contentRaw), ATTESTATION_FIELDS, "attestation");
+    const payload = asMap(decodeStrict(contentRaw), "attestation content");
+    checkRef(mapGet(payload, "evidence_ref"), "attestation.evidence_ref", "evd:v1:");
     const sign1 = mapGet(ed, "sign1");
     if (!(sign1 instanceof Uint8Array)) {
       throw new InteropFail("sign1 must be bstr");
     }
     attIds.push(objId("att", contentRaw));
-    const payload = asMap(decodeStrict(contentRaw), "attestation content");
     const issuer = mapGet(payload, "issuer");
     if (typeof issuer !== "string") {
       throw new InteropFail("issuer must be text");
@@ -295,11 +308,16 @@ export function verifyProof(proofRaw: Uint8Array): ProofReport {
   const evdIds: string[] = [];
   for (const m of members(outer, "evidence")) {
     closed(m, EVIDENCE_FIELDS, "evidence");
+    const em = asMap(m, "evidence");
+    checkRef(mapGet(em, "attestation_ref"), "evidence.attestation_ref", "att:v1:");
     evdIds.push(objId("evd", encAny(m)));
   }
   const relIds: string[] = [];
   for (const m of members(outer, "relationships")) {
     closed(m, REL_FIELDS, "relationship");
+    const rm = asMap(m, "relationship");
+    checkRef(mapGet(rm, "evidence_ref"), "relationship.evidence_ref", "evd:v1:");
+    checkRef(mapGet(rm, "attestation_ref"), "relationship.attestation_ref", "att:v1:");
     relIds.push(objId("rel", encAny(m)));
   }
   return finishProofBinding(

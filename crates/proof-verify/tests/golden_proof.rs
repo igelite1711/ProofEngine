@@ -22,12 +22,18 @@ fn load(name: &str) -> serde_json::Value {
 
 /// Rebuild the embedded `verify_ctx` (FORMAT §8) exactly: the fixture records
 /// the clock and revocation freshness its expected verdict depends on.
+/// Grandfather note: fixtures golden-11..34 were recorded under explicit
+/// caller-asserted absence (empty feed allowed), predating the fail-closed
+/// default — hence `require_status_feed: false` here. The new default is
+/// pinned by `empty_feed_fails_closed_by_default` (lifecycle.rs), not by
+/// these vectors.
 fn ctx_from(v: &serde_json::Value) -> VerifyCtx {
     let c = &v["verify_ctx"];
     VerifyCtx {
         verified_at: c["verified_at"].as_u64().unwrap(),
         clock_skew_leeway: c["skew_leeway"].as_u64().unwrap(),
         revocations_known_at: c["revocations_known_at"].as_u64(),
+        require_status_feed: false,
         ..VerifyCtx::default()
     }
 }
@@ -139,6 +145,40 @@ fn golden_27_vocabulary_declaration_binds() {
         .any(|c| c.ok && c.stage == "SCHEMA" && c.message.contains("used but not declared")));
 }
 
+/// Conformance vectors 32–34 (post-freeze fail-closed behavior): derivation
+/// cycles refuse (32), semantic forgery fails (33), future-status history
+/// stays valid (34). Same data-driven shape as the lifecycle vectors above.
+#[test]
+fn golden_conformance_vectors_verify_as_recorded() {
+    for name in ["golden-32.json", "golden-33.json", "golden-34.json"] {
+        let v = load(name);
+        let bytes = hex::decode(v["proof_canonical_hex"].as_str().unwrap()).unwrap();
+        let r = verify_proof(&bytes, &ctx_from(&v)).unwrap();
+        let expected = &v["expected"];
+        let crypto = match expected["cryptographic_validity"].as_str().unwrap() {
+            "valid" => Validity::Valid,
+            _ => Validity::Invalid,
+        };
+        let evidence = match expected["evidence_validity"].as_str().unwrap() {
+            "valid" => Validity::Valid,
+            _ => Validity::Invalid,
+        };
+        assert_eq!(r.cryptographic_validity, crypto, "{name}");
+        assert_eq!(r.evidence_validity, evidence, "{name}");
+        assert!(r.lifecycle_checked, "{name}");
+        if let Some(id) = v["proof_id"].as_str() {
+            assert_eq!(r.proof_id.as_deref(), Some(id), "{name}");
+        }
+        let got = r.failure_codes();
+        for want in expected["codes"].as_array().unwrap() {
+            let want = want.as_str().unwrap();
+            assert!(
+                got.iter().any(|c| c.as_str() == want),
+                "{name}: expected code {want} in {got:?}"
+            );
+        }
+    }
+}
 /// Lifecycle vectors 15–18, 29–30 (acceptance A3): the embedded `verify_ctx`
 /// must reproduce the recorded verdict, lifecycle flags, id, and failure
 /// codes on a clean checkout — expired EXPIRED, revoked REVOKED, superseded

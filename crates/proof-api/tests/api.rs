@@ -68,6 +68,8 @@ fn verify_body(hex: &str) -> Vec<u8> {
         "proof": {"cbor_hex": hex},
         "clock": 1_700_000_200u64,
         "revocations_known_at": 1_700_000_200u64,
+        // Explicit caller-asserted absence (genesis-shape tiny proof).
+        "no_require_status": true,
     })
     .to_string()
     .into_bytes()
@@ -95,10 +97,76 @@ fn verify_reports_explicit_validity_with_200() {
     assert_eq!(s, 200, "{b}");
     let v: serde_json::Value = serde_json::from_str(&b).unwrap();
     // Attested proof, fresh revocation info: fully valid, decision left open.
-    assert_eq!(v["cryptographic_validity"], "Valid");
-    assert_eq!(v["evidence_validity"], "Valid");
-    assert_eq!(v["policy_decision"], "Indeterminate");
+    // Wire strings aligned to CLI (lowercase validities/policy, UPPER
+    // lifecycle/status) + currently_acceptable currency split.
+    assert_eq!(v["cryptographic_validity"], "valid");
+    assert_eq!(v["evidence_validity"], "valid");
+    assert_eq!(v["policy_decision"], "indeterminate");
+    assert_eq!(v["currently_acceptable"], true);
+    // Conflicts ride as full records (CLI parity), not a bare count.
+    assert!(v["conflicts"].is_array());
     assert!(v["proof_id"].as_str().unwrap().starts_with("prf:v1:"));
+}
+
+#[test]
+fn verify_production_flags_parse_and_gate_empty_feed() {
+    // Fresh tiny proof carries no status objects: the fail-closed default
+    // rejects the empty feed (UNKNOWN); explicit `no_require_status`
+    // restores caller-asserted absence. HTTP stays 200 — verdicts are
+    // data, not errors.
+    let hex = hex_of(&tiny_proof_bytes());
+    let base = serde_json::json!({
+        "proof": {"cbor_hex": hex},
+        "clock": 1_700_000_200u64,
+        "revocations_known_at": 1_700_000_200u64,
+    });
+    // Bare: fail closed on empty feed.
+    let (s, b) = route("POST", "/v1/verify", &serde_json::to_vec(&base).unwrap());
+    assert_eq!(s, 200, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["evidence_validity"], "invalid");
+    // Explicit opt-out restores caller-asserted absence.
+    let mut allowed = base.clone();
+    allowed["no_require_status"] = serde_json::Value::Bool(true);
+    let (s, b) = route("POST", "/v1/verify", &serde_json::to_vec(&allowed).unwrap());
+    assert_eq!(s, 200, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["evidence_validity"], "valid");
+    // --require_status: no-op affirming the default (still fails closed).
+    let mut bare = base.clone();
+    bare["require_status"] = serde_json::Value::Bool(true);
+    let (s, b) = route("POST", "/v1/verify", &serde_json::to_vec(&bare).unwrap());
+    assert_eq!(s, 200, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["evidence_validity"], "invalid");
+    // --production implies the feed gate (+ full-DAG + currency overlay).
+    let mut prod = base.clone();
+    prod["production"] = serde_json::Value::Bool(true);
+    let (s, b) = route("POST", "/v1/verify", &serde_json::to_vec(&prod).unwrap());
+    assert_eq!(s, 200, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["evidence_validity"], "invalid");
+    // Explicit opt-out restores historical behavior for the feed gate only.
+    prod["no_require_status"] = serde_json::Value::Bool(true);
+    let (s, b) = route("POST", "/v1/verify", &serde_json::to_vec(&prod).unwrap());
+    assert_eq!(s, 200, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["evidence_validity"], "valid");
+    // Verifier-policy flags parse (no 400): esp256/historical/report_all,
+    // vocab, extra_grounded, acyclic, strict currency request.
+    let mut flags = base.clone();
+    flags["esp256"] = serde_json::Value::Bool(true);
+    flags["report_all"] = serde_json::Value::Bool(true);
+    flags["require_acyclic"] = serde_json::Value::Bool(true);
+    flags["strict_current"] = serde_json::Value::Bool(true);
+    flags["accepted_vocab"] = serde_json::json!(["acme:2"]);
+    flags["extra_grounded"] = serde_json::json!(["MYEDGE"]);
+    let (s, b) = route("POST", "/v1/verify", &serde_json::to_vec(&flags).unwrap());
+    assert_eq!(s, 200, "{b}");
+    // Malformed vocab is 400, not silent pass.
+    flags["accepted_vocab"] = serde_json::json!(["no-colon"]);
+    let (s, _) = route("POST", "/v1/verify", &serde_json::to_vec(&flags).unwrap());
+    assert_eq!(s, 400);
 }
 
 #[test]
@@ -150,6 +218,7 @@ fn evaluate_and_explain_decide() {
         "proof": {"cbor_hex": hex},
         "clock": 1_700_000_200u64,
         "revocations_known_at": 1_700_000_200u64,
+        "no_require_status": true,
         "trusted": [key],
         "policy": {
             "policy_version": 1,
@@ -167,11 +236,13 @@ fn evaluate_and_explain_decide() {
     let (s, b) = route("POST", "/v1/evaluate", &body);
     assert_eq!(s, 200, "{b}");
     let v: serde_json::Value = serde_json::from_str(&b).unwrap();
-    assert_eq!(v["outcome"]["decision"], "Pass");
+    assert_eq!(v["outcome"]["decision"], "pass");
+    assert_eq!(v["currently_acceptable"], true);
+    assert_eq!(v["currency_fail"], false);
     let (s, b) = route("POST", "/v1/explain", &body);
     assert_eq!(s, 200, "{b}");
     let v: serde_json::Value = serde_json::from_str(&b).unwrap();
-    assert_eq!(v["outcome"]["decision"], "Pass");
+    assert_eq!(v["outcome"]["decision"], "pass");
     assert!(v["explanation"]
         .as_str()
         .unwrap()

@@ -40,6 +40,7 @@ One map for all 35 documents. **Authority rule:** on protocol semantics
 | [Interoperability](../INTEROPERABILITY.md) | V1 interop authority (§17) | Working with other implementations |
 | [Longevity](LONGEVITY.md) | Migration contract | Long-term viability and migration |
 | [Operator Runbook](OPERATOR-RUNBOOK.md) | Operations checklist | Clocks, freshness, feeds, trust lists, exits |
+| [Integration](INTEGRATION.md) | Wiring guide (not authority) | Embedding the engine: Rust/CLI/HTTP surfaces, feeds, rotation, replay, blobs, conformance |
 | [Confidentiality](CONFIDENTIALITY.md) | Privacy scope | What the core does not do + patterns |
 
 ## Security
@@ -95,3 +96,4 @@ One map for all 35 documents. **Authority rule:** on protocol semantics
 2. Architecture (how does it work?)
 3. Extending (how do I use it for my domain?)
 4. Policy (how do I write rules?)
+5. Integration (how do I embed it?) + Operator Runbook (how do I run it?)

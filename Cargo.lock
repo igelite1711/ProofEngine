@@ -462,10 +462,12 @@ dependencies = [
  "proof-core",
  "proof-crypto",
  "proof-format",
+ "proof-graph",
  "proof-policy",
  "proof-verify",
  "serde_json",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]

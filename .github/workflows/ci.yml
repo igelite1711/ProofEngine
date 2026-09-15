@@ -43,12 +43,10 @@ jobs:
 
       - name: Supply chain (advisories, bans, licenses, sources)
         run: cargo deny check
-
-      - name: Advisory scan (RustSec; continues on unfixable advisories)
-        continue-on-error: true  # advisory-db cache can stale; cargo-deny is the real gate
-        uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # NOTE: no separate audit-check step — `cargo deny check` above already
+      # gates advisories (deny.toml [advisories], yanked=deny). A second
+      # RustSec scan would be redundant signal with its own cache-staleness
+      # failure mode; one gate owns supply-chain verdicts.
 
       - name: Requirement traceability
         run: make trace

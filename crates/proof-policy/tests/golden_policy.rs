@@ -28,11 +28,14 @@ fn check(name: &str) {
     let bytes = hex::decode(v["proof_canonical_hex"].as_str().unwrap()).unwrap();
     // Pipeline context embedded in the vector: live clock + fresh revocations
     // (matches the `eval_inputs` clock the policy decision expects).
+    // Grandfathered fixtures predate the fail-closed default: explicit
+    // caller-asserted absence (see proof-verify golden_proof.rs note).
     let vctx = &v["verify_ctx"];
     let vctx = VerifyCtx {
         verified_at: vctx["verified_at"].as_u64().unwrap(),
         clock_skew_leeway: vctx["skew_leeway"].as_u64().unwrap(),
         revocations_known_at: vctx["revocations_known_at"].as_u64(),
+        require_status_feed: false,
         ..VerifyCtx::default()
     };
     let report = proof_verify::verify_proof(&bytes, &vctx).unwrap();

@@ -15,6 +15,9 @@ fn ctx() -> VerifyCtx {
         verified_at: 1_700_000_200,
         clock_skew_leeway: 300,
         revocations_known_at: Some(1_700_000_200),
+        // These tests exercise composition linkage, not feed behavior:
+        // explicitly assert caller-checked absence (default fails closed).
+        require_status_feed: false,
         ..VerifyCtx::default()
     }
 }

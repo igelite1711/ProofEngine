@@ -68,8 +68,14 @@ fn encode_value(v: &CborValue, out: &mut Vec<u8>) {
         CborValue::Nint(n) => {
             // Invariant: CBOR nint is always <= -1. Schema/decoder never
             // construct non-negative Nint, but CborValue is public so a
-            // direct caller could. Fail safe without panic: normalize to
-            // Uint so release never silently wraps via `as u64`.
+            // direct caller could. F12: debug builds assert (catch caller
+            // bugs where Uint(5) vs Nint(5) would collide on identical bytes);
+            // release normalizes to Uint (no panic in prod, no silent wrap
+            // via `as u64`). Callers must construct non-negative ints as Uint.
+            debug_assert!(
+                *n < 0,
+                "CborValue::Nint must be negative; use Uint for non-negative ints"
+            );
             if *n >= 0 {
                 encode_head(0, *n as u64, out);
             } else {

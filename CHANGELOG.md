@@ -7,6 +7,226 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (V1 in development; protocol semantics evolve on `main`)
 
+### Changed (pre-launch core audit — BREAKING, fail-closed empty feed)
+
+- **Empty status feed fails closed by default.** Freshness asserted with
+  zero status objects and no explicit opt-out ⇒ lifecycle UNKNOWN ⇒
+  evidence INVALID (`REVOCATION_UNKNOWN`), exit 1 — at the core
+  (`VerifyCtx`/`VerificationContext` defaults), CLI (`verify`/`evaluate`/
+  `batch-verify`/`resolve`), and HTTP API alike. Previously this verified
+  ACTIVE/VALID ("caller-asserted absence"). Genesis/demo/feedless flows
+  assert absence explicitly with `--no-require-status` /
+  `no_require_status: true` (recorded with an `explicitly allowed` note);
+  `--require-status` is a compat no-op affirming the default.
+  Grandfathered fixtures/harnesses pin the old context explicitly; new
+  vectors default closed. See
+  `docs/ARCHITECTURE-CHANGE-PROPOSAL-empty-feed-fail-closed.md` (APPROVED
+  pre-launch, §11).
+- **Strict-mode RESULT line.** `--strict-current`/`--production` currency
+  rejection now renders `RESULT INVALID (historically valid — not currently
+  acceptable) (exit 1)` instead of the self-contradicting
+  `VALID … => INVALID` line. Exit codes unchanged.
+- **`supersede` flag aliases.** `--target`/`--successor` accepted for
+  `--old`/`--new` (revoke uses `--target`). Byte-identical output.
+- **Delegation failure message.** `delegated_authority` now names the
+  scope requirement and lifecycle/trust-list checks on failure.
+- **Custom-edge linkage rule pinned.** `custom_edge_cycle_fails_as_derivation_by_default`
+  documents in code that every edge type except REFERENCES/EQUIVALENT is
+  derivation (INTEROPERABILITY scope-boundary note added for the
+  crypto-vs-verdict split).
+- **Currency signal coherence.** `currently_acceptable` is now false on
+  UNKNOWN lifecycle (empty feed under the fail-closed default), agreeing
+  with the exit code; REVOKED/EXPIRED/COMPROMISED/WITHDRAWN keep the
+  orthogonal validity/currency split (pinned by
+  `revoked_lifecycle_is_not_currency_gap`, new
+  `unknown_lifecycle_fails_currency` test). CLI + HTTP API mirrors in sync.
+- **Commitment pattern pinned.** `v2_commitment_pattern_hides_value_but_binds_policy`
+  proves salted-hash commitments verify and bind `claim_field` policy with
+  existing primitives (equality-only; ZK predicates stay adapters).
+
+### Added (architecture push — semantic model, extension proof, verdict goldens)
+
+- **v2 `evidence_bound` policy leaf.** `{"type":"evidence_bound","kind":K}`
+  passes iff some AVAILABLE evidence of kind K is cryptographically bound —
+  named by a verified ACTIVE attestation's `evidence_ref` whose claim
+  `evidence_digest` equals the digest. Lets policy *require* the opt-in
+  binding (ten v2 leaves total; v1 rejects the name; EBNF + CBOR + describe
+  + fuzz tripwires extended).
+- **Fail-closed composition.** `compose` validates the UNION graph
+  (grounding incl. `--extra-grounded`, dangling refs, SUPERSEDES linearity,
+  derivation acyclicity) before building — cross-proof cycles/branches fail
+  at compose time, not later at verify. TIME/REVOCATION currency stays
+  verify-time by design; single-proof `build` stays structural-only.
+  Shared `extra_grounded` CLI parser between verify and compose.
+- **Golden vectors 32–34** (append-only): 32 derivation cycle
+  (`CYCLE_DETECTED`), 33 digest mismatch (`ID_MISMATCH`), 34 future-status
+  history (valid/valid, no codes). New `gen_conformance_vectors` example;
+  Rust harness + `make conformance` (now 25 checks) cover them automatically.
+- **`custom_vocabulary` domain test.** A synthetic `acme` industry (custom
+  event/evidence/rel vocabularies + caller-declared `extra_grounded` trust
+  kind + custom policy) verifies end-to-end with zero core changes —
+  constructive proof of the neutrality claim beyond the twelve industries.
+- **Durability paper trail.** Freeze manifest covers all working-tree frozen
+  files (audit scripted); `check_freeze.py` now also gates untracked new
+  files under frozen paths (negative-tested); `RELEASE.md` requires
+  `make interop` + `make conformance` + manifest/ACP coverage before any cut.
+
+### Added (adoption push — integration, verdict portability, replay guardrail)
+
+- **`verify`/`evaluate` `--seen-store` replay guardrail (CLI-side; core stays
+  stateless).** `--seen-store <file> --seen-context <ctx>` checks the proof
+  id before accepting (replay → exit 1, success paths only); `--seen-record`
+  appends on success. Same `{"seen": ["<ctx>::<proof_id>"]}` file shape as
+  `tools/seen_set.py` (single-writer scope); missing/corrupt store with the
+  flags present is exit 2 (fail closed). Runbook §4b documents CLI vs script.
+- **`tools/conformance.py` full-verdict runner (`make conformance`, CI-gated).**
+  Replays every golden proof/policy vector (bytes + embedded context) and
+  compares recorded triples, failure codes, and policy decisions — 22 checks
+  green. Third parties mirror the stdlib-only script for verdict agreement;
+  recipe in `INTEROPERABILITY.md`.
+- **`docs/INTEGRATION.md` wiring guide.** One-shot Rust pattern
+  (`verify_and_evaluate` + `VerificationContext`, compile-checked), shell/API
+  production invocations, feeds/rotation/replay/blobs/keys/PII checklist,
+  conformance pointers. README For Developers now shows the one-shot;
+  `docs/INDEX.md` lists the guide.
+
+### Added (review-fixes batch — 9 findings closed; see docs/ARCHITECTURE-CHANGE-PROPOSAL-review-fixes-9.md)
+
+- **`--production` strict operator profile.** `verify`, `evaluate`/`explain`,
+  `batch-verify`, and `resolve` accept `--production`: implies
+  `--require-acyclic` (full-DAG) + `--require-status` (empty feed fails
+  closed) + `--strict-current` currency overlay. `--no-require-status`
+  explicitly opts back out of the feed gate only. `verify`/`batch-verify`
+  JSON gains `currently_acceptable` (+ per-member in batch, root+members in
+  resolve); human `VALID` becomes `VALID (historical …)` when currency fails
+  but pipeline passes. Bare defaults unchanged (frozen verdicts preserved).
+- **Opt-in `evidence_digest` semantic binding.** Reserved claim field
+  `evidence_digest: <64|96 hex>` with `evidence_ref` cryptographically ties
+  the attested value to the dataset digest (mismatch `ID_MISMATCH`, missing
+  `DANGLING_REFERENCE`, malformed `SCHEMA_VIOLATION`; absent field = no
+  check). CLI `attest` help documents the binding.
+- **`relate` fail-fast grounding.** Trust-relevant types
+  (`requires_grounding()`) without refs are creation errors (exit 2);
+  `--allow-ungrounded` preserves intentional negative-test vectors (verify
+  still fails closed).
+- **`evaluate` single-truth output.** Prose prints decision prose only
+  (no report JSON); `--json` merged `{policy_outcome,report}`;
+  `--strict-current`/`--production` overlays currency on policy (exit 1 on
+  VALID-but-not-current even when policy passes, with stdout+stderr note so
+  `--quiet` callers still see why).
+- **Reference API parity (perimeter, 0.1.x).** `POST /v1/verify|evaluate|
+  explain` accepts the full `VerifyCtx` surface (`esp256`, `historical`,
+  `report_all`, `accepted_vocab`, `extra_grounded`, `require_acyclic`,
+  `require_status`/`no_require_status`, `production`, `strict_current`);
+  wire strings match the CLI (lowercase validities/policy, UPPER
+  lifecycle/status) plus `currently_acceptable` (verify) and
+  `currently_acceptable`/`currency_fail` (evaluate/explain) with full
+  `conflicts` records (was bare count); batch/resolve JSON gains per-member
+  currency. Non-text `evidence_digest` fails closed. `attest` fail-fasts
+  malformed/missing-ref/non-text `evidence_digest` at creation (exit 2).
+
+### Added (usability push — first-PASS friction)
+
+- **`init-policy --template minimal`.** Domain-agnostic starter
+  (`signature_valid` + `issuer_trusted` + `not_expired` + `not_revoked`, no
+  relationship/evidence vocabulary) so sensor/legal/science proofs get a
+  passing policy without payment-kind editing. Settlement-family templates
+  (`settlement`/`strict-document`/`basic-payment`) fail fast (exit 2) when
+  domain vocabulary would silently default — pass `--proof` to infer kinds
+  or explicit `--relationship`/`--evidence-kind` flags.
+- **No more `--evidence ""` hatch.** `build --evidence`/`--relationships`
+  may be omitted for zero members (explicit `""` keeps working);
+  events/attestations stay required so forgotten inputs still fail fast.
+- **`add-evidence --digest-file`.** Hashes file bytes (SHA-256) like
+  `create-event --payload-file` — no manual hashlib plumbing.
+- **`proof-cli id` plumbing command.** `id --artifact f.json` prints the
+  content id, `--field issuer` the issuer keyref — replaces every
+  `python3 -c "import json;…"` one-liner; README + `quick_proof.sh` are now
+  zero-python flows.
+- **`explain --json`.** One merged machine document
+  (`{policy_outcome, report, explanation}`) like `evaluate --json`; prose
+  stays the default for both (never mixed).
+- **Fixed literal `{out}`/`{issuer}` next-hints.** `init-policy` (and two
+  `artifact` hints) printed uninterpolated placeholders; they now name the
+  real files. README manual flow + `tools/quick_proof.sh` rewritten around
+  `--payload-file`/`--digest-file`/`init-policy --proof`/`proof-cli id`,
+  ending with an annotated `--production` strict check; README gains a
+  5-minute orienting block and `--production` in common flags; interactive
+  tour closes with history-vs-currency.
+
+### Fixed (same batch — fail-closed conformance, pre-V1.0 CORE)
+
+- **Derivation cycles always fail.** New `check_derivation_acyclic` (all
+  types except REFERENCES/EQUIVALENT) runs unconditionally in GRAPH
+  (`CYCLE_DETECTED` → evidence invalid). REFERENCES citations stay
+  linkage-valid; `--require-acyclic`/`--production` additionally rejects
+  REFERENCES cycles for full-DAG assurance.
+- **Status knowledge cutoff strict.** Status effects apply iff
+  `issued_at <= verified_at` (no `+skew` grace). Skew still covers
+  attestation windows (TIME). Future statuses are STATUS hygiene
+  (`status_inputs_valid:false`), never applied — historical queries answer
+  "was valid then?" correctly.
+
+### Added (independent external review hardening batch 2 — 12 findings closed)
+
+- **V2 `claim_field` policy leaf (GENERIC EXTENSION).** Typed claim-value
+  predicates over lifecycle-ACTIVE verified claims:
+  `{"type":"claim_field","claim_type":"…","subject":"…","field":"amount",
+  "op":"gte","value":100}`. Ops `eq/ne/gt/gte/lt/lte`; uint allows all six,
+  text/bool `eq/ne` only (byte equality, no normalization); `field:"type"`
+  rejected (use `claim_type`); missing field, type mismatch, or no in-scope
+  ACTIVE claim → FAIL (never vacuous pass). V1 byte-stable (v1 parser rejects
+  the name; `v1_rejects_v2_leaf_names_and_stays_frozen` extended). EBNF, CBOR,
+  `describe`, evaluator, and `ClaimSummary.fields` projection ship together.
+- **`--require-status` fail-closed feed mode (default off).** `verify`,
+  `evaluate`, `batch-verify`, and `resolve` accept `--require-status`: empty
+  status feed with asserted freshness fails closed (`REVOCATION_UNKNOWN`)
+  instead of reporting ACTIVE on caller-asserted absence. Without the flag,
+  empty-feed proofs carry an explicit `empty status feed` pipeline note plus a
+  CLI stderr warning (gated on ACTIVE so UNKNOWN/STALE keep their own hint).
+  `VerifyCtx::require_status_feed` / `VerificationContext` projection for API
+  users; lifecycle tests pin both modes.
+- **`init-policy --proof` inference.** Relationship/evidence kinds are inferred
+  from the proof's first members, so non-payment domains need no manual
+  template editing (explicit `--relationship`/`--evidence-kind` win; payment
+  defaults last).
+
+### Fixed (same batch — fail-closed conformance, pre-V1.0 CORE)
+
+- **CDDL `created_at` correction (`docs/format.cddl` only).** `proof-binding`
+  now covers `created_at` (plus `referenced_proofs`/`vocabularies` when
+  non-empty), matching the implementation, FORMAT.md, freeze F2, and both
+  interop verifiers. Zero wire bytes change; spec contradiction eliminated.
+- **Typed references enforced (F4/F5).** `attestation.evidence_ref` must be
+  `evd:v1:`, `evidence.attestation_ref` / relationship refs typed per slot —
+  enforced at schema (`SCHEMA_VIOLATION`), builders, and CLI creation flags
+  (fail fast with slot-specific messages). Python + TypeScript verifiers check
+  the same prefixes; differential gains a wrong-typed-ref NEG both languages
+  (39 checks). Dangling correct-prefix hints keep `Unknown ok:true`
+  semantics, gated by `evidence_usable` / `--strict-current` as before.
+- **Envelope self-consistency (F7).** Attestation/status envelopes now
+  crypto-verify the signature against the content issuer even without trust
+  inputs; forged signatures fail `SIGNATURE_INVALID` at import/export instead
+  of reading as success. Import success means well-formed + self-consistent,
+  never trusted (help text states this).
+- **Lifecycle target shapes (F10).** Revoke/supersede old+new require
+  `att:v1:`; withdraw requires a shaped artifact id; compromise requires a
+  keyref, shaped id, or `did:`. Garbage fails at STATUS, never silent lineage.
+- **Denylist vs lifecycle separation (F8).** `RevocationSet` documented as the
+  unsigned caller denylist; `--revoked` help and POLICY.md distinguish it from
+  the signed `--status` feed; separation pinned by test (signed-revoked +
+  empty denylist → INDETERMINATE, not `not_revoked` FAIL).
+- **Hygiene (F12).** `is_supported_keyref` rejects empty bodies;
+  `MemoryStore::with_limits` tracks `Limits` (default unchanged at 1MiB);
+  `CborValue::Nint(≥0)` `debug_assert`s (release normalizes, no panic);
+  `--seed <hex>` warns toward `--seed-file`; CLI stack seeds scrubbed.
+  Custom-AAD APIs contracted as ADVANCED adapter-only with a cross-AAD
+  non-verification test (pipeline always PE1; behavior unchanged).
+- **CLI `--strict-current` single-RESULT-line rendering** (adopted in-tree):
+  VALID-but-not-current proofs render one coherent verdict instead of two
+  conflicting RESULT lines; `evaluate` prose reports the actual exit meaning.
+  Plus `currency_tests` (4) for `is_currently_acceptable`.
+
 ### Changed (WIRE: `created_at` bound into `proof_id` — CORE freeze deviation, pre-V1.0)
 
 - **`proof_id` now covers `created_at`.** The V1 binding map gains one key

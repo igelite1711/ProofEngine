@@ -88,16 +88,23 @@ proposition = {
 }
 
 ; --- Proof ---
-; Canonical container binding member id sets + proposition.
+; Canonical container binding member id sets + proposition + creation time.
 ; id = prf:v1:<b64u(sha256(canonical(proof-binding)))>
-; created_at is informational and NOT covered by proof-id.
+; created_at IS covered by proof-id (V1 CORE freeze deviation, pre-V1.0 wire
+; fix): a holder re-stamping it changes the recomputed id and fails
+; ID_MISMATCH, so `proof_fresh` cannot be forged by rewrites. Composition
+; linkage (`referenced_proofs`) and `vocabularies` are covered when non-empty;
+; empty sets encode the identical map as V1 (byte-identical ids).
 proof-binding = {
     "v": 1,
     "proposition": proposition,
+    "created_at": uint,              ; bound: re-stamp changes proof_id
     "events": [* tstr],           ; sorted event ids (empty allowed; policy decides)
     "attestations": [* tstr],     ; sorted attestation ids
     "evidence": [* tstr],         ; sorted evidence ids
-    "relationships": [* tstr]     ; sorted relationship ids
+    "relationships": [* tstr],    ; sorted relationship ids
+    ? "referenced_proofs": [* tstr], ; sorted prf:v1: ids, bound when non-empty
+    ? "vocabularies": [* { "ns": tstr, "version": uint }], ; sorted by ns, bound when non-empty
 }
 proof = {
     "v": 1,
@@ -113,7 +120,7 @@ proof = {
     ; Declared vocabularies (SPEC §16b): sorted [{ns, version}], bound by
     ; proof_id when present; absent in V1 bytes. Declaration is provenance.
     "vocabularies"?: [* { "ns": tstr, "version": uint }],
-    "created_at": uint            ; informational, NOT covered by proof_id
+    "created_at": uint            ; bound by proof_id (see proof-binding above)
 }
 
 ; --- Status Objects ---

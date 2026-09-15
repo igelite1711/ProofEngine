@@ -25,6 +25,8 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "revoke" => {
             proof_cli::artifact::write_status_object(&parsed, "revoke").map(|_| proof_cli::EXIT_OK)
         }
+        "supersede" => proof_cli::artifact::write_status_object(&parsed, "supersede")
+            .map(|_| proof_cli::EXIT_OK),
         "withdraw" => proof_cli::artifact::write_status_object(&parsed, "withdraw")
             .map(|_| proof_cli::EXIT_OK),
         "compromise" => proof_cli::artifact::write_status_object(&parsed, "compromise")
@@ -37,8 +39,14 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "verify" => proof_cli::make::verify(&parsed),
         "batch-verify" => proof_cli::make::batch_verify(&parsed),
         "ingest" => proof_cli::ingest::ingest(&parsed),
+        "init-policy" => proof_cli::make::init_policy(&parsed).map(|_| proof_cli::EXIT_OK),
         "evaluate" => proof_cli::make::evaluate(&parsed, false),
+        "explain" => proof_cli::make::evaluate(&parsed, true),
         "inspect" => proof_cli::inspect::inspect(&parsed).map(|_| proof_cli::EXIT_OK),
+        "id" => proof_cli::id::value(&parsed).map(|v| {
+            println!("{v}");
+            proof_cli::EXIT_OK
+        }),
         "graph" => proof_cli::graph::graph(&parsed).map(|_| proof_cli::EXIT_OK),
         "doctor" => proof_cli::doctor::doctor(&parsed),
         "completion" => {
@@ -63,6 +71,17 @@ fn id_of(file: &str) -> String {
     let v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
     v["id"].as_str().unwrap().to_string()
+}
+
+fn issuer_of(file: &str) -> String {
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+    v["issuer"].as_str().unwrap().to_string()
+}
+
+fn id_value(args_vec: Vec<String>) -> Result<String, String> {
+    let parsed = proof_cli::Cli::parse(&args_vec)?;
+    proof_cli::id::value(&parsed)
 }
 
 const D1: &str = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -301,6 +320,7 @@ fn evaluate_json_flag_keeps_exit_contract() {
                 "1700000300",
                 "--revocations-known-at",
                 "1700000300",
+                "--no-require-status",
                 "--json"
             ]
         )),
@@ -331,6 +351,7 @@ fn evaluate_json_flag_keeps_exit_contract() {
                 "1700000300",
                 "--revocations-known-at",
                 "1700000300",
+                "--no-require-status",
                 "--json"
             ]
         )),
@@ -477,7 +498,8 @@ fn artifact_workflow_verify_then_revoke() {
                 "--clock",
                 "1700000300",
                 "--revocations-known-at",
-                "1700000300"
+                "1700000300",
+                "--no-require-status",
             ]
         )),
         Ok(0)
@@ -503,7 +525,8 @@ fn artifact_workflow_verify_then_revoke() {
                 "--clock",
                 "1700000300",
                 "--revocations-known-at",
-                "1700000300"
+                "1700000300",
+                "--no-require-status",
             ]
         )),
         Ok(0)
@@ -533,7 +556,8 @@ fn artifact_workflow_verify_then_revoke() {
                 "--clock",
                 "1700000300",
                 "--revocations-known-at",
-                "1700000300"
+                "1700000300",
+                "--no-require-status",
             ]
         )),
         Ok(1),
@@ -648,7 +672,8 @@ fn proof_wrapper_id_mismatch_rejected_at_load() {
                 "--clock",
                 "1700000300",
                 "--revocations-known-at",
-                "1700000300"
+                "1700000300",
+                "--no-require-status",
             ]
         )),
         Ok(0)
@@ -690,6 +715,7 @@ fn proof_wrapper_id_mismatch_rejected_at_load() {
                 "1700000300",
                 "--revocations-known-at",
                 "1700000300",
+                "--no-require-status",
             ]
         )),
         Ok(1),
@@ -710,7 +736,8 @@ fn proof_wrapper_id_mismatch_rejected_at_load() {
                 "--clock",
                 "1700000300",
                 "--revocations-known-at",
-                "1700000300"
+                "1700000300",
+                "--no-require-status",
             ]
         )),
         Ok(0)
@@ -1002,7 +1029,8 @@ fn build_evidence_empty_string_is_valid() {
                 "--clock",
                 "1700000300",
                 "--revocations-known-at",
-                "1700000300"
+                "1700000300",
+                "--no-require-status",
             ]
         )),
         Ok(0)
@@ -1117,6 +1145,7 @@ fn positional_proof_path_matches_flag_form() {
             "1700000300",
             "--revocations-known-at",
             "1700000300",
+            "--no-require-status",
             "--quiet",
         ],
     ));
@@ -1128,6 +1157,7 @@ fn positional_proof_path_matches_flag_form() {
             "1700000300",
             "--revocations-known-at",
             "1700000300",
+            "--no-require-status",
             "--quiet",
         ]
         .iter()
@@ -1371,6 +1401,7 @@ fn verify_supports_stdin() {
         "1700000300".into(),
         "--revocations-known-at".into(),
         "1700000300".into(),
+        "--no-require-status".into(),
     ])
     .unwrap();
     assert_eq!(parsed.req("proof").unwrap(), "-");
@@ -1385,6 +1416,7 @@ fn verify_supports_stdin() {
             "1700000300",
             "--revocations-known-at",
             "1700000300",
+            "--no-require-status",
         ],
     ));
     assert_eq!(result, Ok(0));
@@ -1577,6 +1609,7 @@ fn status_withdraw_compromise_and_v2_evaluate() {
                 "1700000300",
                 "--revocations-known-at",
                 "1700000300",
+                "--no-require-status",
                 "--trusted",
                 &issuer,
             ]
@@ -2062,6 +2095,7 @@ fn verifier_flags_are_additive_on_real_proof() {
         "1700000300".to_string(),
         "--revocations-known-at".to_string(),
         "1700000300".to_string(),
+        "--no-require-status".to_string(),
     ];
     let mut strict_args = vec!["verify".to_string()];
     strict_args.extend(base.clone());
@@ -2094,4 +2128,1402 @@ fn verifier_flags_are_additive_on_real_proof() {
             .map(|s| s.to_string()),
     );
     assert!(run(bad).is_err());
+}
+
+/// Fix 8: `relate` fails fast on ungrounded trust-relevant edges (previously
+/// built successfully and only failed later at `verify`).
+#[test]
+fn relate_rejects_ungrounded_trust_edges() {
+    let w = tmpdir("ungrounded");
+    let (ev1, ev2) = (format!("{w}/ev1.json"), format!("{w}/ev2.json"));
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:u1",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev1,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "invoice.issued",
+            "--subject",
+            "invoice:u1",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D2,
+            "--out",
+            &ev2,
+        ],
+    ))
+    .unwrap();
+    let (e1, e2) = (id_of(&ev1), id_of(&ev2));
+    // Bare SETTLES without grounding: must fail fast at relate.
+    let bare = run(args(
+        "relate",
+        &[
+            "--from",
+            &e1,
+            "--type",
+            "SETTLES",
+            "--to",
+            &e2,
+            "--out",
+            &format!("{w}/bare.json"),
+        ],
+    ));
+    assert!(
+        bare.is_err(),
+        "ungrounded SETTLES must fail fast at relate: {bare:?}"
+    );
+    // Explicit escape hatch for negative tests.
+    run(args(
+        "relate",
+        &[
+            "--from",
+            &e1,
+            "--type",
+            "SETTLES",
+            "--to",
+            &e2,
+            "--allow-ungrounded",
+            "--out",
+            &format!("{w}/neg.json"),
+        ],
+    ))
+    .unwrap();
+    // Non-trust linkage (REFERENCES) may stay bare.
+    run(args(
+        "relate",
+        &[
+            "--from",
+            &e1,
+            "--type",
+            "REFERENCES",
+            "--to",
+            &e2,
+            "--out",
+            &format!("{w}/ref.json"),
+        ],
+    ))
+    .unwrap();
+}
+
+/// Fail-closed empty feed (pre-launch core audit): bare verify on a fresh
+/// demo proof with asserted freshness but zero status objects FAILS
+/// (REVOCATION_UNKNOWN); explicit `--no-require-status` restores the
+/// caller-asserted-absence PASS for genesis/demo flows.
+#[test]
+fn production_profile_enforces_currency() {
+    let w = tmpdir("production");
+    assert_eq!(demo::run(&w), Ok(proof_cli::EXIT_OK));
+    let proof = format!("{w}/proof.cbor.json");
+    // Bare verify on fresh demo proof with empty feed: FAILS closed.
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+                "--out",
+                &format!("{w}/rep.json")
+            ]
+        )),
+        Ok(1)
+    );
+    // Explicit caller-asserted absence restores the historical PASS.
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+                "--no-require-status",
+                "--out",
+                &format!("{w}/rep.json")
+            ]
+        )),
+        Ok(0)
+    );
+    let rep: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(format!("{w}/rep.json")).unwrap()).unwrap();
+    assert_eq!(rep["currently_acceptable"], serde_json::Value::Bool(true));
+    // --production on the same empty-feed proof: FAILS closed (feed gate).
+    // Production implies --require-status; zero status objects with asserted
+    // freshness is not feed-proved absence.
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+                "--production"
+            ]
+        )),
+        Ok(1)
+    );
+    // --require-status on empty feed: fails closed (now the default too).
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+                "--require-status"
+            ]
+        )),
+        Ok(1)
+    );
+    // Explicit opt-out restores historical behavior (but currency overlays
+    // still apply: --production fails SUPERSEDED/provenance-hint proofs even
+    // with the feed gate off; this fresh proof has neither, so PASS).
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+                "--no-require-status"
+            ]
+        )),
+        Ok(0)
+    );
+    // --production with explicit opt-out: feed gate off, still PASS here
+    // (fresh proof, no currency issues).
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+                "--production",
+                "--no-require-status"
+            ]
+        )),
+        Ok(0)
+    );
+}
+
+/// Evaluate/batch --production overlays currency on policy/validity:
+/// VALID-but-not-current fails even when the policy itself would pass.
+#[test]
+fn production_overlays_currency_on_evaluate_and_batch() {
+    let w = tmpdir("prod-currency");
+    let (ev1, ev2) = (format!("{w}/ev1.json"), format!("{w}/ev2.json"));
+    let (att, att2, evd, rel) = (
+        format!("{w}/att.json"),
+        format!("{w}/att2.json"),
+        format!("{w}/evd.json"),
+        format!("{w}/rel.json"),
+    );
+    let (proof, sup, policy) = (
+        format!("{w}/proof.json"),
+        format!("{w}/sup.json"),
+        format!("{w}/policy.json"),
+    );
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:pc1",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev1,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "invoice.issued",
+            "--subject",
+            "invoice:pc1",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D2,
+            "--out",
+            &ev2,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:pc1",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=1",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:pc1",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=2",
+            "--issued-at",
+            "1700000450",
+            "--out",
+            &att2,
+        ],
+    ))
+    .unwrap();
+    let att_id = id_of(&att);
+    let att2_id = id_of(&att2);
+    run(args(
+        "add-evidence",
+        &[
+            "--kind",
+            "transaction_record",
+            "--digest-hex",
+            D1,
+            "--attestation-ref",
+            &att_id,
+            "--out",
+            &evd,
+        ],
+    ))
+    .unwrap();
+    let evd_id = id_of(&evd);
+    let (e1, e2) = (id_of(&ev1), id_of(&ev2));
+    run(args(
+        "relate",
+        &[
+            "--from",
+            &e1,
+            "--type",
+            "SETTLES",
+            "--to",
+            &e2,
+            "--evidence-ref",
+            &evd_id,
+            "--attestation-ref",
+            &att_id,
+            "--out",
+            &rel,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.settles-invoice",
+            "--subject",
+            &e1,
+            "--predicate",
+            "settles",
+            "--object",
+            &e2,
+            "--at-time",
+            "1700000150",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &format!("{ev1},{ev2}"),
+            "--attestations",
+            &att,
+            "--evidence",
+            &evd,
+            "--relationships",
+            &rel,
+            "--out",
+            &proof,
+        ],
+    ))
+    .unwrap();
+    std::fs::write(
+        &policy,
+        r#"{"policy_version":1,"policy_id":"p","requirements":[{"type":"signature_valid"}]}"#,
+    )
+    .unwrap();
+    run(args(
+        "supersede",
+        &[
+            "--seed",
+            "test",
+            "--old",
+            &att_id,
+            "--new",
+            &att2_id,
+            "--at",
+            "1700000450",
+            "--out",
+            &sup,
+        ],
+    ))
+    .unwrap();
+    let base = [
+        "--proof".to_string(),
+        proof.clone(),
+        "--clock".to_string(),
+        "1700000500".to_string(),
+        "--revocations-known-at".to_string(),
+        "1700000500".to_string(),
+        "--status".to_string(),
+        sup.clone(),
+    ];
+    let mut v = vec!["verify".to_string()];
+    v.extend(base.clone());
+    assert_eq!(run(v), Ok(0));
+    let mut vp = vec!["verify".to_string()];
+    vp.extend(base.clone());
+    vp.push("--production".to_string());
+    assert_eq!(run(vp), Ok(1));
+    assert_eq!(
+        run(args(
+            "evaluate",
+            &[
+                "--proof",
+                &proof,
+                "--policy",
+                &policy,
+                "--clock",
+                "1700000500",
+                "--revocations-known-at",
+                "1700000500",
+                "--status",
+                &sup
+            ]
+        )),
+        Ok(0)
+    );
+    assert_eq!(
+        run(args(
+            "evaluate",
+            &[
+                "--proof",
+                &proof,
+                "--policy",
+                &policy,
+                "--clock",
+                "1700000500",
+                "--revocations-known-at",
+                "1700000500",
+                "--status",
+                &sup,
+                "--production"
+            ]
+        )),
+        Ok(1)
+    );
+    assert_eq!(
+        run(args(
+            "batch-verify",
+            &[
+                "--proofs",
+                &proof,
+                "--clock",
+                "1700000500",
+                "--revocations-known-at",
+                "1700000500",
+                "--status",
+                &sup,
+                "--production"
+            ]
+        )),
+        Ok(1)
+    );
+    assert_eq!(
+        run(args(
+            "batch-verify",
+            &[
+                "--proofs",
+                &proof,
+                "--clock",
+                "1700000500",
+                "--revocations-known-at",
+                "1700000500",
+                "--status",
+                &sup
+            ]
+        )),
+        Ok(0)
+    );
+}
+
+/// `proof-cli id` prints artifact fields for shell plumbing (no python
+/// one-liners): `id` on every artifact, `issuer` on attestations/status.
+#[test]
+fn id_prints_artifact_id_and_issuer() {
+    let w = tmpdir("id-cmd");
+    let (ev, att) = (format!("{w}/ev.json"), format!("{w}/att.json"));
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:p-id",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:p-id",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=1",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    // Default field is the content id (== the file's id member).
+    assert_eq!(
+        id_value(args("id", &["--artifact", &ev])).unwrap(),
+        id_of(&ev)
+    );
+    assert_eq!(
+        id_value(args("id", &["--artifact", &att])).unwrap(),
+        id_of(&att)
+    );
+    // Issuer comes from the attestation; events carry none.
+    assert_eq!(
+        id_value(args("id", &["--artifact", &att, "--field", "issuer"])).unwrap(),
+        issuer_of(&att)
+    );
+    assert!(id_value(args("id", &["--artifact", &ev, "--field", "issuer"])).is_err());
+    // Unknown fields and missing files are usage errors, not panics.
+    assert!(id_value(args("id", &["--artifact", &ev, "--field", "digest"])).is_err());
+    assert!(id_value(args("id", &["--artifact", &format!("{w}/nope.json")])).is_err());
+    // Dispatch parity: exit 0 through the binary path.
+    assert_eq!(run(args("id", &["--artifact", &ev])), Ok(0));
+}
+
+/// `explain --json` carries the same merged machine document as
+/// `evaluate --json`, plus the human explanation as a string field.
+/// Exit contract matches prose mode in both directions.
+#[test]
+fn explain_json_carries_merged_outcome_and_explanation() {
+    let w = tmpdir("explain-json");
+    let (ev, att) = (format!("{w}/ev.json"), format!("{w}/att.json"));
+    let (proof, policy) = (format!("{w}/proof.json"), format!("{w}/policy.json"));
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:p-ex",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:p-ex",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=1",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    let e_id = id_of(&ev);
+    // Omitted --evidence/--relationships: zero members, no hatch needed.
+    run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.settled",
+            "--subject",
+            &e_id,
+            "--predicate",
+            "settled",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &ev,
+            "--attestations",
+            &att,
+            "--out",
+            &proof,
+        ],
+    ))
+    .unwrap();
+    let issuer = issuer_of(&att);
+    run(args(
+        "init-policy",
+        &[
+            "--issuer",
+            &issuer,
+            "--template",
+            "minimal",
+            "--out",
+            &policy,
+        ],
+    ))
+    .unwrap();
+    let base = [
+        "--proof",
+        &proof,
+        "--policy",
+        &policy,
+        "--clock",
+        "1700000300",
+        "--revocations-known-at",
+        "1700000300",
+        "--no-require-status",
+        "--trusted",
+        &issuer,
+    ];
+    let mut prose: Vec<String> = vec!["explain".into()];
+    prose.extend(base.iter().map(|s| s.to_string()));
+    assert_eq!(run(prose), Ok(0));
+    let mut js = vec!["explain".into(), "--json".into()];
+    js.extend(base.iter().map(|s| s.to_string()));
+    assert_eq!(run(js), Ok(0));
+    // Failing policy keeps the exit contract in both modes. Note: the fixed
+    // `--seed test` key IS from_seed([9u8; 32]), so the stranger must use a
+    // different seed ([7u8; 32]) to genuinely mismatch.
+    let stranger = proof_crypto::Ed25519Key::from_seed(&[7u8; 32]).key_ref();
+    let bad = format!("{w}/bad.json");
+    std::fs::write(
+        &bad,
+        format!(
+            r#"{{"policy_version":1,"policy_id":"x","requirements":[{{"type":"issuer_trusted","issuer":"{stranger}"}}]}}"#
+        ),
+    )
+    .unwrap();
+    let mut prose_bad = vec!["explain".into()];
+    prose_bad.extend(
+        [
+            "--proof",
+            &proof,
+            "--policy",
+            &bad,
+            "--clock",
+            "1700000300",
+            "--revocations-known-at",
+            "1700000300",
+            "--no-require-status",
+            "--trusted",
+            &issuer,
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    assert_eq!(run(prose_bad), Ok(1));
+    let mut js_bad = vec!["explain".into(), "--json".into()];
+    js_bad.extend(
+        [
+            "--proof",
+            &proof,
+            "--policy",
+            &bad,
+            "--clock",
+            "1700000300",
+            "--revocations-known-at",
+            "1700000300",
+            "--no-require-status",
+            "--trusted",
+            &issuer,
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    assert_eq!(run(js_bad), Ok(1));
+}
+
+/// Attest fail-fast for opt-in semantic binding (Fix 5 creation-time):
+/// malformed digest, missing evidence-ref, and non-text values are creation
+/// errors (exit 2), not late verify failures.
+#[test]
+fn attest_rejects_bad_evidence_digest_fast() {
+    let w = tmpdir("attest-bind");
+    // Malformed hex.
+    assert!(run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "s:1",
+            "--claim-type",
+            "t",
+            "--claim",
+            "evidence_digest=xyz",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &format!("{w}/a.json"),
+        ],
+    ))
+    .is_err());
+    // Valid hex but no --evidence-ref to bind it to.
+    assert!(run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "s:1",
+            "--claim-type",
+            "t",
+            "--claim",
+            "evidence_digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &format!("{w}/b.json"),
+        ],
+    ))
+    .is_err());
+    // Non-text value cannot encode hex (numbers become Uint).
+    assert!(run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "s:1",
+            "--claim-type",
+            "t",
+            "--claim",
+            "evidence_digest=123",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &format!("{w}/c.json"),
+        ],
+    ))
+    .is_err());
+    // Well-formed binding inputs are still accepted (verify decides).
+    assert_eq!(
+        run(args(
+            "attest",
+            &[
+                "--seed",
+                "test",
+                "--subject",
+                "s:1",
+                "--claim-type",
+                "t",
+                "--claim",
+                "evidence_digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--evidence-ref",
+                "evd:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "--issued-at",
+                "1700000150",
+                "--out",
+                &format!("{w}/d.json"),
+            ]
+        )),
+        Ok(0)
+    );
+}
+
+/// `minimal` template is domain-agnostic: no relationship/evidence
+/// vocabulary, so sensor/legal/science proofs get a passing starter policy
+/// without payment-kind editing.
+#[test]
+fn init_policy_minimal_has_no_domain_vocabulary() {
+    let w = tmpdir("init-minimal");
+    let out = format!("{w}/policy.json");
+    let issuer = proof_crypto::Ed25519Key::from_seed(&[9u8; 32]).key_ref();
+    assert_eq!(
+        run(args(
+            "init-policy",
+            &["--issuer", &issuer, "--template", "minimal", "--out", &out]
+        )),
+        Ok(0)
+    );
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    let types: Vec<&str> = v["requirements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        types,
+        vec![
+            "signature_valid",
+            "issuer_trusted",
+            "not_expired",
+            "not_revoked"
+        ]
+    );
+}
+
+/// `add-evidence --digest-file` hashes file bytes identically to
+/// `--digest-hex` of the file's SHA-256 (no manual hashlib plumbing).
+/// Neither flag → usage error, not a silent empty digest.
+#[test]
+fn add_evidence_digest_file_matches_digest_hex() {
+    use sha2::{Digest, Sha256};
+    let w = tmpdir("digest-file");
+    let payload = format!("{w}/payload.bin");
+    std::fs::write(&payload, b"sensor-bytes-42").unwrap();
+    let hex = hex::encode(Sha256::digest(b"sensor-bytes-42"));
+    let (via_file, via_hex) = (format!("{w}/f.json"), format!("{w}/h.json"));
+    assert_eq!(
+        run(args(
+            "add-evidence",
+            &[
+                "--kind",
+                "measurement",
+                "--digest-file",
+                &payload,
+                "--out",
+                &via_file
+            ]
+        )),
+        Ok(0)
+    );
+    assert_eq!(
+        run(args(
+            "add-evidence",
+            &[
+                "--kind",
+                "measurement",
+                "--digest-hex",
+                &hex,
+                "--out",
+                &via_hex
+            ]
+        )),
+        Ok(0)
+    );
+    assert_eq!(id_of(&via_file), id_of(&via_hex));
+    assert!(run(args("add-evidence", &["--kind", "measurement"])).is_err());
+}
+
+/// `build` without `--evidence`/`--relationships` means zero members
+/// (no `--evidence ""` incantation); events/attestations stay required.
+#[test]
+fn build_omitted_evidence_and_relationships_means_empty() {
+    let w = tmpdir("build-omitted");
+    let (ev, att) = (format!("{w}/ev.json"), format!("{w}/att.json"));
+    let proof = format!("{w}/proof.json");
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:p-omit",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:p-omit",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=1",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    let e_id = id_of(&ev);
+    assert_eq!(
+        run(args(
+            "build",
+            &[
+                "--kind",
+                "payment.settled",
+                "--subject",
+                &e_id,
+                "--predicate",
+                "settled",
+                "--created-at",
+                "1700000200",
+                "--events",
+                &ev,
+                "--attestations",
+                &att,
+                "--out",
+                &proof,
+            ]
+        )),
+        Ok(0)
+    );
+    // And it verifies fresh (evidence stages trivially pass).
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+                "--no-require-status",
+            ]
+        )),
+        Ok(0)
+    );
+}
+
+/// `--seen-store` turns the replay caller-contract into a guardrail:
+/// unseen+record → 0, replay → 1, other contexts unaffected, corrupt stores
+/// and flag misuse are usage/engine errors, verdict FAIL paths skip the gate.
+#[test]
+fn seen_store_rejects_replays_and_records() {
+    let w = tmpdir("seen-store");
+    let (ev, att) = (format!("{w}/ev.json"), format!("{w}/att.json"));
+    let (proof, store) = (format!("{w}/proof.json"), format!("{w}/seen.json"));
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:p-seen",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:p-seen",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=1",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    let e_id = id_of(&ev);
+    run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.settled",
+            "--subject",
+            &e_id,
+            "--predicate",
+            "settled",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &ev,
+            "--attestations",
+            &att,
+            "--out",
+            &proof,
+        ],
+    ))
+    .unwrap();
+    let v = |extra: &[&str]| {
+        let mut a = vec![
+            "verify".to_string(),
+            "--proof".to_string(),
+            proof.clone(),
+            "--clock".to_string(),
+            "1700000300".to_string(),
+            "--revocations-known-at".to_string(),
+            "1700000300".to_string(),
+            "--no-require-status".to_string(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        run(a)
+    };
+    // Flag misuse is a usage error even on a valid proof.
+    assert!(v(&["--seen-record"]).is_err());
+    assert!(v(&["--seen-context", "tx:1"]).is_err());
+    // Unseen + record → 0, store file appears in seen_set.py shape.
+    assert_eq!(
+        v(&[
+            "--seen-store",
+            &store,
+            "--seen-context",
+            "tx:1",
+            "--seen-record"
+        ]),
+        Ok(0)
+    );
+    let sv: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&store).unwrap()).unwrap();
+    assert_eq!(sv["seen"].as_array().unwrap().len(), 1);
+    // Same proof + same context → replay → 1.
+    assert_eq!(
+        v(&[
+            "--seen-store",
+            &store,
+            "--seen-context",
+            "tx:1",
+            "--seen-record"
+        ]),
+        Ok(1)
+    );
+    // Same proof + other context → unseen → 0 (contexts isolate actions).
+    assert_eq!(
+        v(&["--seen-store", &store, "--seen-context", "tx:2"]),
+        Ok(0)
+    );
+    // Corrupt store with the gate requested → engine error, never silent pass.
+    std::fs::write(&store, "not json{{{").unwrap();
+    assert!(v(&["--seen-store", &store, "--seen-context", "tx:1"]).is_err());
+}
+
+/// Verdict FAIL paths skip the seen gate: an invalid proof with seen flags
+/// still exits 1 from the verdict (not the gate) and writes no store.
+#[test]
+fn seen_store_skipped_on_verdict_fail() {
+    let w = tmpdir("seen-skip");
+    let (ev, att) = (format!("{w}/ev.json"), format!("{w}/att.json"));
+    let (proof, store) = (format!("{w}/proof.json"), format!("{w}/seen.json"));
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:p-skip",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:p-skip",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=1",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    let e_id = id_of(&ev);
+    run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.settled",
+            "--subject",
+            &e_id,
+            "--predicate",
+            "settled",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &ev,
+            "--attestations",
+            &att,
+            "--out",
+            &proof,
+        ],
+    ))
+    .unwrap();
+    // No freshness → UNKNOWN verdict FAIL; gate must not create the store.
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--seen-store",
+                &store,
+                "--seen-context",
+                "tx:9",
+                "--seen-record",
+            ]
+        )),
+        Ok(1)
+    );
+    assert!(!std::path::Path::new(&store).exists());
+}
+
+/// Evaluate gates replays on policy-PASS paths (currency overlay applies
+/// first): PASS+unseen records 0, PASS+replay exits 1 with the decision intact.
+#[test]
+fn seen_store_gates_evaluate_pass_paths() {
+    let w = tmpdir("seen-eval");
+    let (ev, att) = (format!("{w}/ev.json"), format!("{w}/att.json"));
+    let (proof, policy, store) = (
+        format!("{w}/proof.json"),
+        format!("{w}/policy.json"),
+        format!("{w}/seen.json"),
+    );
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:p-se",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:p-se",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=1",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    let e_id = id_of(&ev);
+    run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.settled",
+            "--subject",
+            &e_id,
+            "--predicate",
+            "settled",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &ev,
+            "--attestations",
+            &att,
+            "--out",
+            &proof,
+        ],
+    ))
+    .unwrap();
+    let issuer = issuer_of(&att);
+    run(args(
+        "init-policy",
+        &[
+            "--issuer",
+            &issuer,
+            "--template",
+            "minimal",
+            "--out",
+            &policy,
+        ],
+    ))
+    .unwrap();
+    let e = |extra: &[&str]| {
+        let mut a = vec![
+            "evaluate".to_string(),
+            "--proof".to_string(),
+            proof.clone(),
+            "--policy".to_string(),
+            policy.clone(),
+            "--clock".to_string(),
+            "1700000300".to_string(),
+            "--revocations-known-at".to_string(),
+            "1700000300".to_string(),
+            "--no-require-status".to_string(),
+            "--trusted".to_string(),
+            issuer.clone(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        run(a)
+    };
+    assert_eq!(
+        e(&[
+            "--seen-store",
+            &store,
+            "--seen-context",
+            "order:7",
+            "--seen-record"
+        ]),
+        Ok(0)
+    );
+    assert_eq!(
+        e(&[
+            "--seen-store",
+            &store,
+            "--seen-context",
+            "order:7",
+            "--seen-record"
+        ]),
+        Ok(1)
+    );
+}
+
+/// Compose asserts union coherence: two acyclic proofs sharing members
+/// compose (and the composite verifies); a cross-proof derivation cycle
+/// (acyclic alone, cyclic together) fails fast at compose time.
+#[test]
+fn compose_validates_union_graph_coherence() {
+    let w = tmpdir("compose-coherence");
+    let (ev_a, ev_b) = (format!("{w}/a.json"), format!("{w}/b.json"));
+    let (att1, att2) = (format!("{w}/att1.json"), format!("{w}/att2.json"));
+    for (ev, subj) in [(&ev_a, "item:a"), (&ev_b, "item:b")] {
+        run(args(
+            "create-event",
+            &[
+                "--type",
+                "step.completed",
+                "--subject",
+                subj,
+                "--effective-at",
+                "1700000000",
+                "--payload-hex",
+                D1,
+                "--out",
+                ev,
+            ],
+        ))
+        .unwrap();
+    }
+    for (att, i) in [(&att1, "1"), (&att2, "2")] {
+        run(args(
+            "attest",
+            &[
+                "--seed",
+                "test",
+                "--subject",
+                "item:a",
+                "--claim-type",
+                "step.done",
+                "--claim",
+                &format!("n={i}"),
+                "--issued-at",
+                "1700000150",
+                "--out",
+                att,
+            ],
+        ))
+        .unwrap();
+    }
+    let (a_id, b_id) = (id_of(&ev_a), id_of(&ev_b));
+    // Bare PRODUCED edges (PRODUCED needs no grounding refs under V1
+    // defaults; trust-relevant kinds still fail fast at relate).
+    let (fwd, back) = (format!("{w}/fwd.json"), format!("{w}/back.json"));
+    run(args(
+        "relate",
+        &[
+            "--from", &a_id, "--type", "PRODUCED", "--to", &b_id, "--out", &fwd,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "relate",
+        &[
+            "--from", &b_id, "--type", "PRODUCED", "--to", &a_id, "--out", &back,
+        ],
+    ))
+    .unwrap();
+    let build_proof = |tag: &str, att: &str, rel: &str| {
+        let out = format!("{w}/{tag}.proof.json");
+        run(args(
+            "build",
+            &[
+                "--kind",
+                "lineage.chain",
+                "--subject",
+                &a_id,
+                "--predicate",
+                "derived",
+                "--created-at",
+                "1700000200",
+                "--events",
+                &format!("{ev_a},{ev_b}"),
+                "--attestations",
+                att,
+                "--evidence",
+                "",
+                "--relationships",
+                rel,
+                "--out",
+                &out,
+            ],
+        ))
+        .unwrap();
+        out
+    };
+    let p_fwd = build_proof("fwd", &att1, &fwd);
+    let p_back = build_proof("back", &att2, &back);
+    // Each alone is acyclic; fwd+fwd2 share the same edge (deduped union)
+    // for the OK path.
+    let p_fwd2 = build_proof("fwd2", &att1, &fwd);
+    let ok_out = format!("{w}/ok.json");
+    assert_eq!(
+        run(args(
+            "compose",
+            &[
+                "--proofs",
+                &format!("{p_fwd},{p_fwd2}"),
+                "--kind",
+                "composed.chain",
+                "--subject",
+                &a_id,
+                "--predicate",
+                "combines",
+                "--created-at",
+                "1700000300",
+                "--out",
+                &ok_out,
+            ]
+        )),
+        Ok(0)
+    );
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &ok_out,
+                "--clock",
+                "1700000400",
+                "--revocations-known-at",
+                "1700000400",
+                "--no-require-status",
+            ]
+        )),
+        Ok(0)
+    );
+    // Cross-proof cycle: acyclic alone, cyclic together → compose refuses.
+    let bad_out = format!("{w}/bad.json");
+    let r = run(args(
+        "compose",
+        &[
+            "--proofs",
+            &format!("{p_fwd},{p_back}"),
+            "--kind",
+            "composed.chain",
+            "--subject",
+            &a_id,
+            "--predicate",
+            "combines",
+            "--created-at",
+            "1700000300",
+            "--out",
+            &bad_out,
+        ],
+    ));
+    assert!(r.is_err(), "cyclic union must fail fast at compose: {r:?}");
+    assert!(!std::path::Path::new(&bad_out).exists());
 }

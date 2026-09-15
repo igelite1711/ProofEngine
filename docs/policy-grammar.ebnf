@@ -40,8 +40,8 @@ threshold-expr    = ws '{' ws '"threshold"': ws '{' ws
 expression-list   = expression
                   | expression ws ',' ws expression-list
 
-(* Closed requirement set: ten V1 leaves + eight V2 adjudication leaves.
-   V1 policies accept V1 leaves only; V2 expressions accept all eighteen. *)
+(* Closed requirement set: ten V1 leaves + ten V2 adjudication leaves.
+   V1 policies accept V1 leaves only; V2 expressions accept all twenty. *)
 requirement-type  = '"signature_valid"'
                   | '"issuer_trusted"'
                   | '"issuer_excluded"'
@@ -58,8 +58,10 @@ requirement-type  = '"signature_valid"'
                   | '"no_conflicting_evidence"'
                   | '"vocabulary_accepted"'
                   | '"evidence_usable"'
+                  | '"evidence_bound"'
                   | '"requires_reference"'
                   | '"forbids_reference"'
+                  | '"claim_field"'
 
 (* Optional fields per requirement type *)
 requirement-fields = ws ',' ws issuer-field
@@ -72,6 +74,7 @@ requirement-fields = ws ',' ws issuer-field
                   | ws ',' ws ns-fields
                   | ws ',' ws scope-field
                   | ws ',' ws reference-field
+                  | ws ',' ws claim-field-body
 
 issuer-field      = '"issuer"': ws json-string
 relationship-field = '"relationship"': ws json-string
@@ -83,6 +86,14 @@ log-field         = '"log"': ws json-string
 ns-fields         = '"ns"': ws json-string ws ',' ws '"max_version"': ws number
 scope-field       = '"scope"': ws json-string
 reference-field   = '"id"': ws json-string  (* prf:v1: shape, checked at parse *)
+claim-field-body  = ['"claim_type"': ws json-string ws ',' ws]
+                    ['"subject"': ws json-string ws ',' ws]
+                    '"field"': ws json-string ws ',' ws
+                    '"op"': ws claim-op ws ',' ws
+                    '"value"': ws claim-value
+claim-op          = '"eq"' / '"ne"' / '"gt"' / '"gte"' / '"lt"' / '"lte"'
+                    (* uint: all six; text/bool: eq/ne only, else POLICY_INVALID *)
+claim-value       = json-string / number / 'true' / 'false'
 
 (* JSON primitives *)
 json-string       = '"' string-char* '"'
@@ -97,7 +108,7 @@ ws                = *( ' ' / %x0A / %x0D / %x09 )
 (*
   Notes:
   - policy_version 1: V1 body (`requirements`, implicit AND, V1 leaves only)
-  - policy_version 2: V2 body (`expression` tree; all sixteen leaves)
+  - policy_version 2: V2 body (`expression` tree; all twenty leaves)
   - v2 rejects the `requirements` key and v1 rejects v2 leaf names (strict
     separation; unknown versions fail closed)
   - policy_id is an arbitrary string (recommended: namespaced like "merchant_payment_v1")
@@ -106,4 +117,11 @@ ws                = *( ' ' / %x0A / %x0D / %x09 )
   - total expression nodes <= max_policy_requirements (32 default)
   - Extra fields in any object = POLICY_INVALID
   - Unknown requirement type = POLICY_INVALID
+  - claim_field: optional claim_type/subject scope; field != "type" (use
+    claim_type); text/bool allow eq/ne only; uint allows all six ops;
+    matches ACTIVE verified claims only (revoked/expired/superseded never
+    satisfy); missing field or type mismatch = FAIL for that leaf
+  - evidence_bound: some AVAILABLE evidence of `kind` is named by a verified
+    ACTIVE attestation's `evidence_ref` whose claim `evidence_digest` equals
+    the evidence digest; otherwise FAIL for that leaf
 *)

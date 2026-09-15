@@ -147,6 +147,54 @@
         "crates/proof-policy/src/policy.rs",
         "crates/proof-verify/src/pipeline.rs"
       ]
+    },
+    {
+      "commit": "uncommitted",
+      "class": "CORE",
+      "layer": "External-review hardening batch 2 (proposal docs/ARCHITECTURE-CHANGE-PROPOSAL-review-hardening-2.md): CDDL created_at correction to match frozen binding; typed evidence/attestation refs at schema+builders; envelope attestation/status self-consistency crypto-verified without trust inputs; lifecycle target shapes validated; require_status_feed + empty-feed honesty note (default-off/additive); is_supported_keyref rejects empty bodies; MemoryStore tracks Limits; Nint debug_assert; requires_grounding frozen-defaults docs; custom-AAD contract + cross-AAD test (behavior unchanged); RevocationSet denylist docs (no behavior change)",
+      "files": [
+        "crates/proof-core/src/model.rs",
+        "crates/proof-format/src/cbor.rs",
+        "crates/proof-format/src/schema.rs",
+        "crates/proof-format/src/store.rs",
+        "crates/proof-crypto/src/build.rs",
+        "crates/proof-crypto/src/claim.rs",
+        "crates/proof-crypto/src/cose.rs",
+        "crates/proof-crypto/src/envelope.rs",
+        "crates/proof-crypto/src/keys.rs",
+        "crates/proof-verify/src/context.rs",
+        "crates/proof-verify/src/pipeline.rs",
+        "docs/format.cddl"
+      ]
+    },
+    {
+      "commit": "uncommitted",
+      "class": "GENERIC EXTENSION",
+      "layer": "V2 policy leaf claim_field (typed claim-value predicates over ACTIVE claims) behind the policy_version capability row; v1 byte-stable (v1 rejects the name); EBNF + CBOR + describe + eval + state projection; fuzz/differential tripwires extended",
+      "files": [
+        "crates/proof-policy/src/eval.rs",
+        "crates/proof-policy/src/expr.rs",
+        "crates/proof-policy/src/policy.rs",
+        "crates/proof-policy/src/state.rs",
+        "docs/policy-grammar.ebnf"
+      ]
+    },
+    {
+      "commit": "uncommitted",
+      "class": "CORE",
+      "layer": "Review-fixes batch 9 findings (proposal docs/ARCHITECTURE-CHANGE-PROPOSAL-review-fixes-9.md): derivation subgraph always acyclic (REFERENCES/EQUIVALENT excluded; full-DAG stays opt-in); status knowledge cutoff strict issued_at<=verified_at (no skew time-travel); opt-in claim field evidence_digest binding checked in EVIDENCE (absent=no check, shared normalization proof-crypto::claim::evidence_digest_hex); pipeline GRAPH notes + STATUS future message; reserved-field docs; round 7: v2 evidence_bound leaf requiring cryptographic bindings (state projection evidence_bindings + eval + parse/describe/CBOR/EBNF; v1 rejects the name); golden-32/33/34 conformance vectors (derivation cycle, digest mismatch, future-status history)",
+      "files": [
+        "crates/proof-crypto/src/claim.rs",
+        "crates/proof-graph/src/lib.rs",
+        "crates/proof-policy/src/eval.rs",
+        "crates/proof-policy/src/policy.rs",
+        "crates/proof-policy/src/state.rs",
+        "crates/proof-verify/src/pipeline.rs",
+        "docs/policy-grammar.ebnf",
+        "fixtures/golden-32.json",
+        "fixtures/golden-33.json",
+        "fixtures/golden-34.json"
+      ]
     }
   ]
 }

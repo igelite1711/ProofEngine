@@ -261,13 +261,48 @@ pub fn compose(cli: &Cli) -> Result<String, String> {
         }
     }
 
-    let mut b = proof_verify::ProofBuilder::new(proposition, cli.req_u64("created-at")?);
+    // ---- Detect divergent claims across composed attestations ----
+    // SPEC §9.3: divergent_claims is a native, first-class state. Composition
+    // must propagate it so a verifier never receives a silently-contradictory
+    // composite. Detect same (claim.type, subject) with differing fields.
+    let mut divergent_pairs: Vec<(String, String, String, String)> = Vec::new();
+    {
+        let mut by_claim: HashMap<
+            (String, String),
+            Vec<(String, proof_crypto::build::CreatedAttestation)>,
+        > = HashMap::new();
+        for (_id, a) in &attestations {
+            let key = (
+                a.content.claim.claim_type.clone(),
+                a.content.subject.clone(),
+            );
+            by_claim
+                .entry(key)
+                .or_default()
+                .push((_id.clone(), a.clone()));
+        }
+        for ((claim_type, subject), mut group) in by_claim {
+            group.sort_by(|a, b| a.0.cmp(&b.0));
+            let base = &group[0];
+            for candidate in group.iter().skip(1) {
+                if base.1.content.claim.fields != candidate.1.content.claim.fields {
+                    divergent_pairs.push((
+                        claim_type.clone(),
+                        subject.clone(),
+                        base.0.clone(),
+                        candidate.0.clone(),
+                    ));
+                }
+            }
+        }
+    }
     // Composition linkage: record every distinct source proof id. The binding
     // covers the set, so dropping or swapping a source changes the id. A
     // composition byte-identical to its own source is rejected as a
     // self-reference (nothing new to link) rather than silently unwound.
     let mut sources: Vec<String> = seen_proofs.into_iter().collect();
     sources.sort();
+    let mut b = proof_verify::ProofBuilder::new(proposition, cli.req_u64("created-at")?);
     for id in &sources {
         b.add_referenced_proof(id.clone())
             .map_err(|e| format!("compose: bad source id: {e}"))?;
@@ -295,9 +330,101 @@ pub fn compose(cli: &Cli) -> Result<String, String> {
             proof_crypto::build::make_relationship(r, &limits).map_err(|e| e.to_string())?;
         b.add_relationship(created);
     }
+    // ---- Union coherence (fail-closed composition) ----
+    // A composition claims its members combine coherently, so the UNION graph
+    // is validated here — grounding, dangling refs, SUPERSEDES linearity, and
+    // derivation acyclicity — with no clock needed. Cross-proof cycles and
+    // branches (acyclic alone, cyclic/branched together) fail here with
+    // CYCLE_DETECTED/SCHEMA_VIOLATION instead of surfacing later at verify.
+    // TIME/REVOCATION currency stays verify-time by design (composing
+    // historical members is legitimate; relying on them is the verifier's
+    // decision — use --production at verify). Single-proof `build` stays
+    // structural-only so negative-test vectors remain constructible at the
+    // library layer; compose asserts coherence. Custom trust-relevant kinds
+    // ride `--extra-grounded` like verify.
+    {
+        use proof_graph::{check_derivation_acyclic, validate_graph_with_grounding};
+        use proof_graph::{EdgeRecord, NodeSet};
+        let extra = crate::make::extra_grounded(cli);
+        let extra_set: Option<std::collections::HashSet<String>> = if extra.is_empty() {
+            None
+        } else {
+            Some(extra.into_iter().collect())
+        };
+        // Member ids are content-addressed: recompute exactly as the builder
+        // will, so the checked graph IS the assembled graph. Shared members
+        // dedup by id (union semantics, mirroring the maps above) so
+        // composing overlapping proofs never trips duplicate-edge rejection.
+        let mut node_ids: Vec<String> = vec![];
+        let mut edges: Vec<EdgeRecord> = vec![];
+        let mut seen_edges: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for path in &paths {
+            let loaded = load_proof(path, true)?;
+            for e in &loaded.proof.events {
+                let canon = proof_format::encode_canonical(
+                    &proof_format::event_to_cbor(e).map_err(|e| e.to_string())?,
+                );
+                node_ids.push(proof_crypto::id::event_id(&canon));
+            }
+            for a in &loaded.proof.attestations {
+                let canon =
+                    proof_format::encode_canonical(&proof_format::attestation_to_cbor(&a.content));
+                node_ids.push(proof_crypto::id::attestation_id(&canon));
+            }
+            for e in &loaded.proof.evidence {
+                let canon = proof_format::encode_canonical(&proof_format::evidence_to_cbor(e));
+                node_ids.push(proof_crypto::id::evidence_id(&canon));
+            }
+            for r in &loaded.proof.relationships {
+                let canon = proof_format::encode_canonical(&proof_format::relationship_to_cbor(r));
+                let rid = proof_crypto::id::relationship_id(&canon);
+                if seen_edges.insert(rid.clone()) {
+                    edges.push(EdgeRecord::new(r.clone(), rid));
+                }
+            }
+        }
+        let nodes = NodeSet::new(node_ids);
+        validate_graph_with_grounding(&edges, &nodes, &limits, extra_set.as_ref())
+            .map_err(|e| format!("compose: union graph invalid: {e}"))?;
+        check_derivation_acyclic(&edges, &nodes)
+            .map_err(|e| format!("compose: union derivation cycle: {e}"))?;
+    }
     let built = b.build(&limits).map_err(|e| format!("compose: {e}"))?;
     let out = cli.req("out")?;
     crate::artifact::write_proof_file(&out, &built.id, &built.canonical)?;
+
+    // Surface divergent claims detected during composition. SPEC §9.3: conflict
+    // is a native, first-class state; a composite must never silently bury it.
+    // Write a sidecar conflicts file next to the proof so automated consumers
+    // can read it without re-parsing the CBOR.
+    if !divergent_pairs.is_empty() {
+        let n_divergent = divergent_pairs.len();
+        let conflicts_json = serde_json::json!({
+            "conflicts": divergent_pairs
+                .into_iter()
+                .map(|(claim_type, subject, att_a, att_b)| {
+                    serde_json::json!({
+                        "kind": "divergent_claims",
+                        "claim_type": claim_type,
+                        "subject": subject,
+                        "attestation_a": att_a,
+                        "attestation_b": att_b,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        });
+        let conflicts_path = format!("{}.conflicts.json", out.trim_end_matches(".json"));
+        crate::artifact::write_json(&conflicts_path, conflicts_json)?;
+        if !quiet {
+            eprintln!(
+                "compose: {} divergent claim(s) detected — write sidecar -> {}",
+                n_divergent, conflicts_path
+            );
+        }
+    } else if !quiet {
+        eprintln!("compose: no divergent claims detected across composed attestations");
+    }
+
     if !quiet {
         eprintln!(
             "composed {} proof(s) ({} events, {} attestations, {} evidence, {} relationships, {} refs) -> {}",
@@ -348,6 +475,7 @@ pub fn resolve(cli: &Cli) -> Result<i32, String> {
         accepted_vocabularies: vp.accepted_vocabularies,
         extra_grounded: vp.extra_grounded,
         require_acyclic_provenance: vp.require_acyclic_provenance,
+        require_status_feed: vp.require_status_feed,
         ..Default::default()
     };
     let rep = resolve_proof_chain(&proof.canonical, &store, &ctx, max_depth)
@@ -361,6 +489,7 @@ pub fn resolve(cli: &Cli) -> Result<i32, String> {
     };
     let v = serde_json::json!({
         "root": rep.root.proof_id,
+        "root_currently_acceptable": crate::check::is_currently_acceptable(&rep.root),
         "complete": rep.complete(),
         "max_depth": max_depth,
         "resolved": rep.resolved.iter().map(|r| serde_json::json!({
@@ -368,6 +497,7 @@ pub fn resolve(cli: &Cli) -> Result<i32, String> {
             "depth": r.depth,
             "cryptographic_validity": format!("{:?}", r.report.cryptographic_validity),
             "evidence_validity": format!("{:?}", r.report.evidence_validity),
+            "currently_acceptable": crate::check::is_currently_acceptable(&r.report),
         })).collect::<Vec<_>>(),
         "unresolved": rep.unresolved.iter().map(|u| serde_json::json!({
             "id": u.id,

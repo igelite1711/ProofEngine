@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! COSE_Sign1 (RFC 9052 §4.2) with fully-specified algs only.
 //! Protected header: {1: alg, 4: kid} — nothing else. Unprotected MUST be empty.
-//! external_aad defaults to h'504531' ("PE1") but is configurable per-verifier
-//! for cross-domain isolation (V1.1).
+//! Domain separation defaults to h'504531' ("PE1") for all V1 proofs.
+//! Custom-AAD helpers below are ADVANCED adapter tooling for out-of-band
+//! domains only (F11): the V1 pipeline NEVER uses them (it always verifies
+//! under PE1), so a signature minted under one AAD never verifies under
+//! another — misuse fails closed, never cross-accepts. Do NOT use custom AAD
+//! for V1 proofs; agree the AAD out-of-band per deployment and document it.
 
 use ed25519_dalek::{Signature as EdSig, Verifier, VerifyingKey};
 use proof_core::{ErrorCode, Limits, ProofError};
@@ -53,7 +57,10 @@ pub fn sign_ed25519(payload_canonical: &[u8], key: &crate::keys::Ed25519Key) -> 
 }
 
 /// Build a COSE_Sign1 with custom domain separation.
-/// Use this for cross-domain isolation (different domains use different AAD).
+/// ADVANCED (F11): adapter tooling for out-of-band domains only. V1 proofs
+/// always use [`sign_ed25519`] (PE1); the pipeline never verifies under custom
+/// AAD, so cross-domain signatures fail closed there by construction. Agree
+/// the AAD out-of-band per deployment; never accept attacker-chosen AAD.
 pub fn sign_ed25519_with_aad(
     payload_canonical: &[u8],
     key: &crate::keys::Ed25519Key,
@@ -83,6 +90,7 @@ pub fn sign_esp256(
 }
 
 /// Build a COSE_Sign1 with ESP256 and custom domain separation.
+/// ADVANCED (F11): see [`sign_ed25519_with_aad`]. V1 proofs always use PE1.
 pub fn sign_esp256_with_aad(
     payload_canonical: &[u8],
     key: &crate::keys::P256Key,
@@ -230,7 +238,10 @@ pub fn verify_sign1(
 }
 
 /// Full verification with custom domain separation.
-/// Use this when the signature was created with a non-default AAD.
+/// ADVANCED (F11): adapter tooling only. Pass the out-of-band-agreed AAD;
+/// never pass attacker-chosen bytes — a signature from one AAD never verifies
+/// under another (domain separation fails closed). The V1 pipeline always
+/// calls [`verify_sign1`] (PE1).
 pub fn verify_sign1_with_aad(
     bytes: &[u8],
     expected_issuer: &str,
@@ -357,6 +368,46 @@ mod tests {
     #[test]
     fn external_aad_is_pe1() {
         assert_eq!(EXTERNAL_AAD, b"PE1");
+    }
+
+    #[test]
+    fn custom_aad_never_cross_verifies_with_pe1() {
+        // F11: domain separation fails closed — a signature minted under one
+        // AAD never verifies under another, so custom-AAD misuse cannot
+        // cross-accept into V1 (which always verifies under PE1).
+        let key = Ed25519Key::from_seed(&TEST_SEED);
+        let issuer = key.key_ref();
+        let custom = sign_ed25519_with_aad(&payload(), &key, b"OTHER-DOMAIN");
+        // Custom sig fails under default PE1 verification.
+        assert_eq!(
+            verify_sign1(&custom, &issuer, &AllowedAlgs::strict(), &lim())
+                .unwrap_err()
+                .code,
+            ErrorCode::SignatureInvalid
+        );
+        // PE1 sig fails under custom verification.
+        let pe1 = sign_ed25519(&payload(), &key);
+        assert_eq!(
+            verify_sign1_with_aad(
+                &pe1,
+                &issuer,
+                &AllowedAlgs::strict(),
+                &lim(),
+                b"OTHER-DOMAIN"
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::SignatureInvalid
+        );
+        // Custom verifies under its own AAD (adapter out-of-band agreement).
+        verify_sign1_with_aad(
+            &custom,
+            &issuer,
+            &AllowedAlgs::strict(),
+            &lim(),
+            b"OTHER-DOMAIN",
+        )
+        .unwrap();
     }
 
     #[test]

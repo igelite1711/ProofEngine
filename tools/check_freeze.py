@@ -61,8 +61,17 @@ def main():
         return 1
 
     # 3. Frozen-path diffs since the pin must be covered by change records.
+    # Tracked changes AND untracked new files: an unrecorded new fixture or
+    # module under a frozen path is as much a semantic change as an edit
+    # (untracked files were previously invisible to this guard).
     changed = git("diff", "--name-only", f"{pin}..HEAD").stdout.split()
-    frozen_changed = sorted(f for f in changed if is_frozen(f, frozen_paths))
+    untracked = git(
+        "ls-files", "--others", "--exclude-standard"
+    ).stdout.split()
+    candidates = sorted(
+        set(changed) | set(untracked)
+    )
+    frozen_changed = sorted(f for f in candidates if is_frozen(f, frozen_paths))
     approved = set()
     for rec in m["change_records"]:
         approved.update(rec["files"])

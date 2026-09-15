@@ -56,11 +56,14 @@ disproof, note on absence. Strict callers adjudicate via
 - Explicit `verified_at` (+ `skew_leeway`, default 300 s, symmetric on both
   bounds, saturating arithmetic). `verified_at == 0` is the fail-closed
   "no trustworthy clock" sentinel → every attestation EXPIRED.
-- `issued_at > now + skew` → not yet valid → `EXPIRED`.
+- `issued_at > now + skew` → not yet valid → `EXPIRED` (attestation windows;
+  skew absorbs honest clock drift).
 - `expires_at == None` → unbounded (no violation possible). Policies needing
   mandatory expiry have no dedicated requirement type (use `proof_fresh` for proof-age bounds plus caller-supplied clocks; documented boundary).
-- Status objects use the same clock: `issued_at > now + skew` (future-dated)
-  never applies. A status object's own `expires_at` is not consulted for
+- Status objects use a strict knowledge cutoff: `issued_at > now` (no `+skew`
+  grace) never applies — a status issued after the verifier clock cannot
+  affect that historical verification, even within skew. Skew covers drift,
+  not time-travel. A status object's own `expires_at` is not consulted for
   applicability (documented limitation).
 
 ## Authority and freshness rules
