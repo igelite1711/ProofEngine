@@ -1,5 +1,6 @@
 # Rust build artifacts
 /target
+target/
 
 # Generated demo output (reproduce with `make demo`)
 /demo/out/

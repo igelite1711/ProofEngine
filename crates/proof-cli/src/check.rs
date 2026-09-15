@@ -25,10 +25,23 @@ pub struct LoadedProof {
 // disagrees with the bytes is rejected here — never silently verified under
 // a different identity. Wrappers without `id` (raw transports) load by bytes
 // alone; the pipeline report's `proof_id` is authoritative either way.
+//
+// Strict wrapper (M-5, CLI-layer only): unknown top-level fields are
+// rejected fail-closed (exit 2, names the field, e.g.
+// `wrapper has unknown field "evil"`). Allowed keys are exactly what
+// `build`/`compose`/`demo` write via `write_proof_file`
+// (`cbor`,`id`,`kind`) plus the `container_version` compat key `convert`
+// adds (and bare `cbor`+optional `id` raw transports keep working — the
+// allowlist is a subset check, never a required-keys check).
 pub fn load_proof(path: &str, quiet: bool) -> Result<LoadedProof, String> {
     let (text, label) = crate::read_input_text(path)?;
     let v: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("parse {label}: {e}"))?;
+    crate::artifact::reject_unknown_wrapper_fields(
+        &v,
+        &label,
+        crate::artifact::PROOF_WRAPPER_ALLOWED,
+    )?;
     let hex_str = v
         .get("cbor")
         .and_then(|x| x.as_str())
@@ -292,6 +305,37 @@ pub fn verdict_exit(report: &VerifyReport) -> i32 {
     }
 }
 
+/// Unambiguous H-1 human verdict label (CLI-layer only; frozen verdicts
+/// unchanged). Returns `HISTORICALLY_VALID (...)` when crypto+evidence are
+/// valid but currency is not (SUPERSEDED/unverified-provenance history),
+/// `VALID` when valid and current, `INVALID` otherwise. Never returns bare
+/// `VALID` for not-current proofs. `pub` so integration tests assert the
+/// exact label without scraping stderr.
+pub fn human_verdict_label(report: &VerifyReport) -> String {
+    let crypto_ok = report.passed_crypto();
+    let evidence_ok = report.evidence_validity == Validity::Valid;
+    if crypto_ok && evidence_ok {
+        if is_currently_acceptable(report) {
+            "VALID".to_string()
+        } else {
+            "HISTORICALLY_VALID (not currently acceptable; use --production/--strict-current or check currently_acceptable:false)".to_string()
+        }
+    } else {
+        "INVALID".to_string()
+    }
+}
+
+/// Shared warning text for `--no-require-status` empty feeds (H-2 footgun
+/// guard). Backward compatible: the flag keeps working (genesis genuinely
+/// needs it — no revocations can exist yet), but every explicitly-allowed
+/// empty feed warns loudly so prod operators never copy-paste a genesis
+/// invocation. Default stays fail-closed. Message names the risk and remedy.
+pub fn no_require_status_warning(revocations_known_at: u64) -> String {
+    format!(
+        "WARNING: --no-require-status asserts caller-checked absence with 0 status objects (--revocations-known-at {revocations_known_at}): lifecycle ACTIVE is asserted, not feed-proved. NEVER use in production; supply --status feed files + --authority keys (see `help verify`; genesis/demo only)."
+    )
+}
+
 /// Human-readable verification summary on stderr. Derived purely from the
 /// report (no independent decision logic). stdout stays machine-readable;
 /// callers must respect `--quiet`.
@@ -337,11 +381,15 @@ pub fn emit_human_summary(report: &VerifyReport, strict_fail: bool) {
         if currency_ok {
             (crate::green("VALID"), crate::EXIT_OK)
         } else {
-            // Fix 1/3 rename: VALID-but-not-current is historical, not
-            // currently trustworthy. Exit stays 0 bare (frozen verdicts);
-            // --strict-current/--production exits 1 (handled by caller via
-            // strict_fail). Never let bare VALID be misread as acceptable.
-            (crate::green("VALID (historical — not currently acceptable; use --production/--strict-current or check currently_acceptable)"), crate::EXIT_OK)
+            // H-1 fix (CLI-layer only, frozen verdicts unchanged): bare
+            // `verify` VALID on SUPERSEDED/unverified-provenance history is
+            // historical, not currently trustworthy. The human label is
+            // unambiguous (`HISTORICALLY_VALID`, never bare `VALID`), exit
+            // stays 0 bare (frozen verdicts); --strict-current/--production
+            // exits 1 (handled by caller via strict_fail). Automation MUST
+            // check `currently_acceptable:false` in JSON (prominent,
+            // stable field name) before treating any VALID as trustworthy.
+            (crate::green("HISTORICALLY_VALID (not currently acceptable; use --production/--strict-current or check currently_acceptable:false)"), crate::EXIT_OK)
         }
     } else {
         (crate::red("INVALID"), crate::EXIT_FAIL)

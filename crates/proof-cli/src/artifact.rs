@@ -28,8 +28,88 @@ pub fn write_json(path: &str, value: serde_json::Value) -> Result<(), String> {
 }
 
 fn read_json(path: &str) -> Result<serde_json::Value, String> {
-    let text = crate::read_input_file(path)?;
-    serde_json::from_str(&text).map_err(|e| format!("parse {path}: {e}"))
+    let (text, label) = crate::read_input_text(path)?;
+    serde_json::from_str(&text).map_err(|e| format!("parse {label}: {e}"))
+}
+
+/// Label for wrapper errors: file path, or `stdin` for `-`.
+fn wrapper_label(path: &str) -> String {
+    if path == "-" {
+        "stdin".to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+/// Strict wrapper allowlists (M-5 fix, CLI-layer only).
+///
+/// JSON wrappers are transport-only; the canonical CBOR bytes are the
+/// artifact of record. Unknown top-level fields are rejected fail-closed
+/// (exit 2) so wrapper smuggling (`"evil"`, injected `proof_id`, …) can
+/// never ride a VALID verdict. Allowed keys are exactly what the CLI
+/// writers emit, plus the standard-envelope compat keys produced by
+/// `export`/`convert` (`container_version`, `sign1` alias) for roundtrips:
+///
+/// - proof (`write_proof_file` via `build`/`compose`/`demo`): `cbor`,`id`,`kind`
+/// - event (`create-event`, `ingest`): `kind`,`id`,`cbor`
+/// - attestation (`attest`): `kind`,`id`,`issuer`,`cbor`,`sign1_b64`
+/// - evidence (`add-evidence`): `kind`,`id`,`cbor`
+/// - relationship (`relate`): `kind`,`id`,`cbor`
+/// - status (`revoke`/`supersede`/`withdraw`/`compromise`, `demo`): `kind`,`id`,`issuer`,`claim_type`,`cbor`,`sign1_b64`
+/// - envelope compat (accepted, never required): `container_version` and, on
+///   signed wrappers, `sign1` as an alias for `sign1_b64`
+///   (`export` writes `container_version/kind/id/cbor/sign1`; `convert`
+///   normalizes `sign1`↔`sign1_b64` and adds `container_version`).
+pub const PROOF_WRAPPER_ALLOWED: &[&str] = &["cbor", "id", "kind", "container_version"];
+pub const EVENT_WRAPPER_ALLOWED: &[&str] = &["cbor", "id", "kind", "container_version"];
+pub const EVIDENCE_WRAPPER_ALLOWED: &[&str] = &["cbor", "id", "kind", "container_version"];
+pub const RELATIONSHIP_WRAPPER_ALLOWED: &[&str] = &["cbor", "id", "kind", "container_version"];
+pub const ATTESTATION_WRAPPER_ALLOWED: &[&str] = &[
+    "cbor",
+    "id",
+    "kind",
+    "issuer",
+    "sign1_b64",
+    "sign1",
+    "container_version",
+];
+pub const STATUS_WRAPPER_ALLOWED: &[&str] = &[
+    "cbor",
+    "id",
+    "kind",
+    "issuer",
+    "claim_type",
+    "sign1_b64",
+    "sign1",
+    "container_version",
+];
+
+/// Reject unknown top-level wrapper fields fail-closed.
+///
+/// `allowed` is the exact allowlist above. The error names the field
+/// (`wrapper has unknown field "evil"`) and is a usage/engine error
+/// (exit 2) — never a verdict. Deterministic: first unknown in sorted
+/// order is reported. Non-object wrappers are rejected the same way.
+pub fn reject_unknown_wrapper_fields(
+    v: &serde_json::Value,
+    label: &str,
+    allowed: &[&str],
+) -> Result<(), String> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| format!("{label}: wrapper must be a JSON object"))?;
+    let mut unknown: Vec<&String> = obj
+        .keys()
+        .filter(|k| !allowed.contains(&k.as_str()))
+        .collect();
+    unknown.sort();
+    if let Some(key) = unknown.first() {
+        return Err(format!(
+            "{label}: wrapper has unknown field \"{key}\" (allowed: {} — unknown wrapper fields rejected fail-closed)",
+            allowed.join(",")
+        ));
+    }
+    Ok(())
 }
 
 pub fn cbor_to_hex(bytes: &[u8]) -> String {
@@ -534,8 +614,14 @@ pub fn hash_ref_from_hex(s: &str) -> Result<proof_core::HashRef, String> {
 /// must match the id recomputed from the bytes. `quiet` suppresses the
 /// progress note (`--quiet` must silence all nonessential stderr).
 // PE-CLI-002: re-verify on load; files are transport, never authority.
+//
+// Strict wrapper (M-5): unknown top-level fields are rejected fail-closed
+// (exit 2, names the field). Allowed keys are exactly what `create-event` /
+// `ingest` write (`kind`,`id`,`cbor`) plus envelope compat
+// (`container_version`,`sign1`) from `export`/`convert` roundtrips.
 pub fn load_event(path: &str, limits: &Limits, quiet: bool) -> Result<EventContent, String> {
     let v = read_json(path)?;
+    reject_unknown_wrapper_fields(&v, &wrapper_label(path), EVENT_WRAPPER_ALLOWED)?;
     let bytes =
         hex::decode(req_str(&v, path, "cbor")?).map_err(|e| format!("{path}: bad hex: {e}"))?;
     let expect = opt_str(&v, path, "id")?;
@@ -555,15 +641,30 @@ pub fn load_event(path: &str, limits: &Limits, quiet: bool) -> Result<EventConte
 /// Load + fully re-verify a signed attestation artifact: COSE envelope,
 /// issuer binding, canonical bytes, payload agreement, and id binding.
 /// `quiet` suppresses the progress note.
+///
+/// Strict wrapper (M-5): unknown top-level fields are rejected fail-closed
+/// (exit 2, names the field). Allowed keys are exactly what `attest`
+/// writes (`kind`,`id`,`issuer`,`cbor`,`sign1_b64`) plus envelope compat
+/// (`container_version`,`sign1`) from `export`/`convert` roundtrips.
 pub fn load_attestation(
     path: &str,
     limits: &Limits,
     quiet: bool,
 ) -> Result<CreatedAttestation, String> {
     let v = read_json(path)?;
+    reject_unknown_wrapper_fields(&v, &wrapper_label(path), ATTESTATION_WRAPPER_ALLOWED)?;
+    // `sign1` (standard envelope spelling) is accepted as an alias for
+    // `sign1_b64`: `convert` normalizes both spellings, `export` writes
+    // `sign1`. The bytes still authenticate via the envelope.
+    let sign1_b64 = v
+        .get("sign1_b64")
+        .or_else(|| v.get("sign1"))
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| format!("{}: missing `sign1_b64`", wrapper_label(path)))?
+        .to_string();
     let bytes =
         hex::decode(req_str(&v, path, "cbor")?).map_err(|e| format!("{path}: bad hex: {e}"))?;
-    let sign1 = proof_crypto::id::b64u_decode(&req_str(&v, path, "sign1_b64")?)
+    let sign1 = proof_crypto::id::b64u_decode(&sign1_b64)
         .map_err(|e| format!("{path}: bad sign1_b64: {e}"))?;
     let issuer = opt_str(&v, path, "issuer")?.ok_or_else(|| format!("{path}: missing `issuer`"))?;
     let (content, id) = proof_crypto::build::verify_attestation(
@@ -607,8 +708,14 @@ pub fn load_attestation(
 
 /// Load + fully re-verify an evidence artifact.
 /// `quiet` suppresses the progress note.
+///
+/// Strict wrapper (M-5): unknown top-level fields are rejected fail-closed
+/// (exit 2, names the field). Allowed keys are exactly what `add-evidence`
+/// writes (`kind`,`id`,`cbor`) plus envelope compat
+/// (`container_version`,`sign1`) from `export`/`convert` roundtrips.
 pub fn load_evidence(path: &str, limits: &Limits, quiet: bool) -> Result<Evidence, String> {
     let v = read_json(path)?;
+    reject_unknown_wrapper_fields(&v, &wrapper_label(path), EVIDENCE_WRAPPER_ALLOWED)?;
     let bytes =
         hex::decode(req_str(&v, path, "cbor")?).map_err(|e| format!("{path}: bad hex: {e}"))?;
     let expect = opt_str(&v, path, "id")?;
@@ -627,8 +734,14 @@ pub fn load_evidence(path: &str, limits: &Limits, quiet: bool) -> Result<Evidenc
 
 /// Load + fully re-verify a relationship artifact.
 /// `quiet` suppresses the progress note.
+///
+/// Strict wrapper (M-5): unknown top-level fields are rejected fail-closed
+/// (exit 2, names the field). Allowed keys are exactly what `relate`
+/// writes (`kind`,`id`,`cbor`) plus envelope compat
+/// (`container_version`,`sign1`) from `export`/`convert` roundtrips.
 pub fn load_relationship(path: &str, limits: &Limits, quiet: bool) -> Result<Relationship, String> {
     let v = read_json(path)?;
+    reject_unknown_wrapper_fields(&v, &wrapper_label(path), RELATIONSHIP_WRAPPER_ALLOWED)?;
     let bytes =
         hex::decode(req_str(&v, path, "cbor")?).map_err(|e| format!("{path}: bad hex: {e}"))?;
     let expect = opt_str(&v, path, "id")?;
@@ -648,13 +761,29 @@ pub fn load_relationship(path: &str, limits: &Limits, quiet: bool) -> Result<Rel
 /// Load a status artifact as a signed object (signature is verified here;
 /// authority/trust decisions happen later in the pipeline).
 /// `quiet` suppresses the progress note.
+///
+/// Strict wrapper (M-5): unknown top-level fields are rejected fail-closed
+/// (exit 2, names the field). Allowed keys are exactly what the status
+/// writers (`revoke`/`supersede`/`withdraw`/`compromise`, `demo`) write:
+/// `kind`,`id`,`issuer`,`claim_type`,`cbor`,`sign1_b64`, plus envelope
+/// compat (`container_version`,`sign1`) from `export`/`convert` roundtrips.
 pub fn load_status(
     path: &str,
     limits: &Limits,
     quiet: bool,
 ) -> Result<proof_crypto::SignedStatus, String> {
     let v = read_json(path)?;
-    let sign1 = proof_crypto::id::b64u_decode(&req_str(&v, path, "sign1_b64")?)
+    reject_unknown_wrapper_fields(&v, &wrapper_label(path), STATUS_WRAPPER_ALLOWED)?;
+    // `sign1` (standard envelope spelling) is accepted as an alias for
+    // `sign1_b64`: `convert` normalizes both spellings, `export` writes
+    // `sign1`. The bytes still authenticate via the envelope.
+    let sign1_b64 = v
+        .get("sign1_b64")
+        .or_else(|| v.get("sign1"))
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| format!("{}: missing `sign1_b64`", wrapper_label(path)))?
+        .to_string();
+    let sign1 = proof_crypto::id::b64u_decode(&sign1_b64)
         .map_err(|e| format!("{path}: bad sign1_b64: {e}"))?;
     let issuer = req_str(&v, path, "issuer")?;
     // The file states who must have signed; the signature, the kid binding,

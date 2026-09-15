@@ -257,6 +257,8 @@ pub fn verify(cli: &Cli) -> Result<i32, String> {
     // `load_proof` validates CBOR/schema/envelope before the pipeline runs;
     // on content failures we re-run the pipeline on raw bytes so callers get
     // the same PARSE/SCHEMA report the library produces, instead of prose.
+    // Wrapper/shape failures (unknown field, non-object, transport) stay
+    // exit 2: the wrapper never verified, so there is no verdict to report.
     let proof_path = cli.proof_path()?;
     let proof = match crate::check::load_proof(&proof_path, cli.quiet()) {
         Ok(p) => p,
@@ -275,6 +277,14 @@ pub fn verify(cli: &Cli) -> Result<i32, String> {
                 return Ok(crate::EXIT_FAIL);
             }
             // Try raw bytes -> pipeline report for CBOR/schema failures.
+            // Strict-wrapper / transport failures never become verdicts:
+            // unknown wrapper fields, non-object wrappers, missing files,
+            // bad JSON/hex are usage/engine errors (exit 2).
+            if e.contains("wrapper has unknown field")
+                || e.contains("wrapper must be a JSON object")
+            {
+                return Err(e);
+            }
             if let Ok(raw) = crate::check::load_proof_bytes_raw(&proof_path) {
                 // Load status objects for pipeline context (ignore errors here;
                 // status load failures are reported via STATUS stage, not here).
@@ -359,9 +369,11 @@ pub fn verify(cli: &Cli) -> Result<i32, String> {
         && !crate::check::is_currently_acceptable(&report);
     if !cli.quiet() {
         crate::check::emit_human_summary(&report, strict_fail);
-        // Empty-feed note: only reachable when the caller explicitly allowed
-        // the empty feed via --no-require-status (default fails closed with
-        // UNKNOWN). Warn that ACTIVE here is caller-asserted absence.
+        // H-2 footgun guard (backward compatible): `--no-require-status`
+        // keeps working (genesis genuinely needs it — no revocations can
+        // exist yet), but it asserts absence instead of proving it. Loud
+        // WARNING on every explicitly-allowed empty feed so prod operators
+        // never copy-paste a genesis invocation. Default stays fail-closed.
         // Only warn when the proof is otherwise VALID (ACTIVE) - UNKNOWN/STALE
         // already fails closed with its own hint.
         if c.revocations_known_at.is_some()
@@ -372,8 +384,8 @@ pub fn verify(cli: &Cli) -> Result<i32, String> {
                 .any(|l| l.status == proof_core::LifecycleStatus::Active)
         {
             eprintln!(
-                "  warning: 0 status objects with --revocations-known-at {} (--no-require-status): lifecycle ACTIVE asserts caller-checked absence, not feed-proved absence.",
-                c.revocations_known_at.unwrap_or(0)
+                "{}",
+                crate::check::no_require_status_warning(c.revocations_known_at.unwrap_or(0))
             );
         }
         // Empty-feed failure: the default failed closed (UNKNOWN) on an empty

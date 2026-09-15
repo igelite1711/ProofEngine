@@ -83,8 +83,7 @@ Machine contracts: `verify` stdout is always the JSON report (parse it on
 exit 1 too); `evaluate` prose prints decision lines only (`--json` for the
 merged `{policy_outcome, report}` document); exit 0 = PASS, 1 =
 FAIL/INDETERMINATE/not-current/replay, 2 = usage/engine error. Never treat
-bare `VALID` as trustworthy without `currently_acceptable` (or
-`--production`, which enforces it via exit code).
+bare `VALID` as trustworthy without `currently_acceptable` (or `--production`, which enforces it via exit code). Bare-verify VALID on SUPERSEDED history prints human `HISTORICALLY_VALID` (exit 0, JSON `currently_acceptable:false`); unknown JSON wrapper fields are transport errors (exit 2, names the field).
 
 ## 4. Feeds, rotation, replay, blobs, keys, PII
 

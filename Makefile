@@ -89,6 +89,7 @@ cddl-validate: ## Validate golden vectors against CDDL schema
 
 freeze-guard: ## Check the semantic foundation is untouched since the pin (PE-FREEZE-001)
 	python3 tools/check_freeze.py
+	python3 tools/check_freeze_selftest.py
 
 sbom: ## Generate the CycloneDX SBOM from Cargo.lock (PE-OPS-006)
 	python3 tools/gen_sbom.py --out sbom.cdx.json

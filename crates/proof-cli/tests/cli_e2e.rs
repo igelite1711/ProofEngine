@@ -101,7 +101,7 @@ fn cli_parses_flags_lists_and_bools() {
             "key:a".into(),
             "--trusted".into(),
             "key:b,key:c".into(),
-            "--strict".into(),
+            "--strict-current".into(),
             "--skew=7".into(),
         ]
         .as_ref(),
@@ -110,13 +110,64 @@ fn cli_parses_flags_lists_and_bools() {
     assert_eq!(c.req("proof").unwrap(), "p.json");
     assert_eq!(c.req_u64("clock").unwrap(), 1_700_000_300);
     assert_eq!(c.many("trusted"), vec!["key:a", "key:b,key:c"]);
-    assert!(c.has("strict"));
+    assert!(c.has("strict-current"));
     assert_eq!(c.opt("skew").as_deref(), Some("7"));
     assert!(c.req("missing").is_err());
     let bad =
         proof_cli::Cli::parse(["verify".into(), "--clock".into(), "not-a-number".into()].as_ref())
             .unwrap();
     assert!(bad.req_u64("clock").is_err());
+}
+
+#[test]
+fn unknown_flags_are_rejected_fail_closed() {
+    // A flag the command does not implement is a usage error (exit 2 path),
+    // never silently ignored: `--policy` on verify, or a typo of a
+    // safety-profile flag, must not change the profile that runs.
+    let err = proof_cli::Cli::parse(
+        [
+            "verify".into(),
+            "--proof".into(),
+            "p.json".into(),
+            "--policy".into(),
+            "pol.json".into(),
+        ]
+        .as_ref(),
+    )
+    .unwrap_err();
+    assert!(err.contains("--policy") && err.contains("verify"), "{err}");
+    let err = proof_cli::Cli::parse(["verify".into(), "--producton".into()].as_ref()).unwrap_err();
+    assert!(err.contains("--producton"), "{err}");
+    let err = proof_cli::Cli::parse(["evaluate".into(), "--trsuted".into(), "k".into()].as_ref())
+        .unwrap_err();
+    assert!(err.contains("--trsuted"), "{err}");
+    // Short aliases stay wired; unknown short flags are rejected too.
+    let ok = proof_cli::Cli::parse(
+        [
+            "verify".into(),
+            "-p".into(),
+            "p.json".into(),
+            "-q".into(),
+            "-j".into(),
+        ]
+        .as_ref(),
+    )
+    .unwrap();
+    assert!(ok.quiet() && ok.has("json") && ok.opt("proof").as_deref() == Some("p.json"));
+    let err = proof_cli::Cli::parse(["verify".into(), "-z".into()].as_ref()).unwrap_err();
+    assert!(err.contains("-z"), "{err}");
+    // Global flags remain valid everywhere (here: a creation command).
+    let ok = proof_cli::Cli::parse(
+        [
+            "create-event".into(),
+            "--quiet".into(),
+            "--out".into(),
+            "e.json".into(),
+        ]
+        .as_ref(),
+    )
+    .unwrap();
+    assert!(ok.quiet() && ok.opt("out").as_deref() == Some("e.json"));
 }
 
 #[test]
@@ -742,6 +793,522 @@ fn proof_wrapper_id_mismatch_rejected_at_load() {
             ]
         )),
         Ok(0)
+    ); // A bare cbor+id wrapper (no kind) still loads by bytes (raw transport).
+    let mut v3: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&proof).unwrap()).unwrap();
+    v3.as_object_mut().unwrap().remove("kind");
+    let bare = format!("{w}/proof-bare.json");
+    std::fs::write(&bare, serde_json::to_string_pretty(&v3).unwrap()).unwrap();
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &bare,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+                "--no-require-status",
+            ]
+        )),
+        Ok(0),
+        "bare cbor+id wrapper (no kind) must still load"
+    );
+}
+
+/// M-5 strict wrappers (CLI-layer only): unknown top-level fields in
+/// proof/artifact JSON wrappers are rejected fail-closed (exit 2, names
+/// the field) -- never silently verified under extra keys.
+#[test]
+fn wrapper_unknown_fields_rejected_fail_closed() {
+    let w = tmpdir("wrapper-strict");
+    let (ev1, att) = (format!("{w}/ev1.json"), format!("{w}/att.json"));
+    let proof = format!("{w}/proof.json");
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:p-strict",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev1,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:p-strict",
+            "--claim-type",
+            "payment.settled",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.settles-invoice",
+            "--subject",
+            "payment:p-strict",
+            "--predicate",
+            "settles",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &ev1,
+            "--attestations",
+            &att,
+            "--evidence",
+            "",
+            "--relationships",
+            "",
+            "--out",
+            &proof,
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000300",
+                "--revocations-known-at",
+                "1700000300",
+                "--no-require-status",
+            ]
+        )),
+        Ok(0),
+        "valid wrapper must still verify"
+    );
+    let mut evil: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&proof).unwrap()).unwrap();
+    evil["evil"] = serde_json::Value::String("injected".into());
+    let evil_path = format!("{w}/proof-evil.json");
+    std::fs::write(&evil_path, serde_json::to_string_pretty(&evil).unwrap()).unwrap();
+    let err = run(args(
+        "verify",
+        &[
+            "--proof",
+            &evil_path,
+            "--clock",
+            "1700000300",
+            "--revocations-known-at",
+            "1700000300",
+            "--no-require-status",
+        ],
+    ))
+    .unwrap_err();
+    assert!(
+        err.contains("wrapper has unknown field \"evil\""),
+        "unknown field must be named, got: {err}"
+    );
+    let mut injected: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&proof).unwrap()).unwrap();
+    injected["proof_id"] =
+        serde_json::Value::String("prf:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into());
+    let injected_path = format!("{w}/proof-injected.json");
+    std::fs::write(
+        &injected_path,
+        serde_json::to_string_pretty(&injected).unwrap(),
+    )
+    .unwrap();
+    let err2 = run(args(
+        "verify",
+        &[
+            "--proof",
+            &injected_path,
+            "--clock",
+            "1700000300",
+            "--revocations-known-at",
+            "1700000300",
+            "--no-require-status",
+        ],
+    ))
+    .unwrap_err();
+    assert!(
+        err2.contains("wrapper has unknown field \"proof_id\""),
+        "injected proof_id key must be rejected by name, got: {err2}"
+    );
+    let load_err = match proof_cli::check::load_proof(&evil_path, true) {
+        Ok(_) => panic!("evil wrapper must not load"),
+        Err(e) => e,
+    };
+    assert!(
+        load_err.contains("wrapper has unknown field \"evil\""),
+        "load_proof must name the unknown field, got: {load_err}"
+    );
+    let mut bad_ev: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ev1).unwrap()).unwrap();
+    bad_ev["evil"] = serde_json::Value::String("injected".into());
+    let bad_ev_path = format!("{w}/ev-evil.json");
+    std::fs::write(&bad_ev_path, serde_json::to_string_pretty(&bad_ev).unwrap()).unwrap();
+    let build_err = run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.settles-invoice",
+            "--subject",
+            "payment:p-strict",
+            "--predicate",
+            "settles",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &bad_ev_path,
+            "--attestations",
+            &att,
+            "--out",
+            &format!("{w}/must-not-exist.json"),
+        ],
+    ))
+    .unwrap_err();
+    assert!(
+        build_err.contains("wrapper has unknown field \"evil\""),
+        "member artifact unknown field must be named, got: {build_err}"
+    );
+    assert!(
+        !std::path::Path::new(&format!("{w}/must-not-exist.json")).exists(),
+        "no proof may be built from a smuggled wrapper"
+    );
+    let mut bad_att: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&att).unwrap()).unwrap();
+    bad_att["evil"] = serde_json::Value::String("injected".into());
+    let bad_att_path = format!("{w}/att-evil.json");
+    std::fs::write(
+        &bad_att_path,
+        serde_json::to_string_pretty(&bad_att).unwrap(),
+    )
+    .unwrap();
+    let limits = proof_cli::limits();
+    let att_err = match proof_cli::artifact::load_attestation(&bad_att_path, &limits, true) {
+        Ok(_) => panic!("evil attestation must not load"),
+        Err(e) => e,
+    };
+    assert!(
+        att_err.contains("wrapper has unknown field \"evil\""),
+        "attestation unknown field must be named, got: {att_err}"
+    );
+    let evil_text = std::fs::read_to_string(&evil_path).unwrap();
+    let evil_value: serde_json::Value = serde_json::from_str(&evil_text).unwrap();
+    let stdin_err = proof_cli::artifact::reject_unknown_wrapper_fields(
+        &evil_value,
+        "stdin",
+        proof_cli::artifact::PROOF_WRAPPER_ALLOWED,
+    )
+    .unwrap_err();
+    assert!(
+        stdin_err.contains("wrapper has unknown field \"evil\""),
+        "stdin wrapper must name the unknown field, got: {stdin_err}"
+    );
+    assert_eq!(
+        proof_cli::artifact::PROOF_WRAPPER_ALLOWED,
+        &["cbor", "id", "kind", "container_version"]
+    );
+    assert!(
+        proof_cli::artifact::ATTESTATION_WRAPPER_ALLOWED.contains(&"sign1_b64")
+            && proof_cli::artifact::ATTESTATION_WRAPPER_ALLOWED.contains(&"issuer")
+    );
+    assert!(
+        proof_cli::artifact::STATUS_WRAPPER_ALLOWED.contains(&"claim_type")
+            && proof_cli::artifact::STATUS_WRAPPER_ALLOWED.contains(&"sign1_b64")
+    );
+}
+
+/// H-1 historic-VALID currency (CLI-layer only, frozen verdicts unchanged):
+/// after supersede, bare verify stays exit 0 (historical VALID) with
+/// currently_acceptable:false in JSON and an unambiguous HISTORICALLY_VALID
+/// human label -- while --strict-current and --production exit 1 on the same
+/// bytes. JSON field names stay stable.
+#[test]
+fn superseded_proof_bare_verify_is_historical_strict_fails() {
+    let w = tmpdir("historical");
+    let (ev1, ev2) = (format!("{w}/ev1.json"), format!("{w}/ev2.json"));
+    let (att, att2, evd, rel) = (
+        format!("{w}/att.json"),
+        format!("{w}/att2.json"),
+        format!("{w}/evd.json"),
+        format!("{w}/rel.json"),
+    );
+    let (proof, sup, rep) = (
+        format!("{w}/proof.json"),
+        format!("{w}/sup.json"),
+        format!("{w}/rep.json"),
+    );
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "payment.created",
+            "--subject",
+            "payment:h1",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D1,
+            "--out",
+            &ev1,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "create-event",
+        &[
+            "--type",
+            "invoice.issued",
+            "--subject",
+            "invoice:h1",
+            "--effective-at",
+            "1700000000",
+            "--payload-hex",
+            D2,
+            "--out",
+            &ev2,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:h1",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=1",
+            "--issued-at",
+            "1700000150",
+            "--out",
+            &att,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "attest",
+        &[
+            "--seed",
+            "test",
+            "--subject",
+            "payment:h1",
+            "--claim-type",
+            "payment.settled",
+            "--claim",
+            "amount=2",
+            "--issued-at",
+            "1700000450",
+            "--out",
+            &att2,
+        ],
+    ))
+    .unwrap();
+    let att_id = id_of(&att);
+    let att2_id = id_of(&att2);
+    run(args(
+        "add-evidence",
+        &[
+            "--kind",
+            "transaction_record",
+            "--digest-hex",
+            D1,
+            "--attestation-ref",
+            &att_id,
+            "--out",
+            &evd,
+        ],
+    ))
+    .unwrap();
+    let evd_id = id_of(&evd);
+    let (e1, e2) = (id_of(&ev1), id_of(&ev2));
+    run(args(
+        "relate",
+        &[
+            "--from",
+            &e1,
+            "--type",
+            "SETTLES",
+            "--to",
+            &e2,
+            "--evidence-ref",
+            &evd_id,
+            "--attestation-ref",
+            &att_id,
+            "--out",
+            &rel,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "build",
+        &[
+            "--kind",
+            "payment.settles-invoice",
+            "--subject",
+            &e1,
+            "--predicate",
+            "settles",
+            "--created-at",
+            "1700000200",
+            "--events",
+            &format!("{ev1},{ev2}"),
+            "--attestations",
+            &att,
+            "--evidence",
+            &evd,
+            "--relationships",
+            &rel,
+            "--out",
+            &proof,
+        ],
+    ))
+    .unwrap();
+    run(args(
+        "supersede",
+        &[
+            "--seed",
+            "test",
+            "--old",
+            &att_id,
+            "--new",
+            &att2_id,
+            "--at",
+            "1700000450",
+            "--out",
+            &sup,
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000500",
+                "--revocations-known-at",
+                "1700000500",
+                "--status",
+                &sup,
+                "--out",
+                &rep,
+            ]
+        )),
+        Ok(0),
+        "superseded proof bare verify must stay exit 0 (historical VALID)"
+    );
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&rep).unwrap()).unwrap();
+    assert_eq!(v["currently_acceptable"], serde_json::Value::Bool(false));
+    assert_eq!(
+        v["cryptographic_validity"],
+        serde_json::Value::String("valid".into())
+    );
+    assert_eq!(
+        v["evidence_validity"],
+        serde_json::Value::String("valid".into())
+    );
+    let loaded = proof_cli::check::load_proof(&proof, true).unwrap();
+    let ctx = proof_verify::VerifyCtx {
+        verified_at: 1700000500,
+        clock_skew_leeway: 300,
+        revocations_known_at: Some(1700000500),
+        status_objects: vec![
+            proof_cli::artifact::load_status(&sup, &proof_cli::limits(), true).unwrap(),
+        ],
+        ..Default::default()
+    };
+    let report = proof_verify::verify_proof(&loaded.canonical, &ctx).unwrap();
+    let label = proof_cli::check::human_verdict_label(&report);
+    assert!(
+        label.contains("HISTORICALLY_VALID"),
+        "human label must be HISTORICALLY_VALID, got: {label}"
+    );
+    assert!(
+        !label.starts_with("VALID"),
+        "bare VALID label must not appear for not-current proofs, got: {label}"
+    );
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000500",
+                "--revocations-known-at",
+                "1700000500",
+                "--status",
+                &sup,
+                "--strict-current",
+            ]
+        )),
+        Ok(1),
+        "--strict-current must exit 1 on superseded history"
+    );
+    assert_eq!(
+        run(args(
+            "verify",
+            &[
+                "--proof",
+                &proof,
+                "--clock",
+                "1700000500",
+                "--revocations-known-at",
+                "1700000500",
+                "--status",
+                &sup,
+                "--production",
+            ]
+        )),
+        Ok(1),
+        "--production must exit 1 on superseded history"
+    );
+}
+
+/// H-2 no-require-status footgun guard (backward compatible): the flag keeps
+/// working (genesis genuinely needs it), but emits a loud WARNING naming the
+/// risk and production remedy. Default stays fail-closed.
+#[test]
+fn no_require_status_emits_loud_warning() {
+    let text = proof_cli::check::no_require_status_warning(1700000300);
+    assert!(
+        text.contains("WARNING: --no-require-status asserts"),
+        "warning must name the flag loudly, got: {text}"
+    );
+    assert!(
+        text.contains("NEVER use in production; supply --status feed files"),
+        "warning must name the production remedy, got: {text}"
+    );
+    let help = proof_cli::command_help("verify").unwrap();
+    assert!(
+        help.contains("--no-require-status") && help.contains("NEVER use in production"),
+        "help verify must carry the footgun warning"
+    );
+    assert!(
+        help.contains("genesis"),
+        "help verify must mention the genesis/demo-only intent"
+    );
+    assert!(
+        help.contains("--revocations-known-at"),
+        "help must document that --revocations-known-at is still required for PASS"
     );
 }
 

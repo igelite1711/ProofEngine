@@ -121,7 +121,7 @@
   intentional negative-test vectors).
 - Currency: bare `verify VALID` means historically valid (JSON
   `currently_acceptable:false` when SUPERSEDED history or unverified
-  provenance hints present; human `VALID (historical ...)` label). Dangling
+  provenance hints present; human `HISTORICALLY_VALID (...)` label -- never bare `VALID`). Dangling
   `attestation_ref` hints preserve validity with provenance unverified (fail
   on disproof, note on absence). For verify==acceptable, use
   `verify --production` (implies `--strict-current`) or `evaluate` with
@@ -129,8 +129,8 @@
 
 ## 7. Exit codes and triage (M1 contract, Fix 6)
 
-- `verify`: 0 = crypto valid AND evidence valid AND (if `--strict-current`/`--production`) currently acceptable (+ JSON `currently_acceptable` for automation); 1 = verdict FAIL/INDETERMINATE/not-current WITH JSON report on stdout; 2 = usage/engine error only (missing file, bad JSON, missing `cbor`, bad hex — no bytes to verify).
-- Malformed CBOR/trailing/truncated/unknown-field/envelope-mismatch now emit JSON FAIL (exit 1), not prose-only exit 2. Automation MUST parse stdout JSON on exit 1 and check `currently_acceptable` before treating VALID as trustworthy.
+- `verify`: 0 = crypto valid AND evidence valid AND (if `--strict-current`/`--production`) currently acceptable (+ JSON `currently_acceptable` for automation); 1 = verdict FAIL/INDETERMINATE/not-current WITH JSON report on stdout; 2 = usage/engine error only (missing file, bad JSON, missing `cbor`, bad hex, unknown wrapper field -- no bytes to verify).
+- Malformed CBOR/trailing/truncated/CBOR-unknown-field/envelope-mismatch now emit JSON FAIL (exit 1), not prose-only exit 2. Unknown *wrapper* fields (extra JSON keys outside `cbor`, e.g. `evil`, `proof_id`) are transport errors (exit 2, names the field) -- never a verdict. Automation MUST parse stdout JSON on exit 1 and check `currently_acceptable` before treating VALID as trustworthy.
 - `evaluate`: 0 = policy PASS; 1 = FAIL/INDETERMINATE; 2 = usage/engine. Prose (default) prints decision prose ONLY on stdout (no report JSON; use `--out`/`--json` for it); `--json` prints one merged `{policy_outcome, report}` document (authoritative decision is `policy_outcome.decision`, never `report.policy_decision` which stays indeterminate by design).
 - Triage order: `PARSE/SCHEMA/CANONICAL` (bytes) → `IDENTIFIERS/SIGNATURES/KEYS`
   (crypto) → `TIME/REVOCATION` (currency) → `EVIDENCE/RELATIONSHIPS/GRAPH`

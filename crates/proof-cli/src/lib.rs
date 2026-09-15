@@ -61,6 +61,292 @@ fn short_flag_alias(name: &str) -> &str {
     }
 }
 
+/// Global flags accepted by every command (help/exit plumbing and output
+/// control). Everything else must be in the command's own set below.
+const GLOBAL_FLAGS: &[&str] = &["help", "quiet", "json", "out"];
+
+/// Per-command flag allowlists, derived from what each command actually
+/// reads (kept in lockstep with the accessors in the command modules).
+///
+/// Why this exists: the parser used to store any `--flag value` pair
+/// silently, so a typo like `--producton` or a flag a command does not
+/// implement (`--policy` on `verify`) changed nothing — including safety
+/// profile flags. That is a footgun: the operator believes a stricter (or
+/// more lenient) profile is in effect than the one that ran. Fail closed:
+/// an unknown flag for a known command is a usage error (exit 2).
+const COMMAND_FLAGS: &[(&str, &[&str])] = &[
+    (
+        "create-event",
+        &[
+            "type",
+            "subject",
+            "effective-at",
+            "payload-hex",
+            "payload-file",
+            "meta",
+        ],
+    ),
+    (
+        "attest",
+        &[
+            "seed",
+            "seed-file",
+            "subject",
+            "claim-type",
+            "claim",
+            "issued-at",
+            "expires-at",
+            "evidence-ref",
+        ],
+    ),
+    (
+        "add-evidence",
+        &[
+            "kind",
+            "digest-hex",
+            "digest-file",
+            "attestation-ref",
+            "hint",
+        ],
+    ),
+    (
+        "relate",
+        &[
+            "from",
+            "to",
+            "type",
+            "evidence-ref",
+            "attestation-ref",
+            "allow-ungrounded",
+        ],
+    ),
+    ("revoke", &["seed", "seed-file", "target", "reason", "at"]),
+    (
+        "supersede",
+        &[
+            "seed",
+            "seed-file",
+            "target",
+            "old",
+            "new",
+            "successor",
+            "reason",
+            "at",
+        ],
+    ),
+    ("withdraw", &["seed", "seed-file", "target", "reason", "at"]),
+    (
+        "compromise",
+        &[
+            "seed",
+            "seed-file",
+            "target",
+            "compromised-at",
+            "reason",
+            "at",
+        ],
+    ),
+    (
+        "build",
+        &[
+            "kind",
+            "subject",
+            "predicate",
+            "object",
+            "at-time",
+            "created-at",
+            "context",
+            "events",
+            "attestations",
+            "evidence",
+            "relationships",
+            "out",
+        ],
+    ),
+    (
+        "verify",
+        &[
+            "proof",
+            "clock",
+            "skew",
+            "revocations-known-at",
+            "trusted",
+            "authority",
+            "status",
+            "esp256",
+            "historical",
+            "allow-deprecated",
+            "accepted-vocab",
+            "extra-grounded",
+            "report-all",
+            "require-acyclic",
+            "require-status",
+            "no-require-status",
+            "strict-current",
+            "production",
+            "seen-store",
+            "seen-context",
+            "seen-record",
+        ],
+    ),
+    (
+        "evaluate",
+        &[
+            "proof",
+            "policy",
+            "clock",
+            "skew",
+            "revocations-known-at",
+            "trusted",
+            "authority",
+            "status",
+            "esp256",
+            "historical",
+            "allow-deprecated",
+            "accepted-vocab",
+            "extra-grounded",
+            "report-all",
+            "require-acyclic",
+            "require-status",
+            "no-require-status",
+            "strict-current",
+            "production",
+            "seen-store",
+            "seen-context",
+            "seen-record",
+        ],
+    ),
+    (
+        "explain",
+        &[
+            "proof",
+            "policy",
+            "clock",
+            "skew",
+            "revocations-known-at",
+            "trusted",
+            "authority",
+            "status",
+            "esp256",
+            "historical",
+            "allow-deprecated",
+            "accepted-vocab",
+            "extra-grounded",
+            "report-all",
+            "require-acyclic",
+            "require-status",
+            "no-require-status",
+            "strict-current",
+            "production",
+            "seen-store",
+            "seen-context",
+            "seen-record",
+        ],
+    ),
+    (
+        "batch-verify",
+        &[
+            "proofs",
+            "clock",
+            "skew",
+            "revocations-known-at",
+            "trusted",
+            "authority",
+            "status",
+            "esp256",
+            "historical",
+            "allow-deprecated",
+            "accepted-vocab",
+            "extra-grounded",
+            "report-all",
+            "require-acyclic",
+            "require-status",
+            "no-require-status",
+            "strict-current",
+            "production",
+            "max-batch",
+        ],
+    ),
+    ("inspect", &["proof"]),
+    ("id", &["artifact", "field"]),
+    ("commit", &["value", "value-file", "salt", "alg"]),
+    ("graph", &["proof", "format", "depth"]),
+    ("export", &["proof"]),
+    ("import", &["proof"]),
+    ("convert", &["proof"]),
+    (
+        "compose",
+        &[
+            "proofs",
+            "kind",
+            "subject",
+            "predicate",
+            "object",
+            "at-time",
+            "created-at",
+            "context",
+            "events",
+            "attestations",
+            "evidence",
+            "relationships",
+            "out",
+            "status",
+            "authority",
+        ],
+    ),
+    (
+        "resolve",
+        &[
+            "proof",
+            "status",
+            "store",
+            "clock",
+            "skew",
+            "revocations-known-at",
+            "trusted",
+            "authority",
+            "esp256",
+            "historical",
+            "allow-deprecated",
+            "accepted-vocab",
+            "extra-grounded",
+            "report-all",
+            "require-acyclic",
+            "require-status",
+            "no-require-status",
+            "strict-current",
+            "production",
+        ],
+    ),
+    ("ingest", &["in", "out-dir", "dry-run", "skip-bad"]),
+    (
+        "init-policy",
+        &[
+            "issuer",
+            "attestation",
+            "proof",
+            "relationship",
+            "evidence-kind",
+            "template",
+            "out",
+        ],
+    ),
+    ("demo", &["interactive"]),
+    ("doctor", &[]),
+    ("completion", &["shell"]),
+];
+
+/// Flags accepted for `command` (global set + command-specific set).
+fn allowed_flags(command: &str) -> Option<Vec<&'static str>> {
+    let mut set: Vec<&str> = GLOBAL_FLAGS.to_vec();
+    let specific = COMMAND_FLAGS
+        .iter()
+        .find(|(c, _)| *c == command)
+        .map(|(_, flags)| *flags)?;
+    set.extend_from_slice(specific);
+    Some(set)
+}
+
 impl Cli {
     pub fn parse(args: &[String]) -> Result<Cli, String> {
         let mut it = args.iter().peekable();
@@ -80,6 +366,12 @@ impl Cli {
             command,
             ..Cli::default()
         };
+        // Strict flag allowlist (fail-closed): unknown flags for a known
+        // command are a usage error. Previously any `--flag value` pair was
+        // stored silently, so typos of safety-profile flags (`--producton`)
+        // or flags a command does not implement (`--policy` on `verify`)
+        // changed nothing while the operator believed they did.
+        let allowed = allowed_flags(&cli.command);
         while let Some(a) = it.next() {
             // Handle "-" as positional argument (for stdin support)
             if a == "-" {
@@ -92,6 +384,14 @@ impl Cli {
                 .filter(|s| !s.starts_with('-') && s.len() == 1)
             {
                 let long_name = short_flag_alias(name).to_string();
+                if let Some(bad) = &allowed {
+                    if !bad.contains(&long_name.as_str()) {
+                        return Err(format!(
+                            "unknown flag -{name} for `{cmd}` (try `proof-cli help {cmd}`)",
+                            cmd = cli.command
+                        ));
+                    }
+                }
                 match it.peek() {
                     Some(v) if !v.starts_with('-') => {
                         let value = it
@@ -118,6 +418,14 @@ impl Cli {
                 Some((n, v)) => (n.to_string(), Some(v.to_string())),
                 None => (name.to_string(), None),
             };
+            if let Some(bad) = &allowed {
+                if !bad.contains(&name.as_str()) {
+                    return Err(format!(
+                        "unknown flag --{name} for `{cmd}` (try `proof-cli help {cmd}`)",
+                        cmd = cli.command
+                    ));
+                }
+            }
             // A `--flag` with no inline value takes the next token as its
             // value only when that token does not look like another flag.
             // Peek first: a boolean flag must never swallow `--other` tokens.
@@ -466,7 +774,7 @@ OPTIONS
   --extra-grounded <TYPE>     extra trust-relevant edge kind(s), repeatable + comma-separated
   --require-acyclic           provenance DAG profile: reject any relationship cycle (opt-in; default: derivation cycles already fail, REFERENCES cycles remain linkage-valid)
   --require-status            no-op affirming the default: empty status feed fails closed (kept for compatibility)
-  --no-require-status         explicitly allow empty feed (caller-asserted absence, recorded with a note; genesis/demo only)
+  --no-require-status         explicitly allow empty feed (caller-asserted absence, recorded with a note; genesis/demo only — NEVER use in production; supply --status feed files + --authority keys; still requires --revocations-known-at for PASS since omit → lifecycle UNKNOWN fail closed)
   --production                strict operator profile: implies --require-acyclic + --strict-current currency (feed gate already default-on; use for verify==acceptable)
   --strict-current            fail closed on VALID-but-not-current: SUPERSEDED history or unverified provenance hints → exit 1 (history preserved, currency denied)
   --seen-store <file>         replay guardrail: check the proof id against a seen-store before accepting (replay → exit 1; runs on success paths only; same file shape as tools/seen_set.py)
@@ -479,7 +787,8 @@ OUTPUT
   stdout = machine-readable JSON report (never prose, never color).
   stderr = human summary (✓/✗ per stage, RESULT, exit meaning).
   exit 0 = valid AND (if --strict-current/--production) currently acceptable AND (if --seen-store) unseen, 1 = invalid verdict, not-current, or replay, 2 = usage/engine error (incl. unreadable seen-store when requested).
-  note: SUPERSEDED proofs are historically VALID without --strict-current/--production; use `evaluate` with `not_superseded` or --strict-current/--production for currency.",
+  note: SUPERSEDED proofs are HISTORICALLY_VALID (exit 0, JSON currently_acceptable:false) without --strict-current/--production; use `evaluate` with `not_superseded` or --strict-current/--production for currency. Bare VALID means historically valid -- automation must check currently_acceptable.
+  genesis: a first proof with genuinely no revocations uses --no-require-status + --revocations-known-at (caller-asserted absence; warns loudly); production feeds use --status/--authority without --no-require-status.",
         "evaluate" => "\
 evaluate — verify a proof and evaluate a declarative policy over the result.
 

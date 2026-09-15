@@ -19,6 +19,12 @@ Exit 0 = guard holds. Exit 1 = violation:
 * Any CORE-class change additionally requires
   docs/ARCHITECTURE-CHANGE-PROPOSAL-<topic>.md and an explicit maintainer
   decision per ARCHITECTURE-FREEZE.md §5 before the manifest may name it.
+
+Known limitation (documented, not enforced): approval is keyed by file path,
+not by diff content — once a file is named in a change_record, later edits to
+that same file are covered by that record. The guard catches *unrecorded*
+frozen paths (including uncommitted worktree/staged edits), not diffs within
+an already-recorded file; reviewers own the per-commit review of those.
 """
 import json
 import subprocess
@@ -64,12 +70,20 @@ def main():
     # Tracked changes AND untracked new files: an unrecorded new fixture or
     # module under a frozen path is as much a semantic change as an edit
     # (untracked files were previously invisible to this guard).
+    #
+    # Uncommitted work must be covered too (pre-launch core audit fix): the
+    # guard previously compared only `pin..HEAD`, so a frozen-path edit that
+    # had not been committed yet passed as "OK" — the exact state a
+    # `make freeze-guard` run inside a feature branch (or CI before commit)
+    # is supposed to catch. Working-tree and staged diffs are now included.
     changed = git("diff", "--name-only", f"{pin}..HEAD").stdout.split()
+    worktree = git("diff", "--name-only").stdout.split()
+    staged = git("diff", "--name-only", "--cached").stdout.split()
     untracked = git(
         "ls-files", "--others", "--exclude-standard"
     ).stdout.split()
     candidates = sorted(
-        set(changed) | set(untracked)
+        set(changed) | set(worktree) | set(staged) | set(untracked)
     )
     frozen_changed = sorted(f for f in candidates if is_frozen(f, frozen_paths))
     approved = set()
