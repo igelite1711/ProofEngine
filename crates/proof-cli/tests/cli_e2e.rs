@@ -47,6 +47,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
             println!("{v}");
             proof_cli::EXIT_OK
         }),
+        "commit" => proof_cli::commit::value(&parsed).map(|_| proof_cli::EXIT_OK),
         "graph" => proof_cli::graph::graph(&parsed).map(|_| proof_cli::EXIT_OK),
         "doctor" => proof_cli::doctor::doctor(&parsed),
         "completion" => {
@@ -2930,9 +2931,79 @@ fn init_policy_minimal_has_no_domain_vocabulary() {
     );
 }
 
-/// `add-evidence --digest-file` hashes file bytes identically to
-/// `--digest-hex` of the file's SHA-256 (no manual hashlib plumbing).
-/// Neither flag → usage error, not a silent empty digest.
+/// Template names describe requirement shape, never industry: the default is
+/// `standard_v1` (not `settlement_v1`) even for non-payment proofs, and the
+/// pre-seal industry names survive only as aliases emitting shape-named ids.
+#[test]
+fn init_policy_template_names_are_shape_based() {
+    let w = tmpdir("init-shape");
+    let issuer = proof_crypto::Ed25519Key::from_seed(&[9u8; 32]).key_ref();
+    for (template, expect_id) in [
+        ("standard", "standard_v1"),
+        ("settlement", "standard_v1"),
+        ("strict", "strict_v1"),
+        ("strict-document", "strict_v1"),
+        ("fresh", "fresh_v1"),
+        ("basic", "basic_v1"),
+        ("minimal", "minimal_v1"),
+    ] {
+        let out = format!("{w}/policy-{template}.json");
+        let mut a = vec![
+            "init-policy".to_string(),
+            "--issuer".to_string(),
+            issuer.clone(),
+            "--template".to_string(),
+            template.to_string(),
+            "--relationship".to_string(),
+            "TESTS".to_string(),
+            "--evidence-kind".to_string(),
+            "test_kind".to_string(),
+            "--out".to_string(),
+            out.clone(),
+        ];
+        // fresh/minimal take no domain vocabulary; drop those flags for them.
+        if template == "fresh" || template == "minimal" {
+            a.retain(|x| {
+                x != "--relationship" && x != "TESTS" && x != "--evidence-kind" && x != "test_kind"
+            });
+        }
+        assert_eq!(run(a), Ok(0), "template {template}");
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(v["policy_id"], serde_json::Value::String(expect_id.into()));
+    }
+}
+
+/// `commit` computes hex(sha256("salt|value")) for confidential claims;
+/// `--value` and `--value-file` agree; both flags together is a usage error.
+#[test]
+fn commit_computes_salted_commitment() {
+    use sha2::{Digest, Sha256};
+    let w = tmpdir("commit");
+    let secret = format!("{w}/secret.txt");
+    std::fs::write(&secret, "income:84000").unwrap();
+    // printf 's3|income:84000' | sha256sum, recomputed here, never hardcoded.
+    let expect = hex::encode(Sha256::digest(b"s3|income:84000"));
+    let hex_of = |argv: Vec<String>| -> String {
+        let parsed = proof_cli::Cli::parse(&argv).unwrap();
+        proof_cli::commit::value(&parsed).unwrap()
+    };
+    assert_eq!(
+        hex_of(args("commit", &["--salt", "s3", "--value", "income:84000"])),
+        expect
+    );
+    assert_eq!(
+        hex_of(args("commit", &["--salt", "s3", "--value-file", &secret])),
+        expect
+    );
+    assert_ne!(
+        run(args(
+            "commit",
+            &["--salt", "s3", "--value", "a", "--value-file", &secret]
+        )),
+        Ok(0)
+    );
+}
 #[test]
 fn add_evidence_digest_file_matches_digest_hex() {
     use sha2::{Digest, Sha256};

@@ -26,8 +26,10 @@ It is a **protocol-level foundation** that applications and industries can build
 > it end-to-end (payment domain). Then read [Quick Start](#quick-start) for
 > the same steps explained, and
 > [`docs/OPERATOR-RUNBOOK.md`](docs/OPERATOR-RUNBOOK.md) before trusting any
-> verdict in production — bare `verify` PASS means *historically valid*;
-> `--production` means *acceptable now*.
+> verdict in production — an empty revocation feed fails closed (exit 1);
+> pass `--status` feed files, or `--no-require-status` to assert absence
+> explicitly. A PASS means *historically valid*; `--production` means
+> *acceptable now*.
 
 ---
 
@@ -664,10 +666,11 @@ Run `make help` to see all available commands.
 
 | Command | What it does |
 |---------|-------------|
-| `proof-cli verify` | Verify a proof (positional path or stdin with `-`; `--production` for verify==acceptable (implies `--require-acyclic`+`--require-status`+`--strict-current`); `--strict-current` for currency only; JSON `currently_acceptable` for automation; malformed emits JSON FAIL exit 1) |
+| `proof-cli verify` | Verify a proof (positional path or stdin with `-`; empty feed fails closed by default — `--no-require-status` asserts absence explicitly, `--status` supplies a feed; `--production` for verify==acceptable (implies `--require-acyclic`+`--strict-current`); `--strict-current` for currency only; JSON `currently_acceptable` for automation; malformed emits JSON FAIL exit 1) |
 | `proof-cli evaluate` | Verify a proof and evaluate a policy (prose stdout by default; `--json` merged `{policy_outcome,report}`; `--production`/`--strict-current` overlays currency on policy) |
 | `proof-cli explain` | Explain a verification result (requires `--policy`) |
-| `proof-cli init-policy` | Generate policy from template + issuer (no manual JSON; `--attestation att.json` reads issuer) |
+| `proof-cli init-policy` | Generate policy from template + issuer (no manual JSON; `--attestation att.json` reads issuer; templates named by shape: standard/strict/fresh/basic/minimal) |
+| `proof-cli commit` | Compute a salted-hash commitment for confidential claims (`--salt` + `--value`/`--value-file`) |
 | `proof-cli inspect` | Inspect a proof or single artifact (read-only, no trust decisions) |
 | `proof-cli graph` | Visualize proof relationships (text/dot/mermaid) |
 | `proof-cli export` | Export an artifact to the standard envelope (validated) |

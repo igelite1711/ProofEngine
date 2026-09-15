@@ -77,6 +77,7 @@ fn run(args: &[String]) -> i32 {
             println!("{v}");
             EXIT_OK
         }),
+        "commit" => proof_cli::commit::value(&cli).map(|_| EXIT_OK),
         "graph" => proof_cli::graph::graph(&cli).map(|_| EXIT_OK),
         "export" => proof_cli::port::export(&cli).map(|_| EXIT_OK),
         "import" => proof_cli::port::import(&cli).map(|_| EXIT_OK),

@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   orthogonal validity/currency split (pinned by
   `revoked_lifecycle_is_not_currency_gap`, new
   `unknown_lifecycle_fails_currency` test). CLI + HTTP API mirrors in sync.
+- **Shape-named policy templates.** `init-policy` default is `standard`
+  (`standard_v1`); `strict`/`fresh`/`basic`/`minimal` replace the industry
+  nouns, which survive as aliases emitting shape-named ids. The error
+  itself now teaches the safe path: empty-feed UNKNOWN prints the exact
+  `--no-require-status` vs `--status` retry commands.
+- **`proof-cli commit` for confidential claims.** Computes
+  `hex(hash("salt|value"))` (sha256/sha384, `--value-file` preferred)
+  for the documented salted-commitment pattern; `--value`/`--value-file`
+  mutual exclusion enforced.
 - **Commitment pattern pinned.** `v2_commitment_pattern_hides_value_but_binds_policy`
   proves salted-hash commitments verify and bind `claim_field` policy with
   existing primitives (equality-only; ZK predicates stay adapters).

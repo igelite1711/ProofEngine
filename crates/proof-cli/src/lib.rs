@@ -6,6 +6,7 @@
 
 pub mod artifact;
 pub mod check;
+pub mod commit;
 pub mod demo;
 pub mod doctor;
 pub mod graph;
@@ -414,6 +415,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("add-evidence", "Add an evidence artifact"),
     ("relate", "Create a relationship edge"),
     ("build", "Assemble artifacts into a proof"),
+    (
+        "commit",
+        "Compute a salted-hash commitment (confidential claims)",
+    ),
     ("revoke", "Revoke an attestation"),
     ("supersede", "Supersede an attestation"),
     ("withdraw", "Withdraw reliance on an artifact"),
@@ -540,6 +545,17 @@ USAGE
 
   Prints the value on stdout (exit 0); missing file/field is exit 2.
   Read-only: verifies nothing (use `verify` for trust decisions).",
+        "commit" => "\
+commit — compute a salted-hash commitment for a confidential claim.
+
+USAGE
+  proof-cli commit --salt <text> (--value <text> | --value-file <path>) [--alg sha256|sha384] [--out <file>]
+
+  Prints hex(hash(\"salt|value\")) on stdout for use in `--claim commit=<hex>`.
+  The value never enters the proof; policy `claim_field eq` checks the
+  commitment (see CONFIDENTIALITY.md). `--value` is visible to ps/history
+  like `--seed`; prefer `--value-file` for real secrets. Salt must be
+  unique per commitment.",
         "graph" => "\
 graph — visualize the relationships inside a proof.
 
@@ -684,14 +700,14 @@ USAGE
 init-policy — generate a policy JSON from a template + issuer (no manual editing).
 
 USAGE
-  proof-cli init-policy --issuer <keyref> [--template settlement|strict-document|fresh-only|basic-payment|minimal] [--relationship SETTLES] [--evidence-kind transaction_record] --out <policy.json>
-  proof-cli init-policy --issuer <keyref> --attestation <att.json> [--template settlement] (--proof <proof.json> | --relationship <T> [--evidence-kind <K>]) --out <policy.json>  (reads issuer from attestation file)
+  proof-cli init-policy --issuer <keyref> [--template standard|strict|fresh|basic|minimal] [--relationship SETTLES] [--evidence-kind transaction_record] --out <policy.json>
+  proof-cli init-policy --issuer <keyref> --attestation <att.json> [--template standard] (--proof <proof.json> | --relationship <T> [--evidence-kind <K>]) --out <policy.json>  (reads issuer from attestation file)
   proof-cli init-policy --attestation <att.json> --proof <proof.json> --out <policy.json>  (infers relationship/evidence kinds from the proof; generic for any domain)
 
-Settlement-family templates (settlement|strict-document|basic-payment) require domain vocabulary: pass --proof to infer it or explicit --relationship/--evidence-kind flags (missing inputs are a usage error, not silent payment defaults); --template minimal needs none.
+Domain-vocabulary templates (standard|strict|basic) require domain vocabulary: pass --proof to infer it or explicit --relationship/--evidence-kind flags (missing inputs are a usage error, never silent defaults); --template minimal needs none.
 
-Templates: settlement (sig+issuer+expiry+revocation+relationship+evidence), strict-document (settlement + not_superseded), fresh-only (sig+issuer+proof_fresh 3600), basic-payment (sig+issuer+relationship), minimal (sig+issuer+expiry+revocation; domain-agnostic starter, no relationship/evidence vocabulary).
---proof infers --relationship/--evidence-kind from the proof's first members (explicit flags win); without it defaults are SETTLES/transaction_record for the payment walkthrough.
+Templates (named by requirement shape, never industry): standard (sig+issuer+expiry+revocation+relationship+evidence), strict (standard + not_superseded), fresh (sig+issuer+proof_fresh 3600), basic (sig+issuer+relationship), minimal (sig+issuer+expiry+revocation; domain-agnostic starter, no relationship/evidence vocabulary). Old industry names (settlement|strict-document|fresh-only|basic-payment) still work as aliases.
+--proof infers --relationship/--evidence-kind from the proof's first members (explicit flags win); without it defaults are SETTLES/transaction_record for the walkthrough.
 The `key:ed25519:` prefix is kept exactly once; REPLACE_WITH placeholders never appear in output.",
         "demo" => "\
 demo — deterministic end-to-end story: build → verify PASS → tamper → FAIL →
@@ -877,6 +893,7 @@ CREATION
   add-evidence Add an evidence artifact
   relate       Create a relationship edge
   build        Assemble artifacts into a proof
+  commit       Compute a salted-hash commitment (confidential claims)
 
 LIFECYCLE
   revoke       Revoke an attestation

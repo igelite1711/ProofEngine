@@ -376,6 +376,27 @@ pub fn verify(cli: &Cli) -> Result<i32, String> {
                 c.revocations_known_at.unwrap_or(0)
             );
         }
+        // Empty-feed failure: the default failed closed (UNKNOWN) on an empty
+        // feed with asserted freshness. Print the exact retry for both
+        // intents so the error itself teaches the safe path.
+        if c.revocations_known_at.is_some()
+            && report.status_objects.is_empty()
+            && report
+                .lifecycle
+                .iter()
+                .any(|l| l.status == proof_core::LifecycleStatus::Unknown)
+        {
+            let rk = c.revocations_known_at.unwrap_or(0);
+            eprintln!(
+                "  hint: empty status feed with --revocations-known-at {rk} — no revocations were shown, so nothing is proven absent."
+            );
+            eprintln!(
+                "  hint: if no revocations can exist yet (genesis/demo), re-run with `--no-require-status` to assert absence explicitly."
+            );
+            eprintln!(
+                "  hint: otherwise supply your feed: `--status <file>` (repeatable) + `--authority <keyref>` (repeatable)."
+            );
+        }
         // M3: provenance guidance. Derivation cycles now fail by default
         // (Fix 2); REFERENCES cycles remain linkage-valid. If this proof
         // carries derivation intent and was verified without --production,
@@ -804,7 +825,7 @@ pub fn init_policy(cli: &Cli) -> Result<String, String> {
     }
     let template = cli
         .opt("template")
-        .unwrap_or_else(|| "settlement".to_string());
+        .unwrap_or_else(|| "standard".to_string());
     // F9 DX neutrality: `--proof <file>` infers relationship/evidence kinds
     // from the proof structure so sensor/legal/science domains need no manual
     // template editing. Explicit flags win over inference; inference wins over
@@ -843,9 +864,15 @@ pub fn init_policy(cli: &Cli) -> Result<String, String> {
     // transaction_record) and fail later at evaluate with confusing [NO]
     // lines — reject now with the exact remedy. `minimal`/`fresh-only` need
     // no domain vocabulary and never hit this gate.
+    // Template names describe the requirement SHAPE, never an industry:
+    // standard (sig+issuer+expiry+revocation+link+evidence), strict (+
+    // not_superseded), fresh (recency only), basic (sig+issuer+link),
+    // minimal (sig+issuer+expiry+revocation). Pre-seal industry names
+    // (settlement, strict-document, basic-payment, fresh-only) remain as
+    // aliases emitting the same shape-named policy ids.
     let needs_domain = matches!(
         template.as_str(),
-        "settlement" | "strict-document" | "basic-payment"
+        "standard" | "settlement" | "strict" | "strict-document" | "basic" | "basic-payment"
     );
     let has_proof = cli.opt("proof").is_some();
     let has_rel = cli.opt("relationship").is_some();
@@ -879,8 +906,8 @@ pub fn init_policy(cli: &Cli) -> Result<String, String> {
         }
     }
     let (policy_id, requirements) = match template.as_str() {
-        "settlement" => (
-            "settlement_v1",
+        "standard" | "settlement" => (
+            "standard_v1",
             vec![
                 serde_json::json!({"type": "signature_valid"}),
                 serde_json::json!({"type": "issuer_trusted", "issuer": issuer}),
@@ -890,8 +917,8 @@ pub fn init_policy(cli: &Cli) -> Result<String, String> {
                 serde_json::json!({"type": "evidence_present", "kind": evkind}),
             ],
         ),
-        "strict-document" => (
-            "strict_document_v1",
+        "strict" | "strict-document" => (
+            "strict_v1",
             vec![
                 serde_json::json!({"type": "signature_valid"}),
                 serde_json::json!({"type": "issuer_trusted", "issuer": issuer}),
@@ -902,16 +929,16 @@ pub fn init_policy(cli: &Cli) -> Result<String, String> {
                 serde_json::json!({"type": "evidence_present", "kind": evkind}),
             ],
         ),
-        "fresh-only" => (
-            "fresh_only_v1",
+        "fresh" | "fresh-only" => (
+            "fresh_v1",
             vec![
                 serde_json::json!({"type": "signature_valid"}),
                 serde_json::json!({"type": "issuer_trusted", "issuer": issuer}),
                 serde_json::json!({"type": "proof_fresh", "max_age_seconds": 3600}),
             ],
         ),
-        "basic-payment" => (
-            "basic_payment_v1",
+        "basic" | "basic-payment" => (
+            "basic_v1",
             vec![
                 serde_json::json!({"type": "signature_valid"}),
                 serde_json::json!({"type": "issuer_trusted", "issuer": issuer}),
@@ -933,7 +960,7 @@ pub fn init_policy(cli: &Cli) -> Result<String, String> {
         ),
         _ => {
             return Err(format!(
-                "--template must be settlement|strict-document|fresh-only|basic-payment|minimal, got {template}"
+                "--template must be standard|strict|fresh|basic|minimal (aliases: settlement|strict-document|fresh-only|basic-payment), got {template}"
             ))
         }
     };
