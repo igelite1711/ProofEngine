@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (V1 in development; protocol semantics evolve on `main`)
 
+### Added (post-`v1.0.0` hardening)
+
+- **13th domain journey: election certification** (`domains/proof-domains/tests/election.rs`).
+  Ballot batch cast → counted → tally certified: three-event chain, two
+  grounded `PRODUCED` edges, election-authority attestation, `pollbook_record`
+  evidence, `evidence_present` policy leaf. All cross-domain suites
+  (verdict shape, revoke, supersede, tamper, foreign policy) now cover 13
+  industries with zero core changes.
+
 ### Added (first signed cut — `v1.0.0`, see `dist/RELEASE-NOTES.txt`)
 
 - **`docs/allowed_signers` release principal** (`release@proof-engine`,

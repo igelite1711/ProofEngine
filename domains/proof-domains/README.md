@@ -2,7 +2,7 @@
 
 > The constructive proof of core neutrality. This crate is a **pure consumer**
 > of the V1 core API (`proof-core`/`proof-crypto`/`proof-verify`/
-> `proof-policy`): it adds twelve unrelated industries on top of the engine
+> `proof-policy`): it adds thirteen unrelated industries on top of the engine
 > with **zero mechanism modifications** — only new vocabulary strings, new
 > domain journeys, and caller-supplied policies.
 >
@@ -13,7 +13,7 @@
 
 | Question (docs/NEUTRALITY.md Test 2) | Test |
 |---|---|
-| Can radically different domains share one core? | `differential::twelve_domains_same_core_same_verdict_shape` (plus `ten_…` / `science_and_cybersecurity_…` compat wrappers) |
+| Can radically different domains share one core? | `differential::thirteen_domains_same_core_same_verdict_shape` (plus `ten_…` / `science_cybersecurity_and_election_…` compat wrappers) |
 | Does a domain-relevant edge fail closed without its grounding evidence? | `differential::grounding_rule_is_domain_independent` |
 | Do unknown domain vocabularies survive the pipeline and stay policy-governed? | `differential::unknown_domain_vocabulary_survives_pipeline` |
 | Do unknown vocabularies fail closed under policy by default? | `differential::unknown_domain_vocabulary_policy_fail_closed` |
@@ -33,7 +33,7 @@ CI runs this via `make domain-tests` (see `.github/workflows/ci.yml`).
 
 ## The demonstrated industries
 
-Twelve journeys ride the same core, each in its own module
+Thirteen journeys ride the same core, each in its own module
 (`tests/<domain>.rs`), exercised together by `tests/differential.rs`:
 
 1. **Payment** (`payment.rs`) — the V1 reference journey: `payment.created` →
@@ -64,8 +64,13 @@ Twelve journeys ride the same core, each in its own module
     evidence chain, cyber policy.
 12. **Science** (`science.rs`) — measurement replication and corroboration,
     scientific vocabulary, science policy.
+13. **Election** (`election.rs`) — ballot batch cast → counted → tally
+    certified: a three-event chain with two grounded `PRODUCED` edges, one
+    election-authority attestation, `pollbook_record` evidence, and an
+    `evidence_present` policy leaf. Proves chain length and evidence-leaf
+    coverage are vocabulary-independent too.
 
-Each of the twelve domains asserts the **same verdict shape** (crypto Valid,
+Each of the thirteen domains asserts the **same verdict shape** (crypto Valid,
 evidence Valid, policy INDETERMINATE at the pipeline), proving the core never
 cares which industry's vocabulary rides on it.
 

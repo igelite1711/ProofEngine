@@ -2,10 +2,10 @@
 //! PE-NEUT-004 co-assertion: every domain word below lives in a test file,
 //! never in a mechanism crate source (enforced by tools/check_neutrality.py).
 //!
-//! Twelve unrelated industries (payment, credential lifecycle, media licensing,
+//! Thirteen unrelated industries (payment, credential lifecycle, media licensing,
 //! AI-action provenance, sensor calibration, logistics, legal, supply-chain,
 //! healthcare, government, cybersecurity incident response, scientific
-//! replication) traverse the SAME core:
+//! replication, election certification) traverse the SAME core:
 //! same builder, same 11-stage pipeline, same policy engine. The differential
 //! assertions prove the verdict shape is a pure function of artifact STRUCTURE,
 //! never of the domain vocabulary riding on it. If a future change makes the
@@ -14,6 +14,7 @@
 mod ai;
 mod credential;
 mod cyber;
+mod election;
 mod gov;
 mod health;
 mod legal;
@@ -29,7 +30,7 @@ use proof_crypto::build::{attest, supersede_attestation, to_signed_status};
 use proof_policy::{evaluate_policy, parse_policy, state_from_report_and_proof};
 use proof_verify::{verify_proof, PolicyDecision, Validity, VerifyCtx};
 
-/// The exact caller context every domain uses: one shape, twelve industries.
+/// The exact caller context every domain uses: one shape, thirteen industries.
 /// Explicit caller-asserted absence (domain journeys pin vocabulary
 /// neutrality, not feed behavior; the fail-closed default is pinned by the
 /// core lifecycle tests).
@@ -120,7 +121,7 @@ fn check_journey(
     );
 }
 
-fn all_twelve_domains() -> [DomainJourney; 12] {
+fn all_thirteen_domains() -> [DomainJourney; 13] {
     [
         (
             "payment",
@@ -169,30 +170,36 @@ fn all_twelve_domains() -> [DomainJourney; 12] {
             science::inputs(),
         ),
         ("cyber", cyber::journey(), cyber::policy(), cyber::inputs()),
+        (
+            "election",
+            election::journey(),
+            election::policy(),
+            election::inputs(),
+        ),
     ]
 }
 
 #[test]
-fn twelve_domains_same_core_same_verdict_shape() {
-    for (name, built, policy_json, inputs) in all_twelve_domains() {
+fn thirteen_domains_same_core_same_verdict_shape() {
+    for (name, built, policy_json, inputs) in all_thirteen_domains() {
         check_journey(name, &built, &policy_json, &inputs);
     }
 }
 
 #[test]
 fn ten_domains_same_core_same_verdict_shape() {
-    // Backward-compat wrapper: the first ten of the canonical twelve.
-    // New code should use twelve_domains_same_core_same_verdict_shape.
-    for (name, built, policy_json, inputs) in all_twelve_domains().into_iter().take(10) {
+    // Backward-compat wrapper: the first ten of the canonical thirteen.
+    // New code should use thirteen_domains_same_core_same_verdict_shape.
+    for (name, built, policy_json, inputs) in all_thirteen_domains().into_iter().take(10) {
         check_journey(name, &built, &policy_json, &inputs);
     }
 }
 
 #[test]
-fn science_and_cybersecurity_ride_the_same_core() {
-    // Backward-compat wrapper: last two of the canonical twelve.
-    // New code should use twelve_domains_same_core_same_verdict_shape.
-    for (name, built, policy_json, inputs) in all_twelve_domains().into_iter().skip(10) {
+fn science_cybersecurity_and_election_ride_the_same_core() {
+    // Backward-compat wrapper: last three of the canonical thirteen.
+    // New code should use thirteen_domains_same_core_same_verdict_shape.
+    for (name, built, policy_json, inputs) in all_thirteen_domains().into_iter().skip(10) {
         check_journey(name, &built, &policy_json, &inputs);
     }
 }
@@ -328,11 +335,11 @@ type DomainCase = (
 fn cross_domain_failure_verdict_shape_identical() {
     // Revoke each domain's journey with a signed status object; the resulting
     // verdict shape (evidence invalid, REVOKED code, policy INDETERMINATE
-    // with an explanatory note) must be logically identical across all twelve
+    // with an explanatory note) must be logically identical across all thirteen
     // industries. Failure is structural; none of the domains is special.
     // (All journeys share the fixed test key, so the payment issuer key
     // authorizes every revocation — exactly like the per-domain issuer keys.)
-    let cases: [DomainCase; 12] = [
+    let cases: [DomainCase; 13] = [
         (
             "payment",
             payment::journey,
@@ -370,6 +377,7 @@ fn cross_domain_failure_verdict_shape_identical() {
             science::inputs,
         ),
         ("cyber", cyber::journey, cyber::policy, cyber::inputs),
+        ("election", election::journey, election::policy, election::inputs),
     ];
     for (name, journey_fn, policy_fn, inputs_fn) in cases {
         let built = journey_fn();
@@ -416,10 +424,10 @@ fn cross_domain_failure_verdict_shape_identical() {
 fn tamper_breaks_every_domain_identically() {
     // One flipped byte in the middle of each domain's canonical proof must
     // fail closed with identical shape (crypto Invalid + ≥1 code) in all
-    // twelve industries. Tamper-evidence is structural; no vocabulary is
+    // thirteen industries. Tamper-evidence is structural; no vocabulary is
     // special. (Middle-of-bytes avoids the informational `created_at` tail;
     // the pipeline reports structural failure in-band as Ok(report).)
-    for (name, built, _, _) in all_twelve_domains() {
+    for (name, built, _, _) in all_thirteen_domains() {
         let mut mutant = built.canonical.clone();
         let mid = mutant.len() / 2;
         mutant[mid] ^= 0x01;
@@ -440,8 +448,8 @@ fn tamper_breaks_every_domain_identically() {
 #[test]
 fn foreign_policy_fails_closed_in_every_domain() {
     // The same stranger policy (demanding transparency no journey carries)
-    // must FAIL in all twelve industries while each journey still PASSes its
-    // own policy (pinned by twelve_domains_...). Policy governs acceptance;
+    // must FAIL in all thirteen industries while each journey still PASSes its
+    // own policy (pinned by thirteen_domains_...). Policy governs acceptance;
     // the core never smuggles trust across vocabularies.
     let lim = Limits::default();
     let stranger = serde_json::json!({
@@ -450,7 +458,7 @@ fn foreign_policy_fails_closed_in_every_domain() {
         "requirements": [{"type": "transparency_present"}]
     });
     let policy = parse_policy(&stranger, &lim).unwrap();
-    for (name, built, _, inputs) in all_twelve_domains() {
+    for (name, built, _, inputs) in all_thirteen_domains() {
         let report = verify_proof(&built.canonical, &ctx(1_700_000_200)).unwrap();
         assert_healthy_shape(name, &report);
         let state = state_from_report_and_proof(&report, &built.proof).unwrap();
@@ -469,10 +477,10 @@ fn cross_domain_supersession_preserves_history() {
     // Supersede each domain's attestation with a newer sibling from the same
     // issuer: history must stay valid (SUPERSEDED preserves evidence
     // validity) while a `not_superseded` policy FAILs it for current use —
-    // identically across all twelve industries. This is the lifecycle
+    // identically across all thirteen industries. This is the lifecycle
     // dimension revocation alone cannot show (revocation kills validity;
     // supersession preserves it).
-    let cases: [DomainCase; 12] = [
+    let cases: [DomainCase; 13] = [
         (
             "payment",
             payment::journey,
@@ -510,6 +518,7 @@ fn cross_domain_supersession_preserves_history() {
             science::inputs,
         ),
         ("cyber", cyber::journey, cyber::policy, cyber::inputs),
+        ("election", election::journey, election::policy, election::inputs),
     ];
     for (name, journey_fn, _, inputs_fn) in cases {
         let built = journey_fn();
@@ -529,6 +538,7 @@ fn cross_domain_supersession_preserves_history() {
             "gov" => gov::attestation_id(),
             "science" => science::attestation_id(),
             "cyber" => cyber::attestation_id(),
+            "election" => election::attestation_id(),
             _ => unreachable!("unknown domain {name}"),
         };
         assert_eq!(

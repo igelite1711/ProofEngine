@@ -12,7 +12,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 
-**V1 in development · 4 fuzz targets · 12 industries · 3 implementations (Rust reference + stdlib-only Python + TypeScript; Ed25519 + P-256) · 31 golden vectors**
+**V1 in development · 4 fuzz targets · 13 industries · 3 implementations (Rust reference + stdlib-only Python + TypeScript; Ed25519 + P-256) · 31 golden vectors**
 
 ---
 
@@ -42,7 +42,7 @@ It is a **protocol-level foundation** that applications and industries can build
 | [Five Primitives](#the-five-core-primitives) | Event, Attestation, Evidence, Relationship, Proof |
 | [Verification](#verification) | The 11-check + STATUS + POLICY + FINAL pipeline |
 | [Policy](#policy) | Caller-supplied trust decisions |
-| [Neutral by Design](#neutral-by-design) | 12 industries, zero core changes |
+| [Neutral by Design](#neutral-by-design) | 13 industries, zero core changes |
 | [Quick Start](#quick-start) | Get running in 30 seconds |
 | [For Developers](#for-developers) | Cargo dependency + code example |
 | [Repository](#repository) | 7 core + 3 perimeter crates |
@@ -317,7 +317,7 @@ The core does **not** belong to:
 
 Those are **applications** of the protocol.
 
-**The proof:** 12 radically different industries traverse the same core, producing identical verdict shapes. The differential tests in `domains/proof-domains/` prove this:
+**The proof:** 13 radically different industries traverse the same core, producing identical verdict shapes. The differential tests in `domains/proof-domains/` prove this:
 
 | Domain | Industry | What it proves |
 |--------|----------|----------------|
@@ -333,8 +333,9 @@ Those are **applications** of the protocol.
 | Gov | Government | Application → Permit with issuance record |
 | Science | Research | Experiment → Replication with dataset evidence |
 | Cyber | Security | Alert → Patch mitigation with vulnerability-report evidence |
+| Election | Civic | Ballot batch Cast → Counted → Tally certified with pollbook-record evidence |
 
-All 12 use the **same** builder, **same** 11-check + STATUS + POLICY + FINAL pipeline, **same** policy engine. The verdict shape is a pure function of artifact structure, never of domain vocabulary.
+All 13 use the **same** builder, **same** 11-check + STATUS + POLICY + FINAL pipeline, **same** policy engine. The verdict shape is a pure function of artifact structure, never of domain vocabulary.
 
 The core remains the same.
 

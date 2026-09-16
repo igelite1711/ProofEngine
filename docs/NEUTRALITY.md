@@ -110,10 +110,10 @@ Machine-checked in `docs/requirements-matrix.md` (`PE-NEUT-*`) and enforced by
 | PE-NEUT-004 | Domain vocabulary lives only in tests/fixtures/docs/demos |
 | PE-NEUT-005 | A neutral capability spec + domain-mapping guide exist |
 
-## 6. The twelve domain journeys
+## 6. The thirteen domain journeys
 
 See `docs/domains/` and `domains/proof-domains/tests/`. The same pipeline and
-policy code — with zero domain branches — runs all twelve:
+policy code — with zero domain branches — runs all thirteen:
 
 1. **Payment** (reference) — settlement chain; the existing demo/goldens.
 2. **Credential lifecycle** — issuance, verification, *expiry*, *supersession*,
@@ -130,6 +130,8 @@ policy code — with zero domain branches — runs all twelve:
 11. **Science** — experiment → independent replication with dataset backing.
 12. **Cybersecurity** — alert → patch mitigation with vulnerability-report
     backing.
+13. **Election** — ballot batch cast → counted → tally certified (three-event
+    chain, pollbook evidence, `evidence_present` leaf).
 
 The differential test (`PE-NEUT-003`) proves the engine's verdict shape is a
 pure function of the artifacts' structure, identical across unrelated
