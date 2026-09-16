@@ -22,14 +22,21 @@ It is **not** a payment system, identity system, blockchain, database, or applic
 
 It is a **protocol-level foundation** that applications and industries can build upon.
 
-> **New here? Five minutes:** `make quick-proof` builds a proof and verifies
-> it end-to-end (payment domain). Then read [Quick Start](#quick-start) for
-> the same steps explained, and
-> [`docs/OPERATOR-RUNBOOK.md`](docs/OPERATOR-RUNBOOK.md) before trusting any
-> verdict in production — an empty revocation feed fails closed (exit 1);
-> pass `--status` feed files, or `--no-require-status` to assert absence
-> explicitly. A PASS means *historically valid*; `--production` means
-> *acceptable now*.
+## Start here: five paths, pick yours
+
+| # | I want to… | Do exactly this | Success looks like |
+|---|-----------|-----------------|-------------------|
+| 1 | **Understand it in 5 minutes** | Read [The Problem](#the-problem) + [Core Model](#core-model) + [Operator Answers](#operator-answers-read-in-minutes-spec-wins-on-conflict) below | You can state what a proof is and what VALID does *not* mean |
+| 2 | **Build my first proof** | Run `make quick-proof` (payment domain, no setup), then read [Quick Start](#quick-start) for the same steps explained | Ends with `quick proof PASS: <work>/proof.json (verify + evaluate + explain)` |
+| 3 | **Verify something** | `proof-cli verify --proof proof.json --clock <u64> --revocations-known-at <u64> --no-require-status` (genesis form; full help: `proof-cli help verify`) | Exit 0 + `PROOF INTEGRITY: VALID`; historic-only proofs say `HISTORICALLY_VALID` — production feeds use `--production` instead (fails closed on stale history), see [Operator Answers](#operator-answers-read-in-minutes-spec-wins-on-conflict) Q7–Q8 |
+| 4 | **See what is already tested** | Badges above (CI · Interop · Fuzz, all green on `main`) + [docs/certification-report.md](docs/certification-report.md) (§20 table: 20/20 categories) + [SECURITY.md](SECURITY.md) (guarantees + non-guarantees) | Fuzz 4/4×600s clean, differentials 39/0 + 36/0, conformance 25/0 — reproduced by `make interop` + `make conformance` |
+| 5 | **Report a finding** | **Security-sensitive** (signatures, canonical encoding, id binding, policy bypass): private vulnerability reporting — **do not open a public issue** ([SECURITY.md](SECURITY.md)). **Anything else** (wrong PASS/FAIL, wrong code, crash, docs): [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) with input bytes + exact command + observed vs expected verdict | Acknowledgement within 7 days, triage within 14; 90-day fix window before disclosure |
+
+> Production rule, up front: an empty revocation feed fails closed (exit 1).
+> Pass `--status` feed files, or `--no-require-status` to assert absence
+> explicitly (bootstrap/testing only). A PASS means *historically valid*;
+> `--production` means *acceptable now*. Full checklist:
+> [`docs/OPERATOR-RUNBOOK.md`](docs/OPERATOR-RUNBOOK.md).
 
 ---
 
@@ -37,6 +44,7 @@ It is a **protocol-level foundation** that applications and industries can build
 
 | Section | What you'll find |
 |---------|-----------------|
+| [Start here](#start-here-five-paths-pick-yours) | The 5 paths: understand, build, verify, tested-evidence, report |
 | [The Problem](#the-problem) | Why Proof Engine exists |
 | [Core Model](#core-model) | The verification pipeline |
 | [Five Primitives](#the-five-core-primitives) | Event, Attestation, Evidence, Relationship, Proof |
@@ -929,9 +937,19 @@ See [GOVERNANCE.md](GOVERNANCE.md) for the PE-PROP process and decision model.
 
 ---
 
-## Security
+## Security — how to report a finding (exact routes)
 
-Found a problem? **Do not open a public issue.** See [SECURITY.md](SECURITY.md) for private reporting.
+- **Exploitable or trust-critical** (signatures, canonical encoding, id
+  binding, policy bypass, key handling): **do not open a public issue.**
+  Report privately via GitHub *Security → Report a vulnerability* (see
+  [SECURITY.md](SECURITY.md) for what to include: crate/version or commit,
+  minimal repro with input bytes + exact command, observed vs expected
+  verdict). Acknowledgement within 7 days, triage within 14, 90-day fix
+  window before disclosure.
+- **Non-security bugs** (wrong PASS/FAIL, wrong error code, crash, docs):
+  open a [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) — observed
+  verdict/exit code vs expected, with repro. Feature ideas:
+  [feature request](.github/ISSUE_TEMPLATE/feature_request.yml).
 
 ---
 
