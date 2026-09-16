@@ -1,0 +1,18 @@
+{
+  "name": "proofengine-interop-ts",
+  "private": true,
+  "type": "module",
+  "description": "Independent TypeScript verifier for ProofEngine (third implementation of the cryptographic interop core).",
+  "license": "MIT OR Apache-2.0",
+  "scripts": {
+    "typecheck": "node ./node_modules/typescript/bin/tsc --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --types node minicbor.ts pengine.ts differential.ts",
+    "differential": "npm run --silent typecheck && node differential.js"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.9.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.14.0"
+  }
+}

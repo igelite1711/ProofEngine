@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-type: direct
+    groups:
+      patch-and-minor:
+        update-types:
+          - patch-type: patch
+          - update-type: semver:minor
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -1,0 +1,59 @@
+name: Bug report
+description: Something verifies when it should fail, fails when it should pass, or crashes.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for a precise report. Verification bugs (wrong PASS/FAIL,
+        wrong error code) are the highest-value reports for this project.
+        **Security-sensitive findings (signature, canonical encoding, id
+        binding, policy bypass) must go through private vulnerability
+        reporting instead — see SECURITY.md.**
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Observed verdict/exit code vs. expected verdict/exit code.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: |
+        Input file(s) (or `make demo` output) plus the exact command, e.g.
+        `proof-cli verify --proof proof.json --clock 1700000300 ...`
+      placeholder: |
+        1. cargo run -p proof-cli -- create-event ...
+        2. proof-cli verify ...
+        3. exit code 0, expected 1 with EXPIRED
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: v0.1.0 or commit sha
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - verification pipeline (proof-verify)
+        - policy evaluation (proof-policy)
+        - crypto / signatures (proof-crypto)
+        - CBOR / canonical encoding (proof-format)
+        - graph validation (proof-graph)
+        - CLI (proof-cli)
+        - docs
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything else — logs, report JSON, environment details.

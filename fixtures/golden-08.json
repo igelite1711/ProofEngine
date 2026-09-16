@@ -1,0 +1,10 @@
+{
+  "description": "Evidence bytes with substituted digest verified against the original id; must fail (ID_MISMATCH).",
+  "evidence_canonical_hex": "a56176016468696e7476696e766f6963652d492d3920736574746c656d656e74646b696e64727472616e73616374696f6e5f7265636f726466646967657374a361760163616c6700666469676573745820efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef6f6174746573746174696f6e5f72656678326174743a76313a4d656f543876394e37656b41325662337975725f51666a334d666839444964516931303154474869416167",
+  "expected": {
+    "code": "ID_MISMATCH",
+    "verify": "fail"
+  },
+  "expected_id": "evd:v1:SXcVRPmUUVE8f4sN80PaNJceKF7lOOJy3RaxijjhjjE",
+  "name": "08-evidence-tamper"
+}

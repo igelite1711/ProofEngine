@@ -1,0 +1,10 @@
+{
+  "statement_digest_hex": "f074a157bbfd567aeb7baa33b696654d15c22316d0c13d6cbcb804642abe0d3a",
+  "issuer": "key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg",
+  "subject": "scitt:firmware-releases:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "claim_type": "scitt.statement",
+  "evidence_kinds": [
+    "transparency_registration",
+    "transparency_receipt"
+  ]
+}

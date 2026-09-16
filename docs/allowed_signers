@@ -1,0 +1,5 @@
+# Proof Engine release signing principals (RELEASE.md).
+# Line format (ssh-keygen -Y verify): <principal> <keytype> <base64> [<comment>].
+# Key rotation = a PR updating this file plus a CHANGELOG entry; old
+# signatures stay verifiable against history.
+release@proof-engine ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFfBr7zEdrw5chPteT/dXS6tPhrB9NI1hKUf5xMeWY04

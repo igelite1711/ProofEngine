@@ -1,0 +1,15 @@
+{
+  "policy_version": 2,
+  "policy_id": "either-authority-v2",
+  "expression": {
+    "all": [
+      {"type": "signature_valid"},
+      {"any": [
+        {"type": "issuer_trusted", "issuer": "key:ed25519:REPLACE_WITH_ISSUER_A"},
+        {"type": "issuer_trusted", "issuer": "key:ed25519:REPLACE_WITH_ISSUER_B"}
+      ]},
+      {"type": "not_expired"},
+      {"type": "not_revoked"}
+    ]
+  }
+}

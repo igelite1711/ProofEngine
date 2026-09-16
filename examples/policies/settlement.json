@@ -1,0 +1,12 @@
+{
+  "policy_version": 1,
+  "policy_id": "settlement_v1",
+  "requirements": [
+    {"type": "signature_valid"},
+    {"type": "issuer_trusted", "issuer": "key:ed25519:REPLACE_WITH_YOUR_ISSUER_KEY"},
+    {"type": "not_expired"},
+    {"type": "not_revoked"},
+    {"type": "relationship_exists", "relationship": "SETTLES"},
+    {"type": "evidence_present", "kind": "transaction_record"}
+  ]
+}

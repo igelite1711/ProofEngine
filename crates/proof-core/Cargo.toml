@@ -1,0 +1,15 @@
+[package]
+name = "proof-core"
+version = "1.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Domain types, error codes, limits, hash/id value objects for Proof Engine"
+repository = "https://github.com/igelite1711/ProofEngine"
+homepage = "https://github.com/igelite1711/ProofEngine"
+documentation = "https://docs.rs/proof-core"
+keywords = ["proof", "verification", "cryptography", "cbor", "attestation"]
+categories = ["cryptography", "encoding"]
+
+[dependencies]
+thiserror = { workspace = true }
+hex = { workspace = true }

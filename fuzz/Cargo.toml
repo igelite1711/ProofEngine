@@ -1,0 +1,47 @@
+[package]
+name = "proof-engine-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+notes = "cargo-fuzz targets. Run with: cargo +nightly fuzz run <target> -- -max_total_time=600"
+
+[dependencies]
+libfuzzer-sys = "0.4"
+proof-core = { path = "../crates/proof-core" }
+proof-format = { path = "../crates/proof-format" }
+proof-crypto = { path = "../crates/proof-crypto" }
+proof-graph = { path = "../crates/proof-graph" }
+proof-verify = { path = "../crates/proof-verify" }
+proof-policy = { path = "../crates/proof-policy" }
+serde_json = "1"
+
+[[bin]]
+name = "cbor_decoder"
+path = "fuzz_targets/cbor_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proof_verify"
+path = "fuzz_targets/proof_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "policy_parser"
+path = "fuzz_targets/policy_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "graph_ingest"
+path = "fuzz_targets/graph_ingest.rs"
+test = false
+doc = false
+bench = false

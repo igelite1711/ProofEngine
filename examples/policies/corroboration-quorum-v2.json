@@ -1,0 +1,16 @@
+{
+  "policy_version": 2,
+  "policy_id": "corroboration-quorum-v2",
+  "expression": {
+    "all": [
+      {"type": "signature_valid"},
+      {"threshold": {"k": 2, "of": [
+        {"type": "issuer_trusted", "issuer": "key:ed25519:REPLACE_WITH_ISSUER_A"},
+        {"type": "issuer_trusted", "issuer": "key:ed25519:REPLACE_WITH_ISSUER_B"},
+        {"type": "issuer_trusted", "issuer": "key:ed25519:REPLACE_WITH_ISSUER_C"}
+      ]}},
+      {"type": "not_expired"},
+      {"type": "not_revoked"}
+    ]
+  }
+}

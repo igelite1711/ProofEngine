@@ -1,0 +1,127 @@
+; ProofEngine Policy Language Grammar (V1 + V2)
+; RFC 5234 (ABNF) + JSON RFC 8259
+; This is the authoritative grammar for the policy language.
+; POLICY.md describes semantics; this grammar defines syntax.
+
+(* Root policy object *)
+policy            = ws '{' ws
+                    '"policy_version"': ws version ws ','
+                    '"policy_id"': ws json-string ws ','
+                    policy-body
+                    ws '}' ws
+
+version           = '1' / '2'
+
+(* V1 body: implicit-AND requirements list (frozen) *)
+(* V2 body: boolean expression tree *)
+policy-body       = '"requirements"': ws '[' ws requirement-list ws ']'
+                  | '"expression"': ws expression ws
+
+requirement-list  = requirement
+                  | requirement ws ',' ws requirement-list
+
+requirement       = ws '{' ws
+                    '"type"': ws requirement-type
+                    ws requirement-fields?
+                    ws '}' ws
+
+(* Boolean structure (V2 only) *)
+expression        = requirement
+                  | all-expr | any-expr | not-expr | threshold-expr
+
+all-expr          = ws '{' ws '"all"': ws '[' ws expression-list ws ']' ws '}' ws
+any-expr          = ws '{' ws '"any"': ws '[' ws expression-list ws ']' ws '}' ws
+not-expr          = ws '{' ws '"not"': ws expression ws '}' ws
+threshold-expr    = ws '{' ws '"threshold"': ws '{' ws
+                    '"k"': ws number ws ',' ws
+                    '"of"': ws '[' ws expression-list ws ']'
+                    ws '}' ws '}' ws
+
+expression-list   = expression
+                  | expression ws ',' ws expression-list
+
+(* Closed requirement set: ten V1 leaves + ten V2 adjudication leaves.
+   V1 policies accept V1 leaves only; V2 expressions accept all twenty. *)
+requirement-type  = '"signature_valid"'
+                  | '"issuer_trusted"'
+                  | '"issuer_excluded"'
+                  | '"relationship_exists"'
+                  | '"not_expired"'
+                  | '"not_revoked"'
+                  | '"not_superseded"'
+                  | '"evidence_present"'
+                  | '"transparency_present"'
+                  | '"proof_fresh"'
+                  | '"delegated_authority"'
+                  | '"identity_bound"'
+                  | '"transparency_inclusion"'
+                  | '"no_conflicting_evidence"'
+                  | '"vocabulary_accepted"'
+                  | '"evidence_usable"'
+                  | '"evidence_bound"'
+                  | '"requires_reference"'
+                  | '"forbids_reference"'
+                  | '"claim_field"'
+
+(* Optional fields per requirement type *)
+requirement-fields = ws ',' ws issuer-field
+                  | ws ',' ws relationship-field
+                  | ws ',' ws evidence-field
+                  | ws ',' ws max-age-field
+                  | ws ',' ws root-field
+                  | ws ',' ws ab-fields
+                  | ws ',' ws log-field
+                  | ws ',' ws ns-fields
+                  | ws ',' ws scope-field
+                  | ws ',' ws reference-field
+                  | ws ',' ws claim-field-body
+
+issuer-field      = '"issuer"': ws json-string
+relationship-field = '"relationship"': ws json-string
+evidence-field    = '"kind"': ws json-string
+max-age-field     = '"max_age_seconds"': ws number
+root-field        = '"root"': ws json-string
+ab-fields         = '"a"': ws json-string ws ',' ws '"b"': ws json-string
+log-field         = '"log"': ws json-string
+ns-fields         = '"ns"': ws json-string ws ',' ws '"max_version"': ws number
+scope-field       = '"scope"': ws json-string
+reference-field   = '"id"': ws json-string  (* prf:v1: shape, checked at parse *)
+claim-field-body  = ['"claim_type"': ws json-string ws ',' ws]
+                    ['"subject"': ws json-string ws ',' ws]
+                    '"field"': ws json-string ws ',' ws
+                    '"op"': ws claim-op ws ',' ws
+                    '"value"': ws claim-value
+claim-op          = '"eq"' / '"ne"' / '"gt"' / '"gte"' / '"lt"' / '"lte"'
+                    (* uint: all six; text/bool: eq/ne only, else POLICY_INVALID *)
+claim-value       = json-string / number / 'true' / 'false'
+
+(* JSON primitives *)
+json-string       = '"' string-char* '"'
+number            = digit1-9 digit* | '0'
+digit             = '0' | digit1-9
+digit1-9          = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
+string-char       = %x20-21 | %x23-5B | %x5D-10FFFF | '\' escape
+escape            = '"' | '\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' | 'u' hex hex hex hex
+hex               = digit | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'a' | 'b' | 'c' | 'd' | 'e' | 'f'
+ws                = *( ' ' / %x0A / %x0D / %x09 )
+
+(*
+  Notes:
+  - policy_version 1: V1 body (`requirements`, implicit AND, V1 leaves only)
+  - policy_version 2: V2 body (`expression` tree; all twenty leaves)
+  - v2 rejects the `requirements` key and v1 rejects v2 leaf names (strict
+    separation; unknown versions fail closed)
+  - policy_id is an arbitrary string (recommended: namespaced like "merchant_payment_v1")
+  - requirements array / all / any / threshold-of must have at least 1 element
+  - threshold needs 1 <= k <= len(of); exactly one connective per object
+  - total expression nodes <= max_policy_requirements (32 default)
+  - Extra fields in any object = POLICY_INVALID
+  - Unknown requirement type = POLICY_INVALID
+  - claim_field: optional claim_type/subject scope; field != "type" (use
+    claim_type); text/bool allow eq/ne only; uint allows all six ops;
+    matches ACTIVE verified claims only (revoked/expired/superseded never
+    satisfy); missing field or type mismatch = FAIL for that leaf
+  - evidence_bound: some AVAILABLE evidence of `kind` is named by a verified
+    ACTIVE attestation's `evidence_ref` whose claim `evidence_digest` equals
+    the evidence digest; otherwise FAIL for that leaf
+*)

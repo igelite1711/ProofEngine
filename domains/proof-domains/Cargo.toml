@@ -1,0 +1,17 @@
+[package]
+name = "proof-domains"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "PE-NEUT-003 domain proof-suite: the same proof core carries unrelated industries to identical verdict shapes. Kept OUT of the main workspace: it is a consumer of the core API, exactly like any external domain application would be."
+
+[dependencies]
+proof-core = { path = "../../crates/proof-core" }
+proof-format = { path = "../../crates/proof-format" }
+proof-crypto = { path = "../../crates/proof-crypto" }
+proof-verify = { path = "../../crates/proof-verify" }
+proof-policy = { path = "../../crates/proof-policy" }
+
+[dev-dependencies]
+serde_json = "1"

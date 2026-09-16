@@ -1,0 +1,1 @@
+{"attest-sign":0.1065,"canonical-encode":0.0059,"create-event":0.0097,"evidence-make":0.0066,"graph-wide":0.0218,"hash-ids":0.0044,"policy-eval":0.0019,"serde-roundtrip":0.0161,"verify-deep":4.2466,"verify-large":4.9060,"verify-small":0.3737}

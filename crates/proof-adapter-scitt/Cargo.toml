@@ -1,0 +1,23 @@
+[package]
+name = "proof-adapter-scitt"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "SCITT transparency adapter for Proof Engine (perimeter, P7)"
+repository = "https://github.com/igelite1711/ProofEngine"
+homepage = "https://docs.rs/proof-adapter-scitt"
+keywords = ["proof", "transparency", "scitt", "adapter"]
+categories = ["cryptography"]
+
+[dependencies]
+proof-core = { version = "1.0.0", path = "../proof-core" }
+proof-format = { version = "1.0.0", path = "../proof-format" }
+proof-crypto = { version = "1.0.0", path = "../proof-crypto" }
+ed25519-dalek = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+proof-verify = { version = "1.0.0", path = "../proof-verify" }
+proof-policy = { version = "1.0.0", path = "../proof-policy" }
+hex = { workspace = true }

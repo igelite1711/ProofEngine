@@ -1,0 +1,8 @@
+{
+  "description": "0 encoded as 0x1800 must fail with NON_CANONICAL.",
+  "expected": {
+    "code": "NON_CANONICAL"
+  },
+  "input_hex": "1800",
+  "name": "03-non-shortest-int"
+}

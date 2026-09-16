@@ -1,0 +1,6 @@
+node_modules/
+# compiled output — sources are the *.ts files; `npm run differential` rebuilds
+minicbor.js
+pengine.js
+differential.js
+make.js

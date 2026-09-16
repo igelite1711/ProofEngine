@@ -1,0 +1,33 @@
+# Rust build artifacts
+/target
+target/
+
+# Generated demo output (reproduce with `make demo`)
+/demo/out/
+
+# Editor / OS noise
+*.swp
+.DS_Store
+
+# Python bytecode (never commit — rebuilds automatically)
+__pycache__/
+*.pyc
+
+
+# Machine-specific local build config (Termux: sdcard FUSE + PRoot gcc).
+# Never commit - it hardcodes paths like /root/.cache and breaks other machines/CI.
+.cargo/config.toml
+
+# CLI scratch artifacts (live copies live in examples/live/; root copies are
+# local runs — see README quick-start. Never commit new root copies).
+/att.json
+/ev1.json
+/evd.json
+/inv1.json
+/policy.json
+/proof.json
+/rel.json
+
+# Generated supply-chain artifacts (reproduce with `make sbom` / `make release-meta`)
+sbom.cdx.json
+dist/

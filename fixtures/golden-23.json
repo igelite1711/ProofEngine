@@ -1,0 +1,17 @@
+{
+  "alg": -9,
+  "cose_sign1_hex": "845846a20128045840591ab771ebbcfd6d9cb9094d106528add1a69d44c2c1f627f089ec58b9c61adf9f4e6abf0d045c0c693a3c68ad7c97ca72be64def4a26fecd263dd98a92780f0a058296174746573746174696f6e2d636f6e74656e742d63616e6f6e6963616c2d706c616365686f6c6465725840d0d49fa866243ab43f9ae6cf95a6e6707d90217a2f49676eac4518aee94435e4713647db3982182a2de3782ea3e27e3a53db6602851ea85f06425156801346eb",
+  "description": "Vector 21 bytes, checked under a different issuer; key binding must fail.",
+  "expected": {
+    "code": "SIGNATURE_INVALID",
+    "verify": "fail"
+  },
+  "name": "23-wrong-key-sign1-esp256",
+  "verify_ctx": {
+    "allowed_algs": [
+      -19,
+      -9
+    ],
+    "issuer": "key:p256:HhhTL9R1TALzBB2cdc6zO4P_2BrHzk_ogsyxyYvFiW6kbDEcTi_0DdlqNlPm5FRF0y3-SG7O11x6kMahiIHAow"
+  }
+}

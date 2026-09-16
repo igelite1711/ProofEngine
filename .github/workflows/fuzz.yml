@@ -1,0 +1,58 @@
+name: Fuzz (nightly smoke, A8)
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# PE-OPS-003: fuzz targets build per PR; smoke nightly with log.
+jobs:
+  # Fast gate on every PR: all four targets must still BUILD (catches
+  # exhaustive-match and API drift like the 7d9db44 invariant fix). The
+  # 600s smoke runs stay nightly-only below.
+  build:
+    name: cargo-fuzz build (all targets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Build all fuzz targets
+        run: cargo +nightly fuzz build
+
+  smoke:
+    name: cargo-fuzz smoke (${{ matrix.target }}, 600s)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [cbor_decoder, proof_verify, policy_parser, graph_ingest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Fuzz ${{ matrix.target }} (600s max, seeded corpus)
+        run: cargo +nightly fuzz run ${{ matrix.target }} fuzz/seeds/${{ matrix.target }} -- -max_total_time=600 -print_final_stats=1
+
+      - name: Upload crash artifacts (failures only)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/

@@ -1,0 +1,24 @@
+[package]
+name = "proof-crypto"
+version = "1.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Hash abstraction, COSE_Sign1 sign/verify, key types, and algorithm registry for Proof Engine"
+repository = "https://github.com/igelite1711/ProofEngine"
+homepage = "https://github.com/igelite1711/ProofEngine"
+documentation = "https://docs.rs/proof-crypto"
+keywords = ["proof", "cose", "ed25519", "cryptography", "signatures"]
+categories = ["cryptography"]
+
+[dependencies]
+proof-core = { version = "1.0.0", path = "../proof-core" }
+proof-format = { version = "1.0.0", path = "../proof-format" }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+ed25519-dalek = { workspace = true }
+p256 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

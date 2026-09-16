@@ -1,0 +1,58 @@
+# Proof Engine — Error Model (V1 draft — in development)
+
+> V1 error-code authority (24 stable wire strings). Restated normatively in
+> `PROOF-ENGINE-SPEC.md` §13, which wins on semantics.
+
+> 24 stable wire strings (22 V1 + `WITHDRAWN`, `COMPROMISED`, appended —
+> codes are append-only). Codes are part of the protocol: renaming or
+> renumbering is a breaking change (see VERSIONING.md). Every failure is
+> recorded with stage + object + code + message; failures are never repaired
+> downstream and unknown is never converted into valid.
+
+## Fail-closed rules
+
+1. Every `Err` from parsing/decoding surfaces as a report failure or a
+   caller error — never a silent PASS.
+2. An `Invalid` verdict always carries ≥1 code (machine-checked by fuzz
+   `proof_verify` and soak asserts).
+3. Early exit (PARSE/SCHEMA/CANONICAL failure) reports `evidence_validity:
+   invalid` — no vacuous Valid (PE-VERIFY-011).
+4. CLI maps verdicts to exit 1 and usage/engine errors to exit 2; codes are
+   identical in both paths (PE-CLI-001).
+
+## Code table (stage = where first recorded)
+
+| Code | Stage | Meaning |
+|------|-------|---------|
+| `NON_CANONICAL` | CANONICAL | re-encoded bytes differ from input |
+| `DUPLICATE_MAP_KEY` | PARSE | repeated CBOR map key |
+| `FORBIDDEN_CBOR_CONSTRUCT` | PARSE | float, tag, indefinite length, bignum, reserved ai |
+| `ID_MISMATCH` | IDENTIFIERS | recomputed id ≠ stated id (tamper evidence) |
+| `SIGNATURE_INVALID` | SIGNATURES | COSE verify failed or issuer ≠ envelope key |
+| `UNKNOWN_ALGORITHM` | SIGNATURES | COSE alg unknown to this verifier |
+| `DEPRECATED_ALGORITHM` | SIGNATURES | known but deprecated (-8/-7/-35/-36) |
+| `UNSUPPORTED_VERSION` | SCHEMA | object/proof version ≠ 1; policy version ∉ {1, 2} |
+| `LIMIT_EXCEEDED` | PARSE/SCHEMA/GRAPH/POLICY | size/depth/entries/items bound hit, incl. pipeline input-vector bounds, builder/batch/combine/policy-requirement bounds |
+| `MALFORMED` | PARSE | truncated input, trailing bytes, bad UTF-8 |
+| `INVALID_BASE64URL` | PARSE | id component not valid base64url |
+| `UNEXPECTED_HEADER_PARAM` | KEYS | COSE header label/value outside {1,4} |
+| `ALGORITHM_CONFUSION` | KEYS | key shape does not match attestation alg |
+| `SCHEMA_VIOLATION` | SCHEMA | unknown variant/field, missing field, closed-set breach |
+| `RELATIONSHIP_UNGROUNDED` | RELATIONSHIPS | trust-relevant edge lacks backing evidence |
+| `DANGLING_REFERENCE` | RELATIONSHIPS/EVIDENCE | endpoint/reference resolves to nothing |
+| `CYCLE_DETECTED` | GRAPH | SUPERSEDES subgraph cyclic/branching/too deep; or any relationship cycle under the opt-in provenance DAG profile (`--require-acyclic`) |
+| `POLICY_INVALID` | POLICY | policy rejected before evaluation (never partial) |
+| `EXPIRED` | TIME / STATUS | TIME: outside validity window at verifier clock. STATUS: status effect not valid yet at verifier clock (future-dated feed object; proof validity unaffected) |
+| `REVOKED` | REVOCATION | covered by a valid signed revocation |
+| `REVOCATION_UNKNOWN` | REVOCATION | no/stale revocation info (fail closed) |
+| `UNAUTHORIZED_STATUS` | STATUS | status signer has no authority over target (feed hygiene; proof validity unaffected, see `status_inputs_valid`) |
+| `WITHDRAWN` | REVOCATION/EVIDENCE | covered by a valid signed withdrawal (history preserved) |
+| `COMPROMISED` | REVOCATION/EVIDENCE | tainted by a valid signed compromise marking at/after its instant (history not preserved) |
+
+> STATUS-stage failures (V1.1): malformed status claims, non-status supplied
+> objects, supplied-signature rejects, `UNAUTHORIZED_STATUS`, and future-dated
+> effects record in `STATUS`, never flip `evidence_validity`, and surface via
+> `status_inputs_valid: false`. Lifecycle outcomes stay in `REVOCATION`.
+
+One-to-one with `proof-core/src/error.rs` (checked by audit; keep in sync —
+renaming is breaking).

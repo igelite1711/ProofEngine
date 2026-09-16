@@ -1,0 +1,33 @@
+name: Feature request / spec question
+description: Suggest a capability or question the format/policy semantics.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ProofEngine is deliberately minimal and fail-closed. Proposals that add
+        OR/NOT to the policy language, dynamic code evaluation, network
+        fetches, or open-ended vocabularies will likely be declined — but
+        precise spec questions and gap analyses are extremely welcome.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or gap
+      description: What can you not express or verify today? Include a concrete scenario.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should happen, with examples. Note any format/compat impact on existing proofs.
+    validations:
+      required: true
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints acknowledged
+      options:
+        - label: This keeps verification offline and deterministic.
+        - label: This keeps all vocabularies closed and versioned.
+        - label: This does not add dependencies without justification.

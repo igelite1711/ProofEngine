@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/proof-core",
+  "crates/proof-format",
+  "crates/proof-crypto",
+  "crates/proof-graph",
+  "crates/proof-verify",
+  "crates/proof-policy",
+  "crates/proof-cli",
+  "crates/proof-adapter-scitt",
+  "crates/proof-bench",
+  "crates/proof-api",
+]
+# cargo-fuzz crate builds only under nightly with libFuzzer; kept out of the
+# workspace (see fuzz/README.md and .github/workflows/fuzz.yml).
+# domains/proof-domains is a pure CONSUMER of the core API (PE-NEUT-003
+# domain proof-suite): it builds standalone, exactly like an external domain
+# application would.
+exclude = ["fuzz", "domains/proof-domains"]
+default-members = [
+  # Stable V1 core (7 crates, V1 promise). Perimeter (adapter-scitt/bench/api
+  # at 0.1.x experimental) builds with `cargo build --workspace`, not by default —
+  # keeps `cargo build/test` on the frozen surface (I1 surface shrink).
+  "crates/proof-core",
+  "crates/proof-format",
+  "crates/proof-crypto",
+  "crates/proof-graph",
+  "crates/proof-verify",
+  "crates/proof-policy",
+  "crates/proof-cli",
+]
+
+# PE-OPS-001: locked reproducible build (--locked enforced by Makefile/CI).
+[workspace.dependencies]
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+p256 = { version = "0.13", features = ["ecdsa"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+proptest = "1"
+zeroize = "1"

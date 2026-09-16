@@ -1,0 +1,19 @@
+{
+  "id": "golden-20",
+  "title": "Text normalization invariant: identifiers bind exact UTF-8 bytes as given (FORMAT.md 3.1) - NFC and NFD spellings of the same logical string are distinct canonical texts and distinct ids",
+  "text_canonical_hex": "65636166c3a9",
+  "text_utf8": "cafe (NFC spelling: U+00E9)",
+  "text_canonical_hex_nfd": "6663616665cc81",
+  "text_utf8_nfd": "cafe (NFD spelling: e + combining acute U+0301)",
+  "evt_id": "evt:v1:2WkRa-i2ZRqaDML9ZYdCDKspxSg98yP19wzOm_h5CZM",
+  "evt_id_nfd": "evt:v1:0oV9QewTkvPzTboQc9k8Wdhb20e15mkcpDiEdfDn9I4",
+  "expected": {
+    "note": "The two spellings MUST NOT unify: no normalization, no folding, no trimming anywhere in the engine. Applications normalize before object creation if they want equivalence; verifiers never fold.",
+    "ids_equal": false,
+    "canonical_bytes_equal": false,
+    "reencode_identity": true
+  },
+  "verify_ctx": {
+    "note": "Byte-level vector: no pipeline verdict depends on it; harness re-derives ids from the hex and checks re-encode identity."
+  }
+}

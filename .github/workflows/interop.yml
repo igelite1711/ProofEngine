@@ -1,0 +1,75 @@
+name: Interop (Gate I)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Use default target dir (./target) for CI; local builds use .cargo/config.toml override
+  CARGO_TARGET_DIR: target
+
+jobs:
+  differential:
+    name: Rust <-> Python differential
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Stdlib-only check (no third-party imports)
+        run: |
+          test -z "$(grep -rnE '^\s*(import|from)\s+(cbor|nacl|cryptography|ecdsa|requests)' interop/ || true)"
+
+      - name: Build CLI
+        run: cargo build --locked -p proof-cli
+
+      - name: Demo artifacts (I3b input)
+        run: make demo
+
+      - name: Differential (I2 + I3a + I3b + negatives)
+        run: >-
+          mkdir -p /tmp/proof-interop &&
+          python3 interop/differential.py --repo . --proof-cli
+          ./target/debug/proof-cli --work /tmp/proof-interop
+          | tee /tmp/proof-interop/differential.log
+
+      - name: Full-verdict conformance (golden proof/policy vectors)
+        run: >-
+          mkdir -p /tmp/proof-conformance &&
+          python3 tools/conformance.py --repo . --proof-cli
+          ./target/debug/proof-cli --work /tmp/proof-conformance
+          | tee /tmp/proof-conformance/conformance.log
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run TypeScript differential
+        env:
+          PROOF_CLI: ${{ github.workspace }}/target/debug/proof-cli
+        run: >-
+          cd interop/ts &&
+          npm install --no-audit --no-fund &&
+          npm run --silent differential
+          | tee /tmp/proof-interop/differential-ts.log
+
+      - name: SCITT adapter tests + independent differential
+        run: >-
+          cargo test --locked -p proof-adapter-scitt &&
+          python3 crates/proof-adapter-scitt/differential.py
+
+      - name: Upload interop evidence bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: interop-evidence
+          path: |
+            /tmp/proof-interop/
+            /tmp/proof-conformance/

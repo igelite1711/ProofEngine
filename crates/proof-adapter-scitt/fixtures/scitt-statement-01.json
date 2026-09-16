@@ -1,0 +1,11 @@
+{
+  "signature_b64u": "V3IkynEYII3hs5heQJCwow45NSB7v7ylYLrnfy8Z9rrvCa6k0GqUVSMrsFucWu_BnhCzQAl5mcxB888i5RsvCA",
+  "statement": {
+    "cti": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "feed": "firmware-releases",
+    "issued_at": 1700000000,
+    "kid": "key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg",
+    "payload_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "v": 1
+  }
+}

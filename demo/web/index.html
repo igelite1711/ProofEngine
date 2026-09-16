@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proof Engine — Interactive Demo</title>
+<style>
+  :root { --ink: #1a1a1a; --muted: #555; --line: #ccc; --ok: #0a6b2d; --bad: #a31212; }
+  body { font-family: system-ui, -apple-system, sans-serif; color: var(--ink);
+         max-width: 860px; margin: 0 auto; padding: 1.5rem; line-height: 1.5; }
+  header h1 { margin-bottom: 0; }
+  header p { color: var(--muted); margin-top: 0.25rem; }
+  nav { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 1rem 0; }
+  nav button { padding: 0.4rem 0.7rem; border: 1px solid var(--line);
+               background: #fff; cursor: pointer; font-size: 0.95rem; }
+  nav button[aria-selected="true"] { background: var(--ink); color: #fff; }
+  section.tab { display: none; border-top: 2px solid var(--ink); padding-top: 1rem; }
+  section.tab.active { display: block; }
+  .box { border: 1px solid var(--line); padding: 0.75rem 1rem; margin: 0.5rem 0; }
+  .mono { font-family: ui-monospace, monospace; font-size: 0.85rem; word-break: break-all; }
+  .verdict { font-size: 2rem; font-weight: bold; margin: 0.5rem 0; }
+  .pass { color: var(--ok); } .fail { color: var(--bad); }
+  .stage { display: flex; gap: 0.6rem; padding: 0.25rem 0; border-bottom: 1px dotted var(--line); }
+  .stage .mark { min-width: 2.5rem; font-weight: bold; }
+  .muted { color: var(--muted); } .small { font-size: 0.85rem; }
+  pre.cmd { background: #f4f4f4; padding: 0.6rem; overflow-x: auto; font-size: 0.8rem; }
+  button.action { padding: 0.5rem 1rem; font-size: 1rem; margin: 0.25rem 0.25rem 0.25rem 0; cursor: pointer; }
+  label.pick { display: block; margin: 0.4rem 0; }
+  footer { margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 0.75rem; }
+  svg.graph text { font-family: ui-monospace, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Proof Engine</h1>
+  <p>Independently verifiable proofs for digital claims. Every verdict on this
+  page was computed by the core — nothing is simulated.</p>
+  <label class="pick">Example vocabulary:
+    <select id="example">
+      <option value="payment">Financial transaction</option>
+      <option value="software">Software artifact</option>
+    </select>
+  </label>
+</header>
+<nav role="tablist" aria-label="Demo screens">
+  <button role="tab" data-tab="home" aria-selected="true">Home</button>
+  <button role="tab" data-tab="builder" aria-selected="false">Builder</button>
+  <button role="tab" data-tab="graph" aria-selected="false">Graph</button>
+  <button role="tab" data-tab="build" aria-selected="false">Build</button>
+  <button role="tab" data-tab="verify" aria-selected="false">Verify</button>
+  <button role="tab" data-tab="policy" aria-selected="false">Policy</button>
+  <button role="tab" data-tab="tamper" aria-selected="false">Tamper</button>
+  <button role="tab" data-tab="lifecycle" aria-selected="false">Lifecycle</button>
+</nav>
+<main>
+  <section class="tab active" id="tab-home" role="tabpanel">
+    <h2>Make digital claims independently verifiable</h2>
+    <p>A claim, packaged with evidence, attestations and relationships into a
+    Proof that anyone can verify against explicit policy.</p>
+    <button class="action" data-goto="builder">Create Proof</button>
+    <button class="action" data-goto="builder">Load Example</button>
+    <button class="action" data-goto="verify">Verify Proof</button>
+    <p class="muted small">Flow: claim → evidence → attestation →
+    relationships → proof → verification → policy → PASS / FAIL.</p>
+  </section>
+
+  <section class="tab" id="tab-builder" role="tabpanel">
+    <h2>Proof Builder</h2>
+    <p class="muted">Vocabulary shown is one <em>example</em> — the engine accepts any domain.</p>
+    <h3>Proposition</h3>
+    <div class="box" id="b-prop"></div>
+    <h3>Events</h3><div id="b-events"></div>
+    <h3>Evidence — why should you believe the claim?</h3><div id="b-evidence"></div>
+    <h3>Attestations</h3><div id="b-att"></div>
+    <h3>Relationships</h3><div id="b-rel"></div>
+  </section>
+
+  <section class="tab" id="tab-graph" role="tabpanel">
+    <h2>Proof Graph</h2>
+    <p class="muted">Rendered from the actual relationships in the Proof — no hard-coded diagram.</p>
+    <div id="g-svg"></div>
+  </section>
+
+  <section class="tab" id="tab-build" role="tabpanel">
+    <h2>Build Proof</h2>
+    <p>These are the exact commands that produced this Proof, run against the core:</p>
+    <div id="build-cmds"></div>
+    <div class="box"><strong>Proof ID</strong><div class="mono" id="build-id"></div></div>
+    <button class="action" id="btn-copy">Copy Proof</button>
+    <button class="action" id="btn-dl">Export Proof</button>
+    <button class="action" data-goto="verify">Verify Proof</button>
+  </section>
+
+  <section class="tab" id="tab-verify" role="tabpanel">
+    <h2>Verification</h2>
+    <div class="verdict" id="v-verdict"></div>
+    <div id="v-stages"></div>
+  </section>
+
+  <section class="tab" id="tab-policy" role="tabpanel">
+    <h2>Policy — proof validity is not a trust decision</h2>
+    <p>Same proof bytes. Toggle requirements and watch the decision change:</p>
+    <label class="pick"><input type="checkbox" id="p-trusted" checked> Issuer trusted</label>
+    <label class="pick"><input type="checkbox" id="p-transp"> Transparency receipt required</label>
+    <p class="muted small">Locked on: signature valid, not expired, not revoked, evidence present.</p>
+    <div class="verdict" id="p-verdict"></div>
+    <div id="p-reqs"></div>
+    <h3>Why (generated from the real evaluation)</h3>
+    <pre class="cmd" id="p-explain"></pre>
+  </section>
+
+  <section class="tab" id="tab-tamper" role="tabpanel">
+    <h2>Tamper mode — attack the proof</h2>
+    <button class="action" id="btn-tamper">Tamper with proof</button>
+    <button class="action" id="btn-restore">Restore original</button>
+    <div id="t-state"></div>
+    <div id="t-stages"></div>
+  </section>
+
+  <section class="tab" id="tab-lifecycle" role="tabpanel">
+    <h2>Life of a proof</h2>
+    <p>Historical validity and current applicability are different questions.</p>
+    <nav aria-label="Lifecycle states">
+      <button data-life="active" aria-selected="true">Active</button>
+      <button data-life="expired" aria-selected="false">Expired</button>
+      <button data-life="revoked" aria-selected="false">Revoked</button>
+      <button data-life="superseded" aria-selected="false">Superseded</button>
+    </nav>
+    <div id="l-state"></div>
+  </section>
+</main>
+<footer>
+  <p class="small muted" id="provenance"></p>
+</footer>
+
+<script id="proof-data" type="application/json">{"examples":{"payment":{"build_log":["proof   prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI -> proof.json"],"clock":1757000300,"commands":["proof-cli create-event --type payment.created --subject payment:p-tour --effective-at 1757000000 --payload-hex 5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e --meta order=ord-tour-1 --out evt1.json","proof-cli create-event --type invoice.issued --subject invoice:i-tour --effective-at 1757000000 --payload-hex a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7 --out evt2.json","proof-cli attest --seed test --subject payment:p-tour --claim-type payment.settled --claim amount=4200,currency=EUR --issued-at 1757000100 --out att.json","proof-cli add-evidence --kind transaction_record --digest-hex e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1 --attestation-ref att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8 --hint acquirer:receipt:tour --out evd.json","proof-cli relate --from evt:v1:sIhl5-dpreWAW_gIsugEiqbTSLYg8_OP2wXvAI7H84s --type SETTLES --to evt:v1:ujRaudfr9HMaw5DMNvsfT2iGgZU42CJNW1XM7l26FE4 --evidence-ref evd:v1:Hhoz2Dl7Jlw2fAZ-ZM6JEWUPeatd581zOiaPSG0s7jw --out rel.json","proof-cli build --kind payment.settles-invoice --subject payment:p-tour --predicate settles --object evt:v1:ujRaudfr9HMaw5DMNvsfT2iGgZU42CJNW1XM7l26FE4 --at-time 1757000100 --created-at 1757000200 --events evt1.json,evt2.json --attestations att.json --evidence evd.json --relationships rel.json --out proof.json","proof-cli attest --seed test --subject payment:p-tour --claim-type payment.settled --claim amount=4200,currency=EUR --issued-at 1757000100 --expires-at 1757000350 --out att-exp.json","proof-cli add-evidence --kind transaction_record --digest-hex e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1 --attestation-ref att:v1:DX-dMONto06JZpJ_xmKkA7I2vMjrIdfd89foAFY79X4 --hint acquirer:receipt:tour --out evd-exp.json","proof-cli relate --from evt:v1:sIhl5-dpreWAW_gIsugEiqbTSLYg8_OP2wXvAI7H84s --type SETTLES --to evt:v1:ujRaudfr9HMaw5DMNvsfT2iGgZU42CJNW1XM7l26FE4 --evidence-ref evd:v1:DHTh7LgiBbRYPBjsH1YRUGpATWHWhelwLUgqC4ld-3k --out rel-exp.json","proof-cli build --kind payment.settles-invoice --subject payment:p-tour --predicate settles --object evt:v1:ujRaudfr9HMaw5DMNvsfT2iGgZU42CJNW1XM7l26FE4 --at-time 1757000100 --created-at 1757000200 --events evt1.json,evt2.json --attestations att-exp.json --evidence evd-exp.json --relationships rel-exp.json --out proof-exp.json","proof-cli attest --seed test --subject payment:p-tour --claim-type payment.settled --claim amount=4300 --issued-at 1757000600 --out att2.json"],"contents":{"attestations":[{"claim_fields":[{"key":"amount","value":4200},{"key":"currency","value":"EUR"}],"claim_type":"payment.settled","evidence_ref":null,"expires_at":null,"issued_at":1757000100,"issuer":"key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg","subject":"payment:p-tour"}],"created_at":1757000200,"events":[{"effective_at":1757000000,"metadata":[{"key":"order","value":"ord-tour-1"}],"payload_ref":{"alg":"sha-256","digest_hex":"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"},"subject":"payment:p-tour","type":"payment.created"},{"effective_at":1757000000,"metadata":[],"payload_ref":{"alg":"sha-256","digest_hex":"a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7"},"subject":"invoice:i-tour","type":"invoice.issued"}],"evidence":[{"attestation_ref":"att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","digest":{"alg":"sha-256","digest_hex":"e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"},"hint":"acquirer:receipt:tour","kind":"transaction_record"}],"proof_id":"prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","proposition":{"at_time":1757000100,"context":[],"kind":"payment.settles-invoice","object":"evt:v1:ujRaudfr9HMaw5DMNvsfT2iGgZU42CJNW1XM7l26FE4","predicate":"settles","subject":"payment:p-tour"},"relationships":[{"attestation_ref":null,"evidence_ref":"evd:v1:Hhoz2Dl7Jlw2fAZ-ZM6JEWUPeatd581zOiaPSG0s7jw","from":"evt:v1:sIhl5-dpreWAW_gIsugEiqbTSLYg8_OP2wXvAI7H84s","to":"evt:v1:ujRaudfr9HMaw5DMNvsfT2iGgZU42CJNW1XM7l26FE4","type":"SETTLES"}],"source":"proof.json","v":1},"expired":{"exit":1,"proof":{"cbor":"a8617601666576656e747382a661760164747970656f7061796d656e742e63726561746564677375626a6563746e7061796d656e743a702d746f7572686d65746164617461a1656f726465726a6f72642d746f75722d316b7061796c6f61645f726566a361760163616c67006664696765737458205e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e6c6566666563746976655f61741a68b9b140a661760164747970656e696e766f6963652e697373756564677375626a6563746e696e766f6963653a692d746f7572686d65746164617461a06b7061796c6f61645f726566a361760163616c6700666469676573745820a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a76c6566666563746976655f61741a68b9b1406865766964656e636581a56176016468696e747561637175697265723a726563656970743a746f7572646b696e64727472616e73616374696f6e5f7265636f726466646967657374a361760163616c6700666469676573745820e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e16f6174746573746174696f6e5f72656678326174743a76313a44582d644d4f4e746f30364a5a704a5f786d4b6b41374932764d6a72496466643839666f414659373958346870726f6f665f696478327072663a76313a3964423075452d5a767071446d425a4e38517279515a52776e7746773679694f76346e35423959347565386a637265617465645f61741a68b9b2086b70726f706f736974696f6ea7617601646b696e64777061796d656e742e736574746c65732d696e766f696365666f626a65637478326576743a76313a756a52617564667239484d617735444d4e76736654326947675a553432434a4e5731584d376c32364645346761745f74696d651a68b9b1a467636f6e74657874a0677375626a6563746e7061796d656e743a702d746f75726970726564696361746567736574746c65736c6174746573746174696f6e7381a2657369676e31590129845826a20132045820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618a058bba761760165636c61696da364747970656f7061796d656e742e736574746c656466616d6f756e741910686863757272656e6379634555526669737375657278376b65793a656432353531393a5f52636b4f4671677831746b2d336a4e59432d68325a4839365f64724538574f31774c7179445870396867677375626a6563746e7061796d656e743a702d746f7572696973737565645f61741a68b9b1a46a657870697265735f61741a68b9b29e6c65766964656e63655f726566f65840bbcb8a1a1f59c809444febd19ebeecd1397d77c96e82c570cf7d92ce04c5ab4cd64edd0efaa590801f18e826ba989b714b901dfa2c5ff4729c046059149fb90767636f6e74656e74a761760165636c61696da364747970656f7061796d656e742e736574746c656466616d6f756e741910686863757272656e6379634555526669737375657278376b65793a656432353531393a5f52636b4f4671677831746b2d336a4e59432d68325a4839365f64724538574f31774c7179445870396867677375626a6563746e7061796d656e743a702d746f7572696973737565645f61741a68b9b1a46a657870697265735f61741a68b9b29e6c65766964656e63655f726566f66d72656c6174696f6e736869707381a661760162746f78326576743a76313a756a52617564667239484d617735444d4e76736654326947675a553432434a4e5731584d376c32364645346466726f6d78326576743a76313a7349686c352d647072655741575f67497375674569716254534c5967385f4f503277587641493748383473647479706567534554544c45536c65766964656e63655f72656678326576643a76313a44485468374c67694262525950426a7348315952554770415457485768656c774c55677143346c642d336b6f6174746573746174696f6e5f726566f6","id":"prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","kind":"proof"},"report":{"checks":[{"code":null,"message":"CBOR decoded within limits","object":"proof:bytes","ok":true,"stage":"PARSE"},{"code":null,"message":"envelope version, closed fields, member schemas valid","object":"proof:prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","ok":true,"stage":"SCHEMA"},{"code":null,"message":"re-encoded bytes identical","object":"proof:prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","ok":true,"stage":"CANONICAL"},{"code":null,"message":"proof id binds 2 events, 1 attestations, 1 evidence, 1 relationships","object":"proof:prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","ok":true,"stage":"IDENTIFIERS"},{"code":null,"message":"COSE alg -19 verified","object":"att:att:v1:DX-dMONto06JZpJ_xmKkA7I2vMjrIdfd89foAFY79X4","ok":true,"stage":"SIGNATURES"},{"code":null,"message":"kid well-formed, alg matches key shape, issuer bound to key","object":"att:att:v1:DX-dMONto06JZpJ_xmKkA7I2vMjrIdfd89foAFY79X4","ok":true,"stage":"KEYS"},{"code":"EXPIRED","message":"attestation expired at 1757000350 before verifier clock 1757000800 (skew 300) (code EXPIRED, fail closed)","object":"att:att:v1:DX-dMONto06JZpJ_xmKkA7I2vMjrIdfd89foAFY79X4","ok":false,"stage":"TIME"},{"code":null,"message":"lifecycle EXPIRED (timeliness failed at TIME stage)","object":"att:att:v1:DX-dMONto06JZpJ_xmKkA7I2vMjrIdfd89foAFY79X4","ok":true,"stage":"REVOCATION"},{"code":null,"message":"lifecycle checked for 1 attestation(s); 0 + 0 status object(s); revocation info known as of 1757000800","object":"proof:prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","ok":true,"stage":"REVOCATION"},{"code":null,"message":"empty status feed explicitly allowed: 0 status objects with revocations known as of 1757000800; lifecycle ACTIVE asserts caller-checked absence, not feed-proved absence","object":"proof:prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","ok":true,"stage":"REVOCATION"},{"code":null,"message":"backing attestation EXPIRED","object":"evd:evd:v1:DHTh7LgiBbRYPBjsH1YRUGpATWHWhelwLUgqC4ld-3k","ok":true,"stage":"EVIDENCE"},{"code":null,"message":"1 evidence digests bound by id; external content is digest-only (no fetch in V1)","object":"proof:prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","ok":true,"stage":"EVIDENCE"},{"code":null,"message":"1 endpoints resolve, grounding satisfied","object":"proof:prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","ok":true,"stage":"RELATIONSHIPS"},{"code":null,"message":"2 nodes, 1 edges consistent (longest supersedes chain 0)","object":"proof:prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","ok":true,"stage":"GRAPH"},{"code":null,"message":"derivation subgraph acyclic (REFERENCES/EQUIVALENT linkage excluded)","object":"proof:prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","ok":true,"stage":"GRAPH"},{"code":null,"message":"policy decision is made by the caller via proof-policy::evaluate_policy; the pipeline reports INDETERMINATE (never PASS by default)","object":"policy:caller","ok":true,"stage":"POLICY"}],"conflicts":[],"cryptographic_validity":"valid","currently_acceptable":true,"evidence_status":[{"code":"EXPIRED","message":"backing attestation EXPIRED","object":"evd:evd:v1:DHTh7LgiBbRYPBjsH1YRUGpATWHWhelwLUgqC4ld-3k","status":"EXPIRED"}],"evidence_validity":"invalid","lifecycle":[{"code":"EXPIRED","message":"lifecycle EXPIRED (timeliness failed at TIME stage)","object":"att:att:v1:DX-dMONto06JZpJ_xmKkA7I2vMjrIdfd89foAFY79X4","status":"EXPIRED"}],"lifecycle_checked":true,"policy_decision":"indeterminate","proof_id":"prf:v1:9dB0uE-ZvpqDmBZN8QryQZRwnwFw6yiOv4n5B9Y4ue8","referenced_proofs":[],"status_inputs_valid":true,"status_objects":[],"vocabularies":[],"withdrawn_ids":[]}},"explain":"REQUIREMENTS (all): signature_valid, issuer_trusted(key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg), not_expired, not_revoked, evidence_present(transaction_record)\ncryptographic_validity: valid\nevidence_validity: valid\npolicy_decision: indeterminate\nall pipeline checks passed\n\nPOLICY: tour-base\n\nPASS signature_valid \u2014 pipeline established cryptographic validity for this proof\nPASS issuer_trusted(key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg) \u2014 issuer key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg verified and trusted\nPASS not_expired \u2014 1 attestation(s) within validity at 1757000300\nPASS not_revoked \u2014 no known revocation among 1 attestation(s)\nPASS evidence_present(transaction_record) \u2014 evidence transaction_record present\n\nDecision: PASS\n","label":"Financial transaction","policy_base":{"exit":0,"outcome":{"decision":"pass","note":null,"policy_id":"tour-base","results":[{"message":"pipeline established cryptographic validity for this proof","passed":true,"requirement":"signature_valid"},{"message":"issuer key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg verified and trusted","passed":true,"requirement":"issuer_trusted(key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg)"},{"message":"1 attestation(s) within validity at 1757000300","passed":true,"requirement":"not_expired"},{"message":"no known revocation among 1 attestation(s)","passed":true,"requirement":"not_revoked"},{"message":"evidence transaction_record present","passed":true,"requirement":"evidence_present(transaction_record)"}]},"policy":{"policy_id":"tour-base","policy_version":1,"requirements":[{"type":"signature_valid"},{"issuer":"key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg","type":"issuer_trusted"},{"type":"not_expired"},{"type":"not_revoked"},{"kind":"transaction_record","type":"evidence_present"}]}},"policy_combos":[{"exit":0,"issuer_trusted":true,"outcome":{"decision":"pass","note":null,"policy_id":"tour-c-10","results":[{"message":"pipeline established cryptographic validity for this proof","passed":true,"requirement":"signature_valid"},{"message":"issuer key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg verified and trusted","passed":true,"requirement":"issuer_trusted(key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg)"},{"message":"1 attestation(s) within validity at 1757000300","passed":true,"requirement":"not_expired"},{"message":"no known revocation among 1 attestation(s)","passed":true,"requirement":"not_revoked"},{"message":"evidence transaction_record present","passed":true,"requirement":"evidence_present(transaction_record)"}]},"transparency_required":false},{"exit":1,"issuer_trusted":false,"outcome":{"decision":"fail","note":null,"policy_id":"tour-c-00","results":[{"message":"pipeline established cryptographic validity for this proof","passed":true,"requirement":"signature_valid"},{"message":"issuer key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg not in trust list","passed":false,"requirement":"issuer_trusted(key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg)"},{"message":"1 attestation(s) within validity at 1757000300","passed":true,"requirement":"not_expired"},{"message":"no known revocation among 1 attestation(s)","passed":true,"requirement":"not_revoked"},{"message":"evidence transaction_record present","passed":true,"requirement":"evidence_present(transaction_record)"}]},"transparency_required":false},{"exit":1,"issuer_trusted":true,"outcome":{"decision":"fail","note":null,"policy_id":"tour-c-11","results":[{"message":"pipeline established cryptographic validity for this proof","passed":true,"requirement":"signature_valid"},{"message":"issuer key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg verified and trusted","passed":true,"requirement":"issuer_trusted(key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg)"},{"message":"1 attestation(s) within validity at 1757000300","passed":true,"requirement":"not_expired"},{"message":"no known revocation among 1 attestation(s)","passed":true,"requirement":"not_revoked"},{"message":"evidence transaction_record present","passed":true,"requirement":"evidence_present(transaction_record)"},{"message":"no transparency_receipt in proof","passed":false,"requirement":"transparency_present"}]},"transparency_required":true},{"exit":1,"issuer_trusted":false,"outcome":{"decision":"fail","note":null,"policy_id":"tour-c-01","results":[{"message":"pipeline established cryptographic validity for this proof","passed":true,"requirement":"signature_valid"},{"message":"issuer key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg not in trust list","passed":false,"requirement":"issuer_trusted(key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg)"},{"message":"1 attestation(s) within validity at 1757000300","passed":true,"requirement":"not_expired"},{"message":"no known revocation among 1 attestation(s)","passed":true,"requirement":"not_revoked"},{"message":"evidence transaction_record present","passed":true,"requirement":"evidence_present(transaction_record)"},{"message":"no transparency_receipt in proof","passed":false,"requirement":"transparency_present"}]},"transparency_required":true}],"proof":{"cbor":"a8617601666576656e747382a661760164747970656f7061796d656e742e63726561746564677375626a6563746e7061796d656e743a702d746f7572686d65746164617461a1656f726465726a6f72642d746f75722d316b7061796c6f61645f726566a361760163616c67006664696765737458205e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e6c6566666563746976655f61741a68b9b140a661760164747970656e696e766f6963652e697373756564677375626a6563746e696e766f6963653a692d746f7572686d65746164617461a06b7061796c6f61645f726566a361760163616c6700666469676573745820a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a76c6566666563746976655f61741a68b9b1406865766964656e636581a56176016468696e747561637175697265723a726563656970743a746f7572646b696e64727472616e73616374696f6e5f7265636f726466646967657374a361760163616c6700666469676573745820e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e16f6174746573746174696f6e5f72656678326174743a76313a3267564d7648397a326156773964484b4a61766270426d68487849504662664f2d43433368516154555f386870726f6f665f696478327072663a76313a306730307741667a42497a6b5955397a5054663866704b454e7559677a43632d57764678776a5f732d67496a637265617465645f61741a68b9b2086b70726f706f736974696f6ea7617601646b696e64777061796d656e742e736574746c65732d696e766f696365666f626a65637478326576743a76313a756a52617564667239484d617735444d4e76736654326947675a553432434a4e5731584d376c32364645346761745f74696d651a68b9b1a467636f6e74657874a0677375626a6563746e7061796d656e743a702d746f75726970726564696361746567736574746c65736c6174746573746174696f6e7381a2657369676e31590125845826a20132045820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618a058b7a761760165636c61696da364747970656f7061796d656e742e736574746c656466616d6f756e741910686863757272656e6379634555526669737375657278376b65793a656432353531393a5f52636b4f4671677831746b2d336a4e59432d68325a4839365f64724538574f31774c7179445870396867677375626a6563746e7061796d656e743a702d746f7572696973737565645f61741a68b9b1a46a657870697265735f6174f66c65766964656e63655f726566f658408a439e74c6e82578876a26dbeef2bbd29e8f14a733d23f885eedcd2639335fc349d4996923511b3a14b72b14476b700e3da2980abd046edc25205a424d2d8f0d67636f6e74656e74a761760165636c61696da364747970656f7061796d656e742e736574746c656466616d6f756e741910686863757272656e6379634555526669737375657278376b65793a656432353531393a5f52636b4f4671677831746b2d336a4e59432d68325a4839365f64724538574f31774c7179445870396867677375626a6563746e7061796d656e743a702d746f7572696973737565645f61741a68b9b1a46a657870697265735f6174f66c65766964656e63655f726566f66d72656c6174696f6e736869707381a661760162746f78326576743a76313a756a52617564667239484d617735444d4e76736654326947675a553432434a4e5731584d376c32364645346466726f6d78326576743a76313a7349686c352d647072655741575f67497375674569716254534c5967385f4f503277587641493748383473647479706567534554544c45536c65766964656e63655f72656678326576643a76313a48686f7a32446c374a6c773266415a2d5a4d364a45575550656174643538317a4f69615053473073376a776f6174746573746174696f6e5f726566f6","id":"prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","kind":"proof"},"revoked":{"exit":1,"report":{"checks":[{"code":null,"message":"CBOR decoded within limits","object":"proof:bytes","ok":true,"stage":"PARSE"},{"code":null,"message":"envelope version, closed fields, member schemas valid","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"SCHEMA"},{"code":null,"message":"re-encoded bytes identical","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"CANONICAL"},{"code":null,"message":"proof id binds 2 events, 1 attestations, 1 evidence, 1 relationships","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"IDENTIFIERS"},{"code":null,"message":"COSE alg -19 verified","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"SIGNATURES"},{"code":null,"message":"kid well-formed, alg matches key shape, issuer bound to key","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"KEYS"},{"code":null,"message":"issued 1757000100 .. \u221e within verifier clock 1757000500 \u00b1 300s","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"TIME"},{"code":"REVOKED","message":"lifecycle REVOKED by a valid signed revocation (claim.type=revoke)","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":false,"stage":"REVOCATION"},{"code":null,"message":"lifecycle checked for 1 attestation(s); 0 + 1 status object(s); revocation info known as of 1757000500","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"REVOCATION"},{"code":"REVOKED","message":"backing attestation REVOKED","object":"evd:evd:v1:Hhoz2Dl7Jlw2fAZ-ZM6JEWUPeatd581zOiaPSG0s7jw","ok":false,"stage":"EVIDENCE"},{"code":null,"message":"1 endpoints resolve, grounding satisfied","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"RELATIONSHIPS"},{"code":null,"message":"2 nodes, 1 edges consistent (longest supersedes chain 0)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"GRAPH"},{"code":null,"message":"derivation subgraph acyclic (REFERENCES/EQUIVALENT linkage excluded)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"GRAPH"},{"code":null,"message":"policy decision is made by the caller via proof-policy::evaluate_policy; the pipeline reports INDETERMINATE (never PASS by default)","object":"policy:caller","ok":true,"stage":"POLICY"}],"conflicts":[],"cryptographic_validity":"valid","currently_acceptable":true,"evidence_status":[{"code":"REVOKED","message":"backing attestation REVOKED","object":"evd:evd:v1:Hhoz2Dl7Jlw2fAZ-ZM6JEWUPeatd581zOiaPSG0s7jw","status":"REVOKED"}],"evidence_validity":"invalid","lifecycle":[{"code":"REVOKED","message":"lifecycle REVOKED by a valid signed revocation (claim.type=revoke)","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","status":"REVOKED"}],"lifecycle_checked":true,"policy_decision":"indeterminate","proof_id":"prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","referenced_proofs":[],"status_inputs_valid":true,"status_objects":[],"vocabularies":[],"withdrawn_ids":[]},"status_id":"att:v1:qophb_XI274H8lBNIHNyq4P6-snvqij7K-Oamv8BNUE"},"superseded":{"exit":0,"new_attestation":"att:v1:FcCqUxtver_mf66Z5x7HVNSuNcPEewi9Fz3_r7MpuQ8","report":{"checks":[{"code":null,"message":"CBOR decoded within limits","object":"proof:bytes","ok":true,"stage":"PARSE"},{"code":null,"message":"envelope version, closed fields, member schemas valid","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"SCHEMA"},{"code":null,"message":"re-encoded bytes identical","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"CANONICAL"},{"code":null,"message":"proof id binds 2 events, 1 attestations, 1 evidence, 1 relationships","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"IDENTIFIERS"},{"code":null,"message":"COSE alg -19 verified","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"SIGNATURES"},{"code":null,"message":"kid well-formed, alg matches key shape, issuer bound to key","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"KEYS"},{"code":null,"message":"issued 1757000100 .. \u221e within verifier clock 1757000800 \u00b1 300s","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"TIME"},{"code":null,"message":"lifecycle SUPERSEDED \u2014 historical record preserved; a signed supersession points to a newer attestation","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"REVOCATION"},{"code":null,"message":"lifecycle checked for 1 attestation(s); 0 + 1 status object(s); revocation info known as of 1757000800","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"REVOCATION"},{"code":null,"message":"backing attestation SUPERSEDED \u2014 historical record preserved","object":"evd:evd:v1:Hhoz2Dl7Jlw2fAZ-ZM6JEWUPeatd581zOiaPSG0s7jw","ok":true,"stage":"EVIDENCE"},{"code":null,"message":"1 evidence digests bound by id; external content is digest-only (no fetch in V1)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"EVIDENCE"},{"code":null,"message":"1 endpoints resolve, grounding satisfied","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"RELATIONSHIPS"},{"code":null,"message":"2 nodes, 1 edges consistent (longest supersedes chain 0)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"GRAPH"},{"code":null,"message":"derivation subgraph acyclic (REFERENCES/EQUIVALENT linkage excluded)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"GRAPH"},{"code":null,"message":"policy decision is made by the caller via proof-policy::evaluate_policy; the pipeline reports INDETERMINATE (never PASS by default)","object":"policy:caller","ok":true,"stage":"POLICY"}],"conflicts":[],"cryptographic_validity":"valid","currently_acceptable":false,"evidence_status":[{"code":null,"message":"backing attestation SUPERSEDED \u2014 historical record preserved","object":"evd:evd:v1:Hhoz2Dl7Jlw2fAZ-ZM6JEWUPeatd581zOiaPSG0s7jw","status":"SUPERSEDED"}],"evidence_validity":"valid","lifecycle":[{"code":null,"message":"lifecycle SUPERSEDED \u2014 historical record preserved; a signed supersession points to a newer attestation","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","status":"SUPERSEDED"}],"lifecycle_checked":true,"policy_decision":"indeterminate","proof_id":"prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","referenced_proofs":[],"status_inputs_valid":true,"status_objects":[],"vocabularies":[],"withdrawn_ids":[]},"status_id":"att:v1:hTlm8MhfIWI9EF-qpNMz-FB3iS1qKw8di20CeS5RPRU"},"tagline":"Did payment:p-tour settle invoice:i-tour?","tampered":{"exit":1,"flip":{"from":"6","offset":1472,"to":"0"},"proof":{"cbor":"a8617601666576656e747382a661760164747970656f7061796d656e742e63726561746564677375626a6563746e7061796d656e743a702d746f7572686d65746164617461a1656f726465726a6f72642d746f75722d316b7061796c6f61645f726566a361760163616c67006664696765737458205e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e6c6566666563746976655f61741a68b9b140a661760164747970656e696e766f6963652e697373756564677375626a6563746e696e766f6963653a692d746f7572686d65746164617461a06b7061796c6f61645f726566a361760163616c6700666469676573745820a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a76c6566666563746976655f61741a68b9b1406865766964656e636581a56176016468696e747561637175697265723a726563656970743a746f7572646b696e64727472616e73616374696f6e5f7265636f726466646967657374a361760163616c6700666469676573745820e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e16f6174746573746174696f6e5f72656678326174743a76313a3267564d7648397a326156773964484b4a61766270426d68487849504662664f2d43433368516154555f386870726f6f665f696478327072663a76313a306730307741667a42497a6b5955397a5054663866704b454e7559677a43632d57764678776a5f732d67496a637265617465645f61741a68b9b2086b70726f706f736974696f6ea7617601646b696e64777061796d656e742e736574746c65732d696e766f696365666f626a65637478326576743a76313a756a52617564667239484d617735444d4e76736654326947675a553432434a4e5731584d376c32364645346761745f74696d651a68b9b1a467636f6e74657874a0677375626a6563746e7061796d656e743a702d746f75726970726564696361746567736574746c05736c6174746573746174696f6e7381a2657369676e31590125845826a20132045820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618a058b7a761760165636c61696da364747970656f7061796d656e742e736574746c656466616d6f756e741910686863757272656e6379634555526669737375657278376b65793a656432353531393a5f52636b4f4671677831746b2d336a4e59432d68325a4839365f64724538574f31774c7179445870396867677375626a6563746e7061796d656e743a702d746f7572696973737565645f61741a68b9b1a46a657870697265735f6174f66c65766964656e63655f726566f658408a439e74c6e82578876a26dbeef2bbd29e8f14a733d23f885eedcd2639335fc349d4996923511b3a14b72b14476b700e3da2980abd046edc25205a424d2d8f0d67636f6e74656e74a761760165636c61696da364747970656f7061796d656e742e736574746c656466616d6f756e741910686863757272656e6379634555526669737375657278376b65793a656432353531393a5f52636b4f4671677831746b2d336a4e59432d68325a4839365f64724538574f31774c7179445870396867677375626a6563746e7061796d656e743a702d746f7572696973737565645f61741a68b9b1a46a657870697265735f6174f66c65766964656e63655f726566f66d72656c6174696f6e736869707381a661760162746f78326576743a76313a756a52617564667239484d617735444d4e76736654326947675a553432434a4e5731584d376c32364645346466726f6d78326576743a76313a7349686c352d647072655741575f67497375674569716254534c5967385f4f503277587641493748383473647479706567534554544c45536c65766964656e63655f72656678326576643a76313a48686f7a32446c374a6c773266415a2d5a4d364a45575550656174643538317a4f69615053473073376a776f6174746573746174696f6e5f726566f6","id":"prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","kind":"proof"},"report":{"checks":[{"code":null,"message":"CBOR decoded within limits","object":"proof:bytes","ok":true,"stage":"PARSE"},{"code":null,"message":"envelope version, closed fields, member schemas valid","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"SCHEMA"},{"code":null,"message":"re-encoded bytes identical","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"CANONICAL"},{"code":"ID_MISMATCH","message":"recomputed id prf:v1:AGzLV7nxIZjsLAM0Drg_zjOXNY1EjkWudS87N_-dxPI (member set or proposition tampered?)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":false,"stage":"IDENTIFIERS"},{"code":null,"message":"COSE alg -19 verified","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"SIGNATURES"},{"code":null,"message":"kid well-formed, alg matches key shape, issuer bound to key","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"KEYS"},{"code":null,"message":"issued 1757000100 .. \u221e within verifier clock 1757000300 \u00b1 300s","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"TIME"},{"code":null,"message":"lifecycle ACTIVE at 1757000300","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"REVOCATION"},{"code":null,"message":"lifecycle checked for 1 attestation(s); 0 + 0 status object(s); revocation info known as of 1757000300","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"REVOCATION"},{"code":null,"message":"empty status feed explicitly allowed: 0 status objects with revocations known as of 1757000300; lifecycle ACTIVE asserts caller-checked absence, not feed-proved absence","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"REVOCATION"},{"code":null,"message":"evidence digest-bound and available","object":"evd:evd:v1:Hhoz2Dl7Jlw2fAZ-ZM6JEWUPeatd581zOiaPSG0s7jw","ok":true,"stage":"EVIDENCE"},{"code":null,"message":"1 evidence digests bound by id; external content is digest-only (no fetch in V1)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"EVIDENCE"},{"code":null,"message":"1 endpoints resolve, grounding satisfied","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"RELATIONSHIPS"},{"code":null,"message":"2 nodes, 1 edges consistent (longest supersedes chain 0)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"GRAPH"},{"code":null,"message":"derivation subgraph acyclic (REFERENCES/EQUIVALENT linkage excluded)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"GRAPH"},{"code":null,"message":"policy decision is made by the caller via proof-policy::evaluate_policy; the pipeline reports INDETERMINATE (never PASS by default)","object":"policy:caller","ok":true,"stage":"POLICY"}],"conflicts":[],"cryptographic_validity":"invalid","currently_acceptable":true,"evidence_status":[{"code":null,"message":"evidence digest-bound and available","object":"evd:evd:v1:Hhoz2Dl7Jlw2fAZ-ZM6JEWUPeatd581zOiaPSG0s7jw","status":"AVAILABLE"}],"evidence_validity":"valid","lifecycle":[{"code":null,"message":"lifecycle ACTIVE at 1757000300","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","status":"ACTIVE"}],"lifecycle_checked":true,"policy_decision":"indeterminate","proof_id":"prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","referenced_proofs":[],"status_inputs_valid":true,"status_objects":[],"vocabularies":[],"withdrawn_ids":[]}},"verify_fresh":{"exit":0,"report":{"checks":[{"code":null,"message":"CBOR decoded within limits","object":"proof:bytes","ok":true,"stage":"PARSE"},{"code":null,"message":"envelope version, closed fields, member schemas valid","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"SCHEMA"},{"code":null,"message":"re-encoded bytes identical","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"CANONICAL"},{"code":null,"message":"proof id binds 2 events, 1 attestations, 1 evidence, 1 relationships","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"IDENTIFIERS"},{"code":null,"message":"COSE alg -19 verified","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"SIGNATURES"},{"code":null,"message":"kid well-formed, alg matches key shape, issuer bound to key","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"KEYS"},{"code":null,"message":"issued 1757000100 .. \u221e within verifier clock 1757000300 \u00b1 300s","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"TIME"},{"code":null,"message":"lifecycle ACTIVE at 1757000300","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","ok":true,"stage":"REVOCATION"},{"code":null,"message":"lifecycle checked for 1 attestation(s); 0 + 0 status object(s); revocation info known as of 1757000300","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"REVOCATION"},{"code":null,"message":"empty status feed explicitly allowed: 0 status objects with revocations known as of 1757000300; lifecycle ACTIVE asserts caller-checked absence, not feed-proved absence","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"REVOCATION"},{"code":null,"message":"evidence digest-bound and available","object":"evd:evd:v1:Hhoz2Dl7Jlw2fAZ-ZM6JEWUPeatd581zOiaPSG0s7jw","ok":true,"stage":"EVIDENCE"},{"code":null,"message":"1 evidence digests bound by id; external content is digest-only (no fetch in V1)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"EVIDENCE"},{"code":null,"message":"1 endpoints resolve, grounding satisfied","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"RELATIONSHIPS"},{"code":null,"message":"2 nodes, 1 edges consistent (longest supersedes chain 0)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"GRAPH"},{"code":null,"message":"derivation subgraph acyclic (REFERENCES/EQUIVALENT linkage excluded)","object":"proof:prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","ok":true,"stage":"GRAPH"},{"code":null,"message":"policy decision is made by the caller via proof-policy::evaluate_policy; the pipeline reports INDETERMINATE (never PASS by default)","object":"policy:caller","ok":true,"stage":"POLICY"}],"conflicts":[],"cryptographic_validity":"valid","currently_acceptable":true,"evidence_status":[{"code":null,"message":"evidence digest-bound and available","object":"evd:evd:v1:Hhoz2Dl7Jlw2fAZ-ZM6JEWUPeatd581zOiaPSG0s7jw","status":"AVAILABLE"}],"evidence_validity":"valid","lifecycle":[{"code":null,"message":"lifecycle ACTIVE at 1757000300","object":"att:att:v1:2gVMvH9z2aVw9dHKJavbpBmhHxIPFbfO-CC3hQaTU_8","status":"ACTIVE"}],"lifecycle_checked":true,"policy_decision":"indeterminate","proof_id":"prf:v1:0g00wAfzBIzkYU9zPTf8fpKENuYgzCc-WvFxwj_s-gI","referenced_proofs":[],"status_inputs_valid":true,"status_objects":[],"vocabularies":[],"withdrawn_ids":[]}}},"software":{"clock":1758000300,"commands":["proof-cli create-event --type source.committed --subject repo:svc --effective-at 1758000000 --payload-hex 5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e --meta rev=r4242 --out s-ev1.json","proof-cli create-event --type build.finished --subject artifact:svc-2.1.0 --effective-at 1758000000 --payload-hex a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7 --out s-ev2.json","proof-cli attest --seed test --subject artifact:svc-2.1.0 --claim-type artifact.released --claim channel=stable --issued-at 1758000100 --out s-att.json","proof-cli add-evidence --kind receipt --digest-hex e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1 --attestation-ref att:v1:RPYRaXKx9zBWeprhNje2jZ0L2fQgQobwWSj_DBfAT3A --hint ci:build-log:tour --out s-evd.json","proof-cli relate --from evt:v1:qadZg9F9sUZVzmlsSMx3GT5wcieh3q6cT5_PTvHfIHk --type PRODUCED --to att:v1:RPYRaXKx9zBWeprhNje2jZ0L2fQgQobwWSj_DBfAT3A --evidence-ref evd:v1:74PebWODqW5sVIP4On_Sd1BFP-_Qq_22BzsjreFDscc --out s-rel.json","proof-cli build --kind artifact.build-release --subject artifact:svc-2.1.0 --predicate released --at-time 1758000100 --created-at 1758000200 --events s-ev1.json,s-ev2.json --attestations s-att.json --evidence s-evd.json --relationships s-rel.json --out s-proof.json"],"contents":{"attestations":[{"claim_fields":[{"key":"channel","value":"stable"}],"claim_type":"artifact.released","evidence_ref":null,"expires_at":null,"issued_at":1758000100,"issuer":"key:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg","subject":"artifact:svc-2.1.0"}],"created_at":1758000200,"events":[{"effective_at":1758000000,"metadata":[{"key":"rev","value":"r4242"}],"payload_ref":{"alg":"sha-256","digest_hex":"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"},"subject":"repo:svc","type":"source.committed"},{"effective_at":1758000000,"metadata":[],"payload_ref":{"alg":"sha-256","digest_hex":"a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7"},"subject":"artifact:svc-2.1.0","type":"build.finished"}],"evidence":[{"attestation_ref":"att:v1:RPYRaXKx9zBWeprhNje2jZ0L2fQgQobwWSj_DBfAT3A","digest":{"alg":"sha-256","digest_hex":"e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"},"hint":"ci:build-log:tour","kind":"receipt"}],"proof_id":"prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","proposition":{"at_time":1758000100,"context":[],"kind":"artifact.build-release","object":null,"predicate":"released","subject":"artifact:svc-2.1.0"},"relationships":[{"attestation_ref":null,"evidence_ref":"evd:v1:74PebWODqW5sVIP4On_Sd1BFP-_Qq_22BzsjreFDscc","from":"evt:v1:qadZg9F9sUZVzmlsSMx3GT5wcieh3q6cT5_PTvHfIHk","to":"att:v1:RPYRaXKx9zBWeprhNje2jZ0L2fQgQobwWSj_DBfAT3A","type":"PRODUCED"}],"source":"s-proof.json","v":1},"label":"Software artifact","policy_base":{"exit":0,"outcome":{"decision":"pass","note":null,"policy_id":"tour-software","results":[{"message":"pipeline established cryptographic validity for this proof","passed":true,"requirement":"signature_valid"}]},"policy":{"policy_id":"tour-software","policy_version":1,"requirements":[{"type":"signature_valid"}]}},"proof":{"cbor":"a8617601666576656e747382a6617601647479706570736f757263652e636f6d6d6974746564677375626a656374687265706f3a737663686d65746164617461a1637265766572343234326b7061796c6f61645f726566a361760163616c67006664696765737458205e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e6c6566666563746976655f61741a68c8f380a661760164747970656e6275696c642e66696e6973686564677375626a6563747261727469666163743a7376632d322e312e30686d65746164617461a06b7061796c6f61645f726566a361760163616c6700666469676573745820a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a76c6566666563746976655f61741a68c8f3806865766964656e636581a56176016468696e747163693a6275696c642d6c6f673a746f7572646b696e64677265636569707466646967657374a361760163616c6700666469676573745820e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e16f6174746573746174696f6e5f72656678326174743a76313a5250595261584b78397a4257657072684e6a65326a5a304c32665167516f627757536a5f444266415433416870726f6f665f696478327072663a76313a73555f32783274522d4c78702d503332443073516b4d77425956677737705535516e3163474764303632346a637265617465645f61741a68c8f4486b70726f706f736974696f6ea7617601646b696e647661727469666163742e6275696c642d72656c65617365666f626a656374f66761745f74696d651a68c8f3e467636f6e74657874a0677375626a6563747261727469666163743a7376632d322e312e30697072656469636174656872656c65617365646c6174746573746174696f6e7381a2657369676e31590123845826a20132045820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618a058b5a761760165636c61696da264747970657161727469666163742e72656c6561736564676368616e6e656c66737461626c656669737375657278376b65793a656432353531393a5f52636b4f4671677831746b2d336a4e59432d68325a4839365f64724538574f31774c7179445870396867677375626a6563747261727469666163743a7376632d322e312e30696973737565645f61741a68c8f3e46a657870697265735f6174f66c65766964656e63655f726566f65840d3cb85d8c56bd8a8e104eb6a319c9ca59ca2f7ac07040a41f9615ec9c92606bfa2121e77a111db000a069d60a5c27833d2c169fa5b65b42f246466110c18da0567636f6e74656e74a761760165636c61696da264747970657161727469666163742e72656c6561736564676368616e6e656c66737461626c656669737375657278376b65793a656432353531393a5f52636b4f4671677831746b2d336a4e59432d68325a4839365f64724538574f31774c7179445870396867677375626a6563747261727469666163743a7376632d322e312e30696973737565645f61741a68c8f3e46a657870697265735f6174f66c65766964656e63655f726566f66d72656c6174696f6e736869707381a661760162746f78326174743a76313a5250595261584b78397a4257657072684e6a65326a5a304c32665167516f627757536a5f444266415433416466726f6d78326576743a76313a7161645a6739463973555a567a6d6c73534d783347543577636965683371366354355f505476486649486b64747970656850524f44554345446c65766964656e63655f72656678326576643a76313a3734506562574f4471573573564950344f6e5f5364314246502d5f51715f3232427a736a726546447363636f6174746573746174696f6e5f726566f6","id":"prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","kind":"proof"},"tagline":"Was artifact:svc-2.1.0 released by this build?","verify_fresh":{"exit":0,"report":{"checks":[{"code":null,"message":"CBOR decoded within limits","object":"proof:bytes","ok":true,"stage":"PARSE"},{"code":null,"message":"envelope version, closed fields, member schemas valid","object":"proof:prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","ok":true,"stage":"SCHEMA"},{"code":null,"message":"re-encoded bytes identical","object":"proof:prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","ok":true,"stage":"CANONICAL"},{"code":null,"message":"proof id binds 2 events, 1 attestations, 1 evidence, 1 relationships","object":"proof:prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","ok":true,"stage":"IDENTIFIERS"},{"code":null,"message":"COSE alg -19 verified","object":"att:att:v1:RPYRaXKx9zBWeprhNje2jZ0L2fQgQobwWSj_DBfAT3A","ok":true,"stage":"SIGNATURES"},{"code":null,"message":"kid well-formed, alg matches key shape, issuer bound to key","object":"att:att:v1:RPYRaXKx9zBWeprhNje2jZ0L2fQgQobwWSj_DBfAT3A","ok":true,"stage":"KEYS"},{"code":null,"message":"issued 1758000100 .. \u221e within verifier clock 1758000300 \u00b1 300s","object":"att:att:v1:RPYRaXKx9zBWeprhNje2jZ0L2fQgQobwWSj_DBfAT3A","ok":true,"stage":"TIME"},{"code":null,"message":"lifecycle ACTIVE at 1758000300","object":"att:att:v1:RPYRaXKx9zBWeprhNje2jZ0L2fQgQobwWSj_DBfAT3A","ok":true,"stage":"REVOCATION"},{"code":null,"message":"lifecycle checked for 1 attestation(s); 0 + 0 status object(s); revocation info known as of 1758000300","object":"proof:prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","ok":true,"stage":"REVOCATION"},{"code":null,"message":"empty status feed explicitly allowed: 0 status objects with revocations known as of 1758000300; lifecycle ACTIVE asserts caller-checked absence, not feed-proved absence","object":"proof:prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","ok":true,"stage":"REVOCATION"},{"code":null,"message":"evidence digest-bound and available","object":"evd:evd:v1:74PebWODqW5sVIP4On_Sd1BFP-_Qq_22BzsjreFDscc","ok":true,"stage":"EVIDENCE"},{"code":null,"message":"1 evidence digests bound by id; external content is digest-only (no fetch in V1)","object":"proof:prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","ok":true,"stage":"EVIDENCE"},{"code":null,"message":"1 endpoints resolve, grounding satisfied","object":"proof:prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","ok":true,"stage":"RELATIONSHIPS"},{"code":null,"message":"2 nodes, 1 edges consistent (longest supersedes chain 0)","object":"proof:prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","ok":true,"stage":"GRAPH"},{"code":null,"message":"derivation subgraph acyclic (REFERENCES/EQUIVALENT linkage excluded)","object":"proof:prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","ok":true,"stage":"GRAPH"},{"code":null,"message":"policy decision is made by the caller via proof-policy::evaluate_policy; the pipeline reports INDETERMINATE (never PASS by default)","object":"policy:caller","ok":true,"stage":"POLICY"}],"conflicts":[],"cryptographic_validity":"valid","currently_acceptable":true,"evidence_status":[{"code":null,"message":"evidence digest-bound and available","object":"evd:evd:v1:74PebWODqW5sVIP4On_Sd1BFP-_Qq_22BzsjreFDscc","status":"AVAILABLE"}],"evidence_validity":"valid","lifecycle":[{"code":null,"message":"lifecycle ACTIVE at 1758000300","object":"att:att:v1:RPYRaXKx9zBWeprhNje2jZ0L2fQgQobwWSj_DBfAT3A","status":"ACTIVE"}],"lifecycle_checked":true,"policy_decision":"indeterminate","proof_id":"prf:v1:sU_2x2tR-Lxp-P32D0sQkMwBYVgw7pU5Qn1cGGd0624","referenced_proofs":[],"status_inputs_valid":true,"status_objects":[],"vocabularies":[],"withdrawn_ids":[]}}}},"generated_by":"proof-cli (V1 core; deterministic fixtures)"}</script>
+<script>
+"use strict";
+var DATA = JSON.parse(document.getElementById("proof-data").textContent);
+var state = { example: "payment", tampered: false, life: "active" };
+
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function ex() { return DATA.examples[state.example]; }
+function verdictOf(report) {
+  return (report.cryptographic_validity === "valid" &&
+          report.evidence_validity === "valid") ? "PASS" : "FAIL";
+}
+function verdictHTML(v) {
+  return v === "PASS"
+    ? '<span class="pass">✓ PASS</span>'
+    : '<span class="fail">✕ FAIL</span>';
+}
+function shortId(id) {
+  return id.length > 26 ? id.slice(0, 20) + "…" + id.slice(-4) : id;
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll("nav[role=tablist] button").forEach(function (b) {
+  b.addEventListener("click", function () { goto(b.dataset.tab); });
+});
+function goto(name) {
+  document.querySelectorAll("nav[role=tablist] button").forEach(function (b) {
+    b.setAttribute("aria-selected", b.dataset.tab === name ? "true" : "false");
+  });
+  document.querySelectorAll("section.tab").forEach(function (s) {
+    s.classList.toggle("active", s.id === "tab-" + name);
+  });
+  render();
+}
+document.querySelectorAll("[data-goto]").forEach(function (b) {
+  b.addEventListener("click", function () { goto(b.dataset.goto); });
+});
+document.getElementById("example").addEventListener("change", function (e) {
+  state.example = e.target.value; state.tampered = false; render();
+});
+
+/* ---------- builder ---------- */
+function fieldList(fields) {
+  return fields.map(function (f) {
+    return "<li><span class='mono'>" + esc(f.key) + " = " + esc(String(f.value)) + "</span></li>";
+  }).join("");
+}
+function renderBuilder() {
+  var c = ex().contents, p = c.proposition;
+  document.getElementById("b-prop").innerHTML =
+    "<div><strong>" + esc(p.kind) + "</strong></div>" +
+    "<div class='mono'>" + esc(p.subject) + " → " + esc(p.predicate) +
+    (p.object ? " → " + esc(p.object) : "") + "</div>";
+  document.getElementById("b-events").innerHTML = c.events.map(function (e) {
+    return "<div class='box'><strong class='mono'>" + esc(e.type) + "</strong><br>" +
+      "<span class='mono'>" + esc(e.subject) + "</span> · t=" + e.effective_at +
+      "<ul>" + fieldList(e.metadata) + "</ul></div>";
+  }).join("");
+  document.getElementById("b-evidence").innerHTML = c.evidence.map(function (e, i) {
+    return "<details class='box'><summary><strong class='mono'>" + esc(e.kind) +
+      "</strong> <span class='muted small'>details</span></summary>" +
+      "<div class='mono'>digest (" + esc(e.digest.alg) + "):<br>" + esc(e.digest.digest_hex) + "</div>" +
+      (e.attestation_ref ? "<div>attestation: <span class='mono'>" + esc(e.attestation_ref) + "</span></div>" : "") +
+      (e.hint ? "<div>hint: <span class='mono'>" + esc(e.hint) + "</span></div>" : "") +
+      "<div>✓ Integrity bound by id (evidence item " + (i + 1) + ")</div></details>";
+  }).join("");
+  document.getElementById("b-att").innerHTML = c.attestations.map(function (a) {
+    return "<div class='box'><strong class='mono'>" + esc(a.claim_type) + "</strong><br>" +
+      "issuer: <span class='mono'>" + esc(a.issuer) + "</span><br>" +
+      "subject: <span class='mono'>" + esc(a.subject) + "</span> · issued t=" + a.issued_at +
+      (a.expires_at ? " · expires t=" + a.expires_at : "") +
+      "<ul>" + fieldList(a.claim_fields) + "</ul></div>";
+  }).join("");
+  document.getElementById("b-rel").innerHTML = c.relationships.map(function (r) {
+    return "<div class='box mono'>" + esc(r.from) + "<br>│ " + esc(r.type) +
+      "<br>▼<br>" + esc(r.to) + "</div>";
+  }).join("");
+}
+
+/* ---------- generic SVG graph ---------- */
+function renderGraph() {
+  var c = ex().contents, edges = c.relationships;
+  var nodes = [];
+  edges.forEach(function (e) {
+    [e.from, e.to].forEach(function (n) { if (nodes.indexOf(n) < 0) nodes.push(n); });
+  });
+  var W = 560, y0 = 30, gap = 96, H = y0 * 2 + Math.max(nodes.length - 1, 0) * gap;
+  var pos = {};
+  nodes.forEach(function (n, i) { pos[n] = y0 + i * gap; });
+  var s = '<svg class="graph" width="' + W + '" height="' + Math.max(H, 80) +
+    '" role="img" aria-label="Proof relationship graph">';
+  edges.forEach(function (e) {
+    var y1 = pos[e.from], y2 = pos[e.to];
+    s += '<line x1="' + (W / 2) + '" y1="' + y1 + '" x2="' + (W / 2) + '" y2="' + y2 +
+      '" stroke="#555" stroke-width="2"/>' +
+      '<text x="' + (W / 2 + 8) + '" y="' + ((y1 + y2) / 2) + '">' + esc(e.type) + '</text>';
+  });
+  nodes.forEach(function (n) {
+    s += '<rect x="60" y="' + (pos[n] - 18) + '" width="' + (W - 120) + '" height="36" fill="#fff" stroke="#1a1a1a"/>' +
+      '<text x="' + (W / 2) + '" y="' + (pos[n] + 5) + '" text-anchor="middle">' + esc(shortId(n)) + '</text>';
+  });
+  document.getElementById("g-svg").innerHTML = s + "</svg>";
+}
+
+/* ---------- build ---------- */
+function renderBuild() {
+  document.getElementById("build-cmds").innerHTML =
+    "<pre class='cmd'>" + ex().commands.map(esc).join("\n") + "</pre>";
+  document.getElementById("build-id").textContent = ex().proof.id;
+}
+document.getElementById("btn-copy").addEventListener("click", function () {
+  navigator.clipboard.writeText(JSON.stringify(ex().proof, null, 2));
+});
+document.getElementById("btn-dl").addEventListener("click", function () {
+  var blob = new Blob([JSON.stringify(ex().proof, null, 2)], { type: "application/json" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "proof.json"; a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+});
+
+/* ---------- verify ---------- */
+function stageRows(report) {
+  return report.checks.map(function (c) {
+    var cls = c.ok ? "pass" : "fail", mark = c.ok ? "✓ PASS" : "✕ FAIL";
+    return "<div class='stage'><span class='mark " + cls + "'>" + mark + "</span><span><strong>" +
+      esc(c.stage) + "</strong> — " + esc(c.message) +
+      (c.code ? " <span class='mono'>[" + esc(c.code) + "]</span>" : "") + "</span></div>";
+  }).join("");
+}
+function renderVerify() {
+  var r = ex().verify_fresh.report;
+  document.getElementById("v-verdict").innerHTML = verdictHTML(verdictOf(r));
+  document.getElementById("v-stages").innerHTML = stageRows(r) +
+    "<p class='muted small'>cryptographic_validity=" + esc(r.cryptographic_validity) +
+    " · evidence_validity=" + esc(r.evidence_validity) +
+    " · policy (pipeline view)=" + esc(r.policy_decision) + "</p>";
+}
+
+/* ---------- policy ---------- */
+function currentCombo() {
+  var t = document.getElementById("p-trusted").checked;
+  var x = document.getElementById("p-transp").checked;
+  var found = null;
+  ex().policy_combos.forEach(function (c) {
+    if (c.issuer_trusted === t && c.transparency_required === x) found = c;
+  });
+  return found;
+}
+function renderPolicy() {
+  var e = ex();
+  if (!e.policy_combos) {
+    document.getElementById("p-verdict").innerHTML = verdictHTML(
+      e.policy_base.outcome.decision === "pass" ? "PASS" : "FAIL");
+    document.getElementById("p-reqs").innerHTML = e.policy_base.outcome.results.map(function (r) {
+      return "<div class='stage'><span class='mark " + (r.passed ? "pass" : "fail") + "'>" +
+        (r.passed ? "✓ PASS" : "✕ FAIL") + "</span><span><strong>" + esc(r.requirement) +
+        "</strong> — " + esc(r.message) + "</span></div>";
+    }).join("");
+    return;
+  }
+  var c = currentCombo();
+  var v = c.outcome.decision === "pass" ? "PASS" : "FAIL";
+  document.getElementById("p-verdict").innerHTML = verdictHTML(v);
+  document.getElementById("p-reqs").innerHTML = c.outcome.results.map(function (r) {
+    return "<div class='stage'><span class='mark " + (r.passed ? "pass" : "fail") + "'>" +
+      (r.passed ? "✓ PASS" : "✕ FAIL") + "</span><span><strong>" + esc(r.requirement) +
+      "</strong> — " + esc(r.message) + "</span></div>";
+  }).join("");
+  document.getElementById("p-explain").textContent = e.explain;
+}
+document.getElementById("p-trusted").addEventListener("change", renderPolicy);
+document.getElementById("p-transp").addEventListener("change", renderPolicy);
+
+/* ---------- tamper ---------- */
+function renderTamper() {
+  var e = ex(), box = document.getElementById("t-state"), stages = "";
+  if (!e.tampered || !state.tampered) {
+    box.innerHTML = "<p>Proof intact. Press <strong>Tamper with proof</strong> to flip one byte of the canonical bytes and re-run verification.</p>";
+  } else {
+    var t = e.tampered;
+    box.innerHTML = "<p><strong>PROOF MODIFIED</strong> — canonical byte " + t.flip.offset +
+      ": <span class='mono'>" + esc(t.flip.from) + " → " + esc(t.flip.to) + "</span></p>" +
+      "<div class='verdict'>" + verdictHTML("FAIL") + "</div>";
+    stages = t.report.checks.filter(function (c) { return !c.ok; }).map(function (c) {
+      return "<div class='stage'><span class='mark fail'>✕ FAIL</span><span><strong>" +
+        esc(c.stage) + "</strong> [" + esc(c.code || "NO_CODE") + "] — " + esc(c.message) + "</span></div>";
+    }).join("") + "<p>Restore the original bytes and the proof verifies again.</p>";
+  }
+  document.getElementById("t-stages").innerHTML = stages;
+}
+document.getElementById("btn-tamper").addEventListener("click", function () {
+  state.tampered = true; renderTamper();
+});
+document.getElementById("btn-restore").addEventListener("click", function () {
+  state.tampered = false; renderTamper();
+});
+
+/* ---------- lifecycle ---------- */
+var LIFE_LABEL = {
+  active: "ACTIVE — timely, unrevoked, revocation info fresh",
+  expired: "EXPIRED — outside the validity window at the verifier clock",
+  revoked: "REVOKED — covered by a valid signed revocation",
+  superseded: "SUPERSEDED — replaced by a newer attestation; history stays valid"
+};
+function renderLifecycle() {
+  var e = ex();
+  var data = { active: e.verify_fresh, expired: e.expired, revoked: e.revoked, superseded: e.superseded }[state.life];
+  var box = document.getElementById("l-state");
+  if (!data) { box.innerHTML = "<p class='muted'>No data for this state in the software example — switch to Financial transaction.</p>"; return; }
+  var r = data.report;
+  box.innerHTML = "<p><strong>" + esc(LIFE_LABEL[state.life]) + "</strong></p>" +
+    "<div class='verdict'>" + verdictHTML(verdictOf(r)) + "</div>" +
+    r.lifecycle.map(function (l) {
+      return "<div class='box mono'>" + esc(l.object) + " → " + esc(l.status) +
+        (l.code ? " [" + esc(l.code) + "]" : "") + "<br>" + esc(l.message) + "</div>";
+    }).join("");
+}
+document.querySelectorAll("[data-life]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    state.life = b.dataset.life;
+    document.querySelectorAll("[data-life]").forEach(function (x) {
+      x.setAttribute("aria-selected", x === b ? "true" : "false");
+    });
+    renderLifecycle();
+  });
+});
+
+/* ---------- render all ---------- */
+function render() {
+  renderBuilder(); renderGraph(); renderBuild(); renderVerify();
+  renderPolicy(); renderTamper(); renderLifecycle();
+  document.getElementById("provenance").textContent =
+    "All proofs, reports and decisions embedded here were computed by the core (" +
+    DATA.generated_by + "). Regenerate: make web-demo. Tamper demo flips canonical byte " +
+    (ex().tampered ? ex().tampered.flip.offset : "n/a") + ".";
+}
+render();
+</script>
+</body>
+</html>
